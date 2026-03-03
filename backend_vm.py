@@ -1,8 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-import time
 import json
+
 from models import FileMeta
 from utils import now_ts, human_type_from_name
 
@@ -12,8 +12,8 @@ class VMNode:
     name: str
     is_dir: bool
     parent_id: Optional[str] = None
-    children: List[str] = field(default_factory=list)  # node ids
-    content: str = ""  # for files
+    children: List[str] = field(default_factory=list)
+    content: str = ""
     created_ts: float = field(default_factory=now_ts)
     updated_ts: float = field(default_factory=now_ts)
 
@@ -22,15 +22,13 @@ class VirtualFSBackend:
         self.nodes: Dict[str, VMNode] = {}
         self.root_id: str = "root"
         self._id_counter = 0
-        self.show_hidden: bool = True  # VM: default show all
+        self.show_hidden: bool = True
         self.reset()
 
     def reset(self):
         self.nodes = {}
         self._id_counter = 0
         self.nodes[self.root_id] = VMNode(id=self.root_id, name="VM:/", is_dir=True, parent_id=None)
-
-        # seed example
         docs = self.make_folder(self.root_id, "Documents")
         proj = self.make_folder(docs, "Projects")
         app2 = self.make_folder(proj, "App2")
@@ -47,6 +45,16 @@ class VirtualFSBackend:
         items.sort(key=lambda x: (not x[1], self.nodes[x[0]].name.lower()))
         return items
 
+    def get_path(self, node_id: str) -> str:
+        parts = []
+        cur = node_id
+        while cur and cur != self.root_id:
+            n = self.nodes[cur]
+            parts.append(n.name)
+            cur = n.parent_id
+        parts.reverse()
+        return "VM:/" + "/".join(parts)
+
     def get_meta(self, node_id: str) -> FileMeta:
         n = self.nodes[node_id]
         size = len(n.content.encode("utf-8")) if not n.is_dir else None
@@ -58,36 +66,22 @@ class VirtualFSBackend:
             modified_ts=n.updated_ts,
         )
 
-    def get_path(self, node_id: str) -> str:
-        parts = []
-        cur = node_id
-        while cur and cur != self.root_id:
-            n = self.nodes[cur]
-            parts.append(n.name)
-            cur = n.parent_id
-        parts.reverse()
-        return "VM:/" + "/".join(parts)
-
     def make_folder(self, parent_id: str, name: str) -> str:
-        pid = parent_id
-        parent = self.nodes[pid]
+        parent = self.nodes[parent_id]
         if not parent.is_dir:
             raise ValueError("Parent is not a folder.")
         nid = self._new_id()
-        node = VMNode(id=nid, name=name, is_dir=True, parent_id=pid)
-        self.nodes[nid] = node
+        self.nodes[nid] = VMNode(id=nid, name=name, is_dir=True, parent_id=parent_id)
         parent.children.append(nid)
         parent.updated_ts = now_ts()
         return nid
 
     def make_file(self, parent_id: str, name: str, content: str = "") -> str:
-        pid = parent_id
-        parent = self.nodes[pid]
+        parent = self.nodes[parent_id]
         if not parent.is_dir:
             raise ValueError("Parent is not a folder.")
         nid = self._new_id()
-        node = VMNode(id=nid, name=name, is_dir=False, parent_id=pid, content=content)
-        self.nodes[nid] = node
+        self.nodes[nid] = VMNode(id=nid, name=name, is_dir=False, parent_id=parent_id, content=content)
         parent.children.append(nid)
         parent.updated_ts = now_ts()
         return nid
@@ -102,17 +96,15 @@ class VirtualFSBackend:
         if node_id == self.root_id:
             raise ValueError("Cannot delete VM root.")
         n = self.nodes[node_id]
-        # remove from parent
         if n.parent_id:
             parent = self.nodes[n.parent_id]
             parent.children = [cid for cid in parent.children if cid != node_id]
             parent.updated_ts = now_ts()
-        # recursive delete
         stack = [node_id]
         while stack:
             cur = stack.pop()
             cn = self.nodes[cur]
-            stack.extend(cn.children)
+            stack.extend(list(cn.children))
             del self.nodes[cur]
 
     def move(self, node_id: str, dst_parent_id: str) -> str:
@@ -122,12 +114,16 @@ class VirtualFSBackend:
         dst = self.nodes[dst_parent_id]
         if not dst.is_dir:
             raise ValueError("Destination must be a folder.")
-        # detach
+        # prevent moving into itself/descendants
+        cur = dst_parent_id
+        while cur:
+            if cur == node_id:
+                raise ValueError("Cannot move a folder into itself/descendant.")
+            cur = self.nodes[cur].parent_id
         if n.parent_id:
             p = self.nodes[n.parent_id]
             p.children = [cid for cid in p.children if cid != node_id]
             p.updated_ts = now_ts()
-        # attach
         n.parent_id = dst_parent_id
         dst.children.append(node_id)
         dst.updated_ts = now_ts()
@@ -137,6 +133,7 @@ class VirtualFSBackend:
         dst = self.nodes[dst_parent_id]
         if not dst.is_dir:
             raise ValueError("Destination must be a folder.")
+
         def clone(src_id: str, new_parent: str) -> str:
             src = self.nodes[src_id]
             nid = self._new_id()
@@ -152,21 +149,29 @@ class VirtualFSBackend:
             self.nodes[nid] = nn
             self.nodes[new_parent].children.append(nid)
             if src.is_dir:
-                for cid in src.children:
+                for cid in list(src.children):
                     clone(cid, nid)
             return nid
+
         return clone(node_id, dst_parent_id)
 
     def to_json(self) -> str:
         data = {
             "root_id": self.root_id,
             "id_counter": self._id_counter,
-            "nodes": {nid: {
-                "id": n.id, "name": n.name, "is_dir": n.is_dir,
-                "parent_id": n.parent_id, "children": n.children,
-                "content": n.content,
-                "created_ts": n.created_ts, "updated_ts": n.updated_ts,
-            } for nid, n in self.nodes.items()}
+            "nodes": {
+                nid: {
+                    "id": n.id,
+                    "name": n.name,
+                    "is_dir": n.is_dir,
+                    "parent_id": n.parent_id,
+                    "children": list(n.children),
+                    "content": n.content,
+                    "created_ts": n.created_ts,
+                    "updated_ts": n.updated_ts,
+                }
+                for nid, n in self.nodes.items()
+            },
         }
         return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -187,5 +192,4 @@ class VirtualFSBackend:
                 updated_ts=float(nd.get("updated_ts", now_ts())),
             )
         if self.root_id not in self.nodes:
-            # fallback
             self.nodes[self.root_id] = VMNode(id=self.root_id, name="VM:/", is_dir=True)

@@ -1,5 +1,4 @@
 from __future__ import annotations
-import os
 import time
 from pathlib import Path
 
@@ -22,11 +21,7 @@ def format_bytes(n: int | None) -> str:
     return f"{n} B"
 
 def is_hidden_path(p: Path) -> bool:
-    name = p.name
-    if name.startswith("."):
-        return True
-    # Windows hidden attribute check is skipped (cross-platform draft).
-    return False
+    return p.name.startswith(".")
 
 def ensure_under_root(root: Path, target: Path) -> None:
     root = root.resolve()
@@ -37,8 +32,7 @@ def ensure_under_root(root: Path, target: Path) -> None:
         raise ValueError("Target path is outside of selected root folder.")
 
 def safe_join(parent: Path, name: str) -> Path:
-    # Disallow path traversal
-    if any(sep in name for sep in ("/", "\\")) or name in (".", ".."):
+    if any(sep in name for sep in ("/", "\\")) or name in (".", "..") or not name.strip():
         raise ValueError("Invalid name.")
     return parent / name
 
@@ -49,3 +43,19 @@ def human_type_from_name(name: str, is_dir: bool) -> str:
     if ext:
         return f"{ext[1:].upper()} File"
     return "File"
+
+def looks_like_text(ext: str) -> bool:
+    ext = ext.lower()
+    return ext in {
+        ".txt",".md",".py",".js",".ts",".tsx",".jsx",".json",".yml",".yaml",".ini",".cfg",".log",".csv",".html",".css",
+        ".c",".cpp",".h",".hpp",".java",".rs",".go",".php",".sh",".bat",".ps1",".toml",".xml"
+    }
+
+def is_image_ext(ext: str) -> bool:
+    ext = ext.lower()
+    return ext in {".png",".jpg",".jpeg",".webp",".gif",".bmp"}
+
+def read_text_head(path: Path, max_bytes: int = 50_000) -> str:
+    # best-effort: decode as utf-8 with replacement
+    data = path.read_bytes()[:max_bytes]
+    return data.decode("utf-8", errors="replace")

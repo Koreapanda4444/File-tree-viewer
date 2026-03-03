@@ -14,13 +14,6 @@ class FileMeta:
 
 @dataclass
 class UndoDelete:
-    # For Real mode: item was moved to trash, and can be restored
     src_path: str
     trash_path: str
     is_dir: bool
-
-@dataclass
-class LogEntry:
-    ts: float
-    action: str
-    detail: str

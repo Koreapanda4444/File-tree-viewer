@@ -1,8 +1,8 @@
 from __future__ import annotations
-import os
 import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
+
 from models import FileMeta, UndoDelete
 from utils import ensure_under_root, safe_join, is_hidden_path, human_type_from_name
 
@@ -12,11 +12,9 @@ class RealFSBackend:
     def __init__(self):
         self.root: Optional[Path] = None
         self.show_hidden: bool = False
-        self.last_undo: Optional[UndoDelete] = None
 
     def set_root(self, root: Path) -> None:
         self.root = root.resolve()
-        self.last_undo = None
 
     def _require_root(self) -> Path:
         if not self.root:
@@ -31,7 +29,6 @@ class RealFSBackend:
             for entry in folder.iterdir():
                 if not self.show_hidden and is_hidden_path(entry):
                     continue
-                # hide internal trash unless show_hidden is on
                 if not self.show_hidden and entry.name == TRASH_DIRNAME:
                     continue
                 items.append((entry, entry.is_dir()))
@@ -97,7 +94,6 @@ class RealFSBackend:
         ensure_under_root(root, p)
         trash = self._trash_dir()
 
-        # Create a unique name in trash (keep original name with suffix)
         base = p.name
         candidate = trash / base
         i = 1
@@ -107,22 +103,17 @@ class RealFSBackend:
 
         is_dir = p.is_dir()
         shutil.move(str(p), str(candidate))
-        undo = UndoDelete(src_path=str(p), trash_path=str(candidate), is_dir=is_dir)
-        self.last_undo = undo
-        return undo
+        return UndoDelete(src_path=str(p), trash_path=str(candidate), is_dir=is_dir)
 
-    def undo_delete(self) -> Optional[Path]:
-        if not self.last_undo:
-            return None
+    def restore_from_trash(self, undo: UndoDelete) -> Path:
         root = self._require_root()
-        src = Path(self.last_undo.src_path)
-        trash = Path(self.last_undo.trash_path)
+        src = Path(undo.src_path)
+        trash = Path(undo.trash_path)
 
         # If original parent no longer exists, restore to root
         restore_parent = src.parent if src.parent.exists() else root
         restore_parent.mkdir(parents=True, exist_ok=True)
 
-        # If name collides, append suffix
         target = restore_parent / src.name
         i = 1
         while target.exists():
@@ -130,7 +121,6 @@ class RealFSBackend:
             i += 1
 
         shutil.move(str(trash), str(target))
-        self.last_undo = None
         return target
 
     def move(self, src: Path, dst_folder: Path) -> Path:
@@ -150,7 +140,6 @@ class RealFSBackend:
         ensure_under_root(root, target)
 
         if src.is_dir():
-            # copytree requires target not exist
             i = 1
             candidate = target
             while candidate.exists():
@@ -166,3 +155,11 @@ class RealFSBackend:
                 i += 1
             shutil.copy2(str(src), str(candidate))
             return candidate
+
+    def delete_permanently(self, p: Path) -> None:
+        root = self._require_root()
+        ensure_under_root(root, p)
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=False)
+        else:
+            p.unlink(missing_ok=True)

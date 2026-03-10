@@ -1,28 +1,27 @@
-# File-tree-viewer (Real + VM)
+# File Tree Viewer (Real + VM)
 
-A two-tab file tree tool:
+Two-tab file tree tool:
 
-- **Real File System**: browse and modify files under a selected root (safe root enforcement)
+- **Real File System**: browse & modify files under a selected root (safe root enforcement)
 - **Virtual File System (VM)**: experiment with an in-memory tree, save/load JSON, export into Real
 
-## Features
+## Added in this version
+- Double-click:
+  - Real: open file in default app
+  - VM: edit file content in an editor modal
+- Async filesystem loading (Real): folder expansion loads in a background thread
+- Multi-select + bulk ops: delete/move/copy
+
+## UX features
 - Right-click context menu (Real/VM)
 - Drag & drop move (drop onto folders)
 - Shortcuts: **F2 rename**, **Del delete**, **Ctrl+Z undo**
 - Multi-step Undo
-- Preview panel:
-  - Text preview (first ~50KB)
-  - Image preview (png/jpg/jpeg/webp/gif) via Pillow
-- Search:
-  - **Highlight** matches
-  - **Filter mode** shows only matching items + their parent folders
+- Preview panel (text/image)
+- Search highlight + filter mode
 
 ## Run
 ```bash
 pip install -r requirements.txt
 python main.py
 ```
-
-## Safety (Real mode)
-- All operations are restricted to the selected **root folder**
-- Delete moves items into **.ftv_trash** inside the root; Undo restores

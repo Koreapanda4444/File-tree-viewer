@@ -45,5 +45,9 @@ MENU_REFRESH = "Refresh"
 MENU_EXPAND_ALL = "Expand All"
 MENU_COLLAPSE_ALL = "Collapse All"
 
+EDITOR_TITLE = "Edit VM File"
+EDITOR_SAVE = "Save"
+EDITOR_CANCEL = "Cancel"
+
 DIALOG_OK = "OK"
 DIALOG_CANCEL = "Cancel"

@@ -18,9 +18,7 @@ class UndoStack:
             self._stack.pop(0)
 
     def pop(self) -> Optional[UndoAction]:
-        if not self._stack:
-            return None
-        return self._stack.pop()
+        return self._stack.pop() if self._stack else None
 
     def peek(self) -> Optional[UndoAction]:
         return self._stack[-1] if self._stack else None

@@ -110,7 +110,6 @@ class RealFSBackend:
         src = Path(undo.src_path)
         trash = Path(undo.trash_path)
 
-        # If original parent no longer exists, restore to root
         restore_parent = src.parent if src.parent.exists() else root
         restore_parent.mkdir(parents=True, exist_ok=True)
 

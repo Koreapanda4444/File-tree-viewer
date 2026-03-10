@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Iterable, List, Tuple
 
 from tkinter import filedialog, messagebox
 
@@ -9,7 +9,7 @@ from backend_real import RealFSBackend
 from backend_vm import VirtualFSBackend
 from models import UndoDelete
 from undo_stack import UndoStack, UndoAction
-from utils import looks_like_text, is_image_ext, read_text_head
+from utils import looks_like_text, is_image_ext, read_text_head, open_path_default, now_ts
 
 class FileTreeController:
     def __init__(self, ui: Any):
@@ -24,26 +24,20 @@ class FileTreeController:
         self.undo_real = UndoStack(maxlen=50)
         self.undo_vm = UndoStack(maxlen=50)
 
-    # ---------- helpers ----------
     def log(self, action: str, detail: str) -> None:
         self.ui.append_log(f"{action}: {detail}")
 
     def _update_undo_ui(self):
         stack = self.undo_real if self.active_tab == "real" else self.undo_vm
         top = stack.peek()
-        if top:
-            self.ui.set_undo_status(f"{T.LBL_UNDO_PREFIX} {top.label}")
-        else:
-            self.ui.set_undo_status(None)
+        self.ui.set_undo_status(f"{T.LBL_UNDO_PREFIX} {top.label}" if top else None)
 
-    # ---------- tab ----------
     def on_tab_change(self, tab_name: str) -> None:
         self.active_tab = "real" if tab_name == T.TAB_REAL else "vm"
         self.ui.clear_details()
         self.ui.clear_preview()
         self._update_undo_ui()
 
-    # ---------- undo ----------
     def undo(self):
         stack = self.undo_real if self.active_tab == "real" else self.undo_vm
         action = stack.pop()
@@ -54,16 +48,12 @@ class FileTreeController:
         try:
             detail = action.undo() or ""
             self.log("Undo", f"{action.label} {detail}".strip())
-            if self.active_tab == "real":
-                self.refresh_real()
-            else:
-                self.refresh_vm()
+            (self.refresh_real if self.active_tab == "real" else self.refresh_vm)()
             self._update_undo_ui()
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
             self._update_undo_ui()
 
-    # ---------- real root / refresh ----------
     def select_root_real(self):
         folder = filedialog.askdirectory(title=T.BTN_SELECT_ROOT)
         if not folder:
@@ -77,21 +67,17 @@ class FileTreeController:
         self.refresh_real()
 
     def refresh_real(self):
-        if not self.real.root:
-            return
-        self.ui.build_tree_real(self.real.root, self.real)
+        if self.real.root:
+            self.ui.build_tree_real(self.real.root, self.real)
 
-    # ---------- vm refresh ----------
     def refresh_vm(self):
         self.ui.build_tree_vm(self.vm.root_id, self.vm)
 
-    # ---------- selection / preview ----------
     def real_on_select_path(self, p: Path):
         self.real_selected = p
         meta = self.real.get_meta(p)
         self.ui.update_details(meta)
 
-        # Preview
         if p.is_dir():
             self.ui.clear_preview()
             return
@@ -99,8 +85,7 @@ class FileTreeController:
         ext = p.suffix.lower()
         if looks_like_text(ext):
             try:
-                text = read_text_head(p)
-                self.ui.set_preview_text(text)
+                self.ui.set_preview_text(read_text_head(p))
             except Exception as e:
                 self.ui.set_preview_text(f"(preview error) {e}")
         elif is_image_ext(ext):
@@ -112,14 +97,81 @@ class FileTreeController:
         self.vm_selected = node_id
         meta = self.vm.get_meta(node_id)
         self.ui.update_details(meta)
+        n = self.vm.nodes[node_id]
+        self.ui.clear_preview() if n.is_dir else self.ui.set_preview_text(n.content if n.content else "(empty file)")
 
+    def real_open_file(self, p: Path):
+        if p.is_dir():
+            return
+        try:
+            open_path_default(p)
+            self.log("Open", str(p))
+        except Exception as e:
+            messagebox.showerror(T.APP_TITLE, str(e))
+
+    def vm_edit_file(self, node_id: str):
         n = self.vm.nodes[node_id]
         if n.is_dir:
-            self.ui.clear_preview()
-        else:
-            self.ui.set_preview_text(n.content if n.content else "(empty file)")
+            return
+        new_text = self.ui.open_text_editor(T.EDITOR_TITLE, n.name, n.content)
+        if new_text is None:
+            return
+        self._vm_snapshot(f"VM edit {n.name}")
+        n.content = new_text
+        n.updated_ts = now_ts()
+        self.log("VM edit", self.vm.get_path(node_id))
+        self.refresh_vm()
+        self.vm_on_select_node(node_id)
 
-    # ---------- Real ops ----------
+    def _normalize_real_paths(self, paths: Iterable[Path]) -> List[Path]:
+        uniq, seen = [], set()
+        for p in paths:
+            try:
+                rp = p.resolve()
+            except Exception:
+                rp = p
+            if rp not in seen:
+                seen.add(rp)
+                uniq.append(rp)
+        uniq.sort(key=lambda x: len(str(x)))
+        selected = set(uniq)
+        result = []
+        for p in uniq:
+            cur = p.parent
+            skip = False
+            while cur != p:
+                try:
+                    if cur.resolve() in selected:
+                        skip = True
+                        break
+                except Exception:
+                    pass
+                if cur == cur.parent:
+                    break
+                cur = cur.parent
+            if not skip:
+                result.append(p)
+        result.sort(key=lambda x: len(str(x)), reverse=True)
+        return result
+
+    def _normalize_vm_ids(self, ids: Iterable[str]) -> List[str]:
+        uniq, seen = [], set()
+        for nid in ids:
+            if nid not in seen:
+                seen.add(nid)
+                uniq.append(nid)
+        selected = set(uniq)
+        def has_ancestor(nid: str) -> bool:
+            cur = self.vm.nodes[nid].parent_id
+            while cur:
+                if cur in selected:
+                    return True
+                cur = self.vm.nodes[cur].parent_id
+            return False
+        filtered = [nid for nid in uniq if nid != self.vm.root_id and not has_ancestor(nid)]
+        filtered.sort(key=lambda nid: len(self.vm.get_path(nid)), reverse=True)
+        return filtered
+
     def _real_current_folder(self) -> Path:
         if not self.real.root:
             raise ValueError("Select a root folder first.")
@@ -137,10 +189,7 @@ class FileTreeController:
             return
         try:
             newp = self.real.make_folder(parent, name)
-            self.undo_real.push(UndoAction(
-                label=f"Create folder {newp.name}",
-                undo=lambda p=newp: (self.real.delete_permanently(p), None)[1]
-            ))
+            self.undo_real.push(UndoAction(label=f"Create folder {newp.name}", undo=lambda p=newp: (self.real.delete_permanently(p), None)[1]))
             self._update_undo_ui()
             self.log("Created folder", str(newp))
             self.refresh_real()
@@ -157,10 +206,7 @@ class FileTreeController:
             return
         try:
             newp = self.real.make_file(parent, name, content="")
-            self.undo_real.push(UndoAction(
-                label=f"Create file {newp.name}",
-                undo=lambda p=newp: (self.real.delete_permanently(p), None)[1]
-            ))
+            self.undo_real.push(UndoAction(label=f"Create file {newp.name}", undo=lambda p=newp: (self.real.delete_permanently(p), None)[1]))
             self._update_undo_ui()
             self.log("Created file", str(newp))
             self.refresh_real()
@@ -178,91 +224,112 @@ class FileTreeController:
             old = p
             newp = self.real.rename(p, new_name)
             self.real_selected = newp
-            self.undo_real.push(UndoAction(
-                label=f"Rename {newp.name}",
-                undo=lambda src=newp, old_name=old.name: (self.real.rename(src, old_name), None)[1]
-            ))
+            self.undo_real.push(UndoAction(label=f"Rename {newp.name}", undo=lambda src=newp, old_name=old.name: (self.real.rename(src, old_name), None)[1]))
             self._update_undo_ui()
             self.log("Renamed", f"{old} -> {newp}")
             self.refresh_real()
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
 
-    def real_delete(self):
-        p = self.real_selected
-        if not p:
+    def real_delete_many(self, paths: List[Path]):
+        if not paths:
             return
-        if not messagebox.askyesno(T.APP_TITLE, f"Move to trash?\n\n{p}"):
+        if not messagebox.askyesno(T.APP_TITLE, f"Move {len(paths)} item(s) to trash?"):
             return
-        try:
-            undo = self.real.delete_to_trash(p)
-            self.undo_real.push(UndoAction(
-                label=f"Delete {Path(undo.src_path).name}",
-                undo=lambda u=undo: (self.real.restore_from_trash(u), None)[1]
-            ))
+        paths = self._normalize_real_paths(paths)
+        undos, errors = [], []
+        for p in paths:
+            try:
+                undos.append(self.real.delete_to_trash(p))
+            except Exception as e:
+                errors.append(f"{p}: {e}")
+        if undos:
+            def undo_all():
+                restored = 0
+                for u in reversed(undos):
+                    try:
+                        self.real.restore_from_trash(u); restored += 1
+                    except Exception:
+                        pass
+                return f"(restored {restored})"
+            self.undo_real.push(UndoAction(label=f"Delete {len(undos)} item(s)", undo=undo_all))
             self._update_undo_ui()
-            self.log("Deleted (to trash)", str(p))
+            self.log("Deleted (to trash)", f"{len(undos)} item(s)")
             self.refresh_real()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        if errors:
+            messagebox.showwarning(T.APP_TITLE, "Some items failed:\n\n" + "\n".join(errors[:10]))
 
-    def real_move_to(self, dst_folder: Path):
-        src = self.real_selected
-        if not src or not self.real.root:
+    def real_move_many(self, paths: List[Path], dst_folder: Path):
+        if not paths:
             return
-        try:
-            old_parent = src.parent
-            newp = self.real.move(src, dst_folder)
-            self.real_selected = newp
-            self.undo_real.push(UndoAction(
-                label=f"Move {newp.name}",
-                undo=lambda p=newp, back=old_parent: (self.real.move(p, back), None)[1]
-            ))
+        paths = self._normalize_real_paths(paths)
+        moved, errors = [], []
+        for p in paths:
+            try:
+                old_parent = p.parent
+                newp = self.real.move(p, dst_folder)
+                moved.append((newp, old_parent))
+            except Exception as e:
+                errors.append(f"{p}: {e}")
+        if moved:
+            def undo_all():
+                ok = 0
+                for newp, old_parent in reversed(moved):
+                    try:
+                        self.real.move(newp, old_parent); ok += 1
+                    except Exception:
+                        pass
+                return f"(moved back {ok})"
+            self.undo_real.push(UndoAction(label=f"Move {len(moved)} item(s)", undo=undo_all))
             self._update_undo_ui()
-            self.log("Moved", f"{src} -> {newp}")
+            self.log("Moved", f"{len(moved)} item(s) -> {dst_folder}")
             self.refresh_real()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        if errors:
+            messagebox.showwarning(T.APP_TITLE, "Some items failed:\n\n" + "\n".join(errors[:10]))
 
-    def real_move_dialog(self):
-        if not self.real_selected or not self.real.root:
+    def real_copy_many(self, paths: List[Path], dst_folder: Path):
+        if not paths:
+            return
+        paths = self._normalize_real_paths(paths)
+        created, errors = [], []
+        for p in reversed(paths):
+            try:
+                created.append(self.real.copy(p, dst_folder))
+            except Exception as e:
+                errors.append(f"{p}: {e}")
+        if created:
+            def undo_all():
+                ok = 0
+                for c in reversed(created):
+                    try:
+                        self.real.delete_permanently(c); ok += 1
+                    except Exception:
+                        pass
+                return f"(deleted {ok} copy/copies)"
+            self.undo_real.push(UndoAction(label=f"Copy {len(created)} item(s)", undo=undo_all))
+            self._update_undo_ui()
+            self.log("Copied", f"{len(created)} item(s) -> {dst_folder}")
+            self.refresh_real()
+        if errors:
+            messagebox.showwarning(T.APP_TITLE, "Some items failed:\n\n" + "\n".join(errors[:10]))
+
+    def real_move_dialog(self, paths: List[Path]):
+        if not self.real.root or not paths:
             return
         dst = filedialog.askdirectory(title="Move to folder (inside root)")
-        if not dst:
-            return
-        self.real_move_to(Path(dst))
+        if dst:
+            self.real_move_many(paths, Path(dst))
 
-    def real_copy_to(self, dst_folder: Path):
-        src = self.real_selected
-        if not src or not self.real.root:
-            return
-        try:
-            newp = self.real.copy(src, dst_folder)
-            self.undo_real.push(UndoAction(
-                label=f"Copy {src.name}",
-                undo=lambda p=newp: (self.real.delete_permanently(p), None)[1]
-            ))
-            self._update_undo_ui()
-            self.log("Copied", f"{src} -> {newp}")
-            self.refresh_real()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
-
-    def real_copy_dialog(self):
-        if not self.real_selected or not self.real.root:
+    def real_copy_dialog(self, paths: List[Path]):
+        if not self.real.root or not paths:
             return
         dst = filedialog.askdirectory(title="Copy to folder (inside root)")
-        if not dst:
-            return
-        self.real_copy_to(Path(dst))
+        if dst:
+            self.real_copy_many(paths, Path(dst))
 
-    # ---------- VM ops (snapshot undo) ----------
     def _vm_snapshot(self, label: str):
         snap = self.vm.to_json()
-        self.undo_vm.push(UndoAction(
-            label=label,
-            undo=lambda s=snap: (self.vm.load_json(s), None)[1]
-        ))
+        self.undo_vm.push(UndoAction(label=label, undo=lambda s=snap: (self.vm.load_json(s), None)[1]))
         self._update_undo_ui()
 
     def vm_new_folder(self):
@@ -306,73 +373,69 @@ class FileTreeController:
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
 
-    def vm_delete(self):
-        nid = self.vm_selected
-        if not nid or nid == self.vm.root_id:
+    def vm_delete_many(self, ids: List[str]):
+        ids = self._normalize_vm_ids(ids)
+        if not ids:
             return
-        if not messagebox.askyesno(T.APP_TITLE, f"Delete from VM?\n\n{self.vm.get_path(nid)}"):
+        if not messagebox.askyesno(T.APP_TITLE, f"Delete {len(ids)} item(s) from VM?"):
             return
         try:
-            self._vm_snapshot("VM delete")
-            path = self.vm.get_path(nid)
-            self.vm.delete(nid)
+            self._vm_snapshot(f"VM delete {len(ids)} item(s)")
+            for nid in ids:
+                if nid in self.vm.nodes:
+                    self.vm.delete(nid)
             self.vm_selected = None
-            self.log("VM deleted", path)
+            self.log("VM deleted", f"{len(ids)} item(s)")
             self.refresh_vm()
             self.ui.clear_details()
             self.ui.clear_preview()
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
 
-    def vm_move_to(self, dst_id: str):
-        nid = self.vm_selected
-        if not nid or nid == self.vm.root_id:
+    def vm_move_many(self, ids: List[str], dst_id: str):
+        ids = self._normalize_vm_ids(ids)
+        if not ids:
             return
         try:
-            self._vm_snapshot("VM move")
-            self.vm.move(nid, dst_id)
-            self.log("VM moved", self.vm.get_path(nid))
+            self._vm_snapshot(f"VM move {len(ids)} item(s)")
+            for nid in ids:
+                self.vm.move(nid, dst_id)
+            self.log("VM moved", f"{len(ids)} item(s) -> {self.vm.get_path(dst_id)}")
             self.refresh_vm()
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
 
-    def vm_copy_to(self, dst_id: str):
-        nid = self.vm_selected
-        if not nid:
+    def vm_copy_many(self, ids: List[str], dst_id: str):
+        ids = self._normalize_vm_ids(ids)
+        if not ids:
             return
         try:
-            self._vm_snapshot("VM copy")
-            new_id = self.vm.copy(nid, dst_id)
-            self.log("VM copied", self.vm.get_path(new_id))
+            self._vm_snapshot(f"VM copy {len(ids)} item(s)")
+            for nid in ids[::-1]:
+                self.vm.copy(nid, dst_id)
+            self.log("VM copied", f"{len(ids)} item(s) -> {self.vm.get_path(dst_id)}")
             self.refresh_vm()
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
 
     def vm_save(self):
         fp = filedialog.asksaveasfilename(title=T.VM_BTN_SAVE, defaultextension=".json", filetypes=[("JSON","*.json")])
-        if not fp:
-            return
-        try:
+        if fp:
             Path(fp).write_text(self.vm.to_json(), encoding="utf-8")
             self.log("VM saved", fp)
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
 
     def vm_load(self):
         fp = filedialog.askopenfilename(title=T.VM_BTN_LOAD, filetypes=[("JSON","*.json"),("All files","*.*")])
         if not fp:
             return
-        try:
-            s = Path(fp).read_text(encoding="utf-8")
-            self._vm_snapshot("VM load")
-            self.vm.load_json(s)
-            self.vm_selected = None
-            self.log("VM loaded", fp)
-            self.refresh_vm()
-            self.ui.clear_details()
-            self.ui.clear_preview()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        s = Path(fp).read_text(encoding="utf-8")
+        self._vm_snapshot("VM load")
+        self.vm.load_json(s)
+        self.vm_selected = None
+        self.log("VM loaded", fp)
+        self.refresh_vm()
+        self.ui.clear_details()
+        self.ui.clear_preview()
 
     def vm_clear(self):
         if not messagebox.askyesno(T.APP_TITLE, "Reset VM to default sample tree?"):
@@ -396,12 +459,9 @@ class FileTreeController:
         total = len(self.vm.nodes) - 1
         if not messagebox.askyesno(T.APP_TITLE, f"Export VM tree into:\n{dst_path}\n\nNodes: {total}\n\nProceed?"):
             return
-        try:
-            self._export_vm_node(self.vm.root_id, dst_path)
-            self.log("Exported VM", str(dst_path))
-            self.refresh_real()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        self._export_vm_node(self.vm.root_id, dst_path)
+        self.log("Exported VM", str(dst_path))
+        self.refresh_real()
 
     def _export_vm_node(self, node_id: str, dst_folder: Path):
         for cid, is_dir in self.vm.list_children(node_id):

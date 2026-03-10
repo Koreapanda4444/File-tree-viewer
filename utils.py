@@ -1,5 +1,8 @@
 from __future__ import annotations
+import os
 import time
+import subprocess
+import sys
 from pathlib import Path
 
 def now_ts() -> float:
@@ -56,6 +59,14 @@ def is_image_ext(ext: str) -> bool:
     return ext in {".png",".jpg",".jpeg",".webp",".gif",".bmp"}
 
 def read_text_head(path: Path, max_bytes: int = 50_000) -> str:
-    # best-effort: decode as utf-8 with replacement
     data = path.read_bytes()[:max_bytes]
     return data.decode("utf-8", errors="replace")
+
+def open_path_default(path: Path) -> None:
+    p = str(path)
+    if sys.platform.startswith("win"):
+        os.startfile(p)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.run(["open", p], check=False)
+    else:
+        subprocess.run(["xdg-open", p], check=False)

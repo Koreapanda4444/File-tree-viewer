@@ -416,6 +416,127 @@ class App(ctk.CTk):
         for top in tree.get_children(""): walk(top)
 
     # ------- menus -------
+def apply_filter_real(self, query: str):
+    if not self.controller or not self.controller.real.root:
+        return
+    query = query.strip()
+    if not query:
+        self.controller.refresh_real()
+        return
+
+    root = self.controller.real.root
+    backend = self.controller.real
+    self._search_filtered_real = True
+
+    self.tree.delete(*self.tree.get_children())
+    self._tree_item_to_payload = {}
+
+    max_nodes = 15000
+    visited = 0
+    matches = 0
+
+    def dfs(folder: Path):
+        nonlocal visited, matches
+        if visited > max_nodes:
+            return False, []
+        visited += 1
+        included = []
+        try:
+            children = backend.list_children(folder)
+        except Exception:
+            children = []
+        folder_match = query.lower() in folder.name.lower()
+        any_child = False
+        for p, is_dir in children:
+            if visited > max_nodes:
+                break
+            if is_dir:
+                ok, kids = dfs(p)
+                if ok:
+                    included.append((p, True, kids))
+                    any_child = True
+            else:
+                visited += 1
+                if query.lower() in p.name.lower():
+                    matches += 1
+                    included.append((p, False, []))
+                    any_child = True
+        return folder_match or any_child, included
+
+    _, kids = dfs(root)
+
+    root_item = self.tree.insert("", "end", text=str(root), open=True)
+    self._tree_item_to_payload[root_item] = root
+
+    def insert(parent_item, nodes):
+        for p, is_dir, ckids in nodes:
+            it = self.tree.insert(parent_item, "end", text=p.name, open=True)
+            self._tree_item_to_payload[it] = p
+            if is_dir:
+                insert(it, ckids)
+
+    insert(root_item, kids)
+    self._apply_highlight(self.tree, query)
+    self.append_log(f"Filter (Real): '{query}' — matches: {matches}")
+
+def apply_filter_vm(self, query: str):
+    if not self.controller:
+        return
+    query = query.strip()
+    if not query:
+        self.controller.refresh_vm()
+        return
+
+    backend = self.controller.vm
+    self._search_filtered_vm = True
+
+    self.vm_tree.delete(*self.vm_tree.get_children())
+    self._vm_tree_item_to_id = {}
+
+    matches = 0
+    max_nodes = 20000
+    visited = 0
+
+    def dfs(node_id: str):
+        nonlocal matches, visited
+        if visited > max_nodes:
+            return False, []
+        visited += 1
+        node = backend.nodes[node_id]
+        node_match = query.lower() in node.name.lower()
+        included = []
+        any_child = False
+        for cid, is_dir in backend.list_children(node_id):
+            if is_dir:
+                ok, kids = dfs(cid)
+                if ok:
+                    included.append((cid, True, kids))
+                    any_child = True
+            else:
+                visited += 1
+                if query.lower() in backend.nodes[cid].name.lower():
+                    matches += 1
+                    included.append((cid, False, []))
+                    any_child = True
+        return node_match or any_child, included
+
+    _, kids = dfs(backend.root_id)
+
+    root_item = self.vm_tree.insert("", "end", text=backend.nodes[backend.root_id].name, open=True)
+    self._vm_tree_item_to_id[root_item] = backend.root_id
+
+    def insert(parent_item, nodes):
+        for cid, is_dir, ckids in nodes:
+            it = self.vm_tree.insert(parent_item, "end", text=backend.nodes[cid].name, open=True)
+            self._vm_tree_item_to_id[it] = cid
+            if is_dir:
+                insert(it, ckids)
+
+    insert(root_item, kids)
+    self._apply_highlight(self.vm_tree, query)
+    self.append_log(f"Filter (VM): '{query}' — matches: {matches}")
+
+
     def _make_menu(self, is_vm: bool) -> Menu:
         m = Menu(self, tearoff=0)
         m.add_command(label=T.MENU_NEW_FILE, command=self._on_new_file)
@@ -440,7 +561,38 @@ class App(ctk.CTk):
         if not hasattr(self, "_menu_vm"): self._menu_vm=self._make_menu(True)
         self._menu_vm.tk_popup(e.x_root, e.y_root)
 
-    def _on_copy_path(self):
+    def _on_menu_open(self):
+    if not self.controller:
+        return
+    if self.tabs.get() == T.TAB_REAL:
+        paths = self._real_selected_paths()
+        if not paths:
+            return
+        self.controller.real_open_path(paths[0])
+    else:
+        ids = self._vm_selected_ids()
+        if not ids:
+            return
+        nid = ids[0]
+        node = self.controller.vm.nodes.get(nid)
+        if node and not node.is_dir:
+            self.controller.vm_edit_file(nid)
+
+def _on_menu_edit(self):
+    if not self.controller:
+        return
+    if self.tabs.get() == T.TAB_REAL:
+        paths = self._real_selected_paths()
+        if not paths:
+            return
+        self.controller.real_edit_text(paths[0])
+    else:
+        ids = self._vm_selected_ids()
+        if not ids:
+            return
+        self.controller.vm_edit_file(ids[0])
+
+def _on_copy_path(self):
         if self.tabs.get()==T.TAB_REAL:
             sel=self.tree.selection()
             if not sel: return
@@ -493,7 +645,11 @@ class App(ctk.CTk):
         if Path(p).is_dir():
             self.tree.item(it, open=not self.tree.item(it,"open"))
         else:
-            self.controller.real_open_file(Path(p))
+            ext = Path(p).suffix.lower()
+            if looks_like_text(ext):
+                self.controller.real_edit_text(Path(p))
+            else:
+                self.controller.real_open_path(Path(p))
 
     def _on_vm_tree_double_click(self, e):
         if not self.controller: return

@@ -51,3 +51,7 @@ EDITOR_CANCEL = "Cancel"
 
 DIALOG_OK = "OK"
 DIALOG_CANCEL = "Cancel"
+MENU_OPEN = "Open"
+MENU_EDIT = "Edit (Text)"
+EDITOR_TITLE_REAL = "Edit Text File"
+EDITOR_TITLE_VM = "Edit VM File"

@@ -9,7 +9,8 @@ from backend_real import RealFSBackend
 from backend_vm import VirtualFSBackend
 from models import UndoDelete
 from undo_stack import UndoStack, UndoAction
-from utils import looks_like_text, is_image_ext, read_text_head, open_path_default, now_ts
+from utils import looks_like_text, is_image_ext, read_text_head, open_path_default, now_ts, read_text_full, write_text_full
+
 
 class FileTreeController:
     def __init__(self, ui: Any):
@@ -109,7 +110,46 @@ class FileTreeController:
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
 
-    def vm_edit_file(self, node_id: str):
+    def real_open_path(self, p: Path):
+    try:
+        open_path_default(p)
+        self.log("Open", str(p))
+    except Exception as e:
+        messagebox.showerror(T.APP_TITLE, str(e))
+
+def real_edit_text(self, p: Path):
+    if p.is_dir():
+        return
+    ext = p.suffix.lower()
+    if not looks_like_text(ext):
+        messagebox.showinfo(T.APP_TITLE, "This file type is not treated as text.")
+        return
+    try:
+        old = read_text_full(p)
+    except Exception as e:
+        messagebox.showerror(T.APP_TITLE, f"Cannot read file: {e}")
+        return
+
+    new_text = self.ui.open_text_editor("Edit Text File", p.name, old)
+    if new_text is None:
+        return
+
+    try:
+        write_text_full(p, new_text)
+    except Exception as e:
+        messagebox.showerror(T.APP_TITLE, f"Cannot write file: {e}")
+        return
+
+    self.undo_real.push(UndoAction(
+        label=f"Edit {p.name}",
+        undo=lambda path=p, content=old: (write_text_full(path, content), None)[1]
+    ))
+    self._update_undo_ui()
+    self.log("Edited", str(p))
+    self.refresh_real()
+    self.real_on_select_path(p)
+
+def vm_edit_file(self, node_id: str):
         n = self.vm.nodes[node_id]
         if n.is_dir:
             return

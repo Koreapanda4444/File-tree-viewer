@@ -70,3 +70,13 @@ def open_path_default(path: Path) -> None:
         subprocess.run(["open", p], check=False)
     else:
         subprocess.run(["xdg-open", p], check=False)
+
+def read_text_full(path: Path, max_bytes: int = 5_000_000) -> str:
+    data = path.read_bytes()
+    if len(data) > max_bytes:
+        data = data[:max_bytes]
+    return data.decode("utf-8", errors="replace")
+
+def write_text_full(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+

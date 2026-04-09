@@ -1,10 +1,12 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 import json
 
 from models import FileMeta
 from utils import now_ts, human_type_from_name
+
 
 @dataclass
 class VMNode:
@@ -16,6 +18,7 @@ class VMNode:
     content: str = ""
     created_ts: float = field(default_factory=now_ts)
     updated_ts: float = field(default_factory=now_ts)
+
 
 class VirtualFSBackend:
     def __init__(self):
@@ -32,7 +35,7 @@ class VirtualFSBackend:
         docs = self.make_folder(self.root_id, "Documents")
         proj = self.make_folder(docs, "Projects")
         app2 = self.make_folder(proj, "App2")
-        self.make_file(app2, "config.json", "{\n  \"hello\": \"vm\"\n}\n")
+        self.make_file(app2, "config.json", "{\n  \\\"hello\\\": \\\"vm\\\"\n}\n")
         self.make_file(app2, "main.py", "print('Hello from VM')\n")
 
     def _new_id(self) -> str:
@@ -137,9 +140,13 @@ class VirtualFSBackend:
             src = self.nodes[src_id]
             nid = self._new_id()
             nn = VMNode(
-                id=nid, name=src.name, is_dir=src.is_dir,
-                parent_id=new_parent, content=src.content,
-                created_ts=now_ts(), updated_ts=now_ts()
+                id=nid,
+                name=src.name,
+                is_dir=src.is_dir,
+                parent_id=new_parent,
+                content=src.content,
+                created_ts=now_ts(),
+                updated_ts=now_ts(),
             )
             self.nodes[nid] = nn
             self.nodes[new_parent].children.append(nid)
@@ -153,11 +160,19 @@ class VirtualFSBackend:
         data = {
             "root_id": self.root_id,
             "id_counter": self._id_counter,
-            "nodes": {nid: {
-                "id": n.id, "name": n.name, "is_dir": n.is_dir,
-                "parent_id": n.parent_id, "children": list(n.children),
-                "content": n.content, "created_ts": n.created_ts, "updated_ts": n.updated_ts,
-            } for nid, n in self.nodes.items()}
+            "nodes": {
+                nid: {
+                    "id": n.id,
+                    "name": n.name,
+                    "is_dir": n.is_dir,
+                    "parent_id": n.parent_id,
+                    "children": list(n.children),
+                    "content": n.content,
+                    "created_ts": n.created_ts,
+                    "updated_ts": n.updated_ts,
+                }
+                for nid, n in self.nodes.items()
+            },
         }
         return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -168,7 +183,9 @@ class VirtualFSBackend:
         self.nodes = {}
         for nid, nd in data["nodes"].items():
             self.nodes[nid] = VMNode(
-                id=nd["id"], name=nd["name"], is_dir=nd["is_dir"],
+                id=nd["id"],
+                name=nd["name"],
+                is_dir=nd["is_dir"],
                 parent_id=nd.get("parent_id"),
                 children=list(nd.get("children", [])),
                 content=nd.get("content", ""),

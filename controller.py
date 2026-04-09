@@ -1,15 +1,24 @@
 from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional, Any, Iterable, List, Tuple
+from typing import Any, Iterable, List, Optional
 
 from tkinter import filedialog, messagebox
 
 import ui_text as T
 from backend_real import RealFSBackend
 from backend_vm import VirtualFSBackend
-from models import UndoDelete
 from undo_stack import UndoStack, UndoAction
-from utils import looks_like_text, is_image_ext, read_text_head, open_path_default, now_ts, read_text_full, write_text_full
+from utils import (
+    looks_like_text,
+    is_image_ext,
+    read_text_head,
+    read_text_full,
+    write_text_full,
+    open_path_default,
+    reveal_in_explorer,
+    now_ts,
+)
 
 
 class FileTreeController:
@@ -18,13 +27,14 @@ class FileTreeController:
         self.real = RealFSBackend()
         self.vm = VirtualFSBackend()
 
-        self.active_tab = "real"
+        self.active_tab = "real"  # 'real' or 'vm'
         self.real_selected: Optional[Path] = None
         self.vm_selected: Optional[str] = None
 
         self.undo_real = UndoStack(maxlen=50)
         self.undo_vm = UndoStack(maxlen=50)
 
+    # ----------------- helpers -----------------
     def log(self, action: str, detail: str) -> None:
         self.ui.append_log(f"{action}: {detail}")
 
@@ -50,11 +60,12 @@ class FileTreeController:
             detail = action.undo() or ""
             self.log("Undo", f"{action.label} {detail}".strip())
             (self.refresh_real if self.active_tab == "real" else self.refresh_vm)()
-            self._update_undo_ui()
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
+        finally:
             self._update_undo_ui()
 
+    # ----------------- root / refresh -----------------
     def select_root_real(self):
         folder = filedialog.askdirectory(title=T.BTN_SELECT_ROOT)
         if not folder:
@@ -74,6 +85,7 @@ class FileTreeController:
     def refresh_vm(self):
         self.ui.build_tree_vm(self.vm.root_id, self.vm)
 
+    # ----------------- selection / preview -----------------
     def real_on_select_path(self, p: Path):
         self.real_selected = p
         meta = self.real.get_meta(p)
@@ -98,73 +110,83 @@ class FileTreeController:
         self.vm_selected = node_id
         meta = self.vm.get_meta(node_id)
         self.ui.update_details(meta)
-        n = self.vm.nodes[node_id]
-        self.ui.clear_preview() if n.is_dir else self.ui.set_preview_text(n.content if n.content else "(empty file)")
+        node = self.vm.nodes[node_id]
+        if node.is_dir:
+            self.ui.clear_preview()
+        else:
+            self.ui.set_preview_text(node.content if node.content else "(empty file)")
 
-    def real_open_file(self, p: Path):
-        if p.is_dir():
-            return
+    # ----------------- open / reveal / edit -----------------
+    def real_open(self, p: Path):
         try:
+            if not p.exists():
+                raise FileNotFoundError(str(p))
             open_path_default(p)
             self.log("Open", str(p))
         except Exception as e:
             messagebox.showerror(T.APP_TITLE, str(e))
 
-    def real_open_path(self, p: Path):
-    try:
-        open_path_default(p)
-        self.log("Open", str(p))
-    except Exception as e:
-        messagebox.showerror(T.APP_TITLE, str(e))
+    def real_reveal(self, p: Path):
+        try:
+            if not p.exists():
+                raise FileNotFoundError(str(p))
+            reveal_in_explorer(p)
+            self.log("Reveal", str(p))
+        except Exception as e:
+            messagebox.showerror(T.APP_TITLE, str(e))
 
-def real_edit_text(self, p: Path):
-    if p.is_dir():
-        return
-    ext = p.suffix.lower()
-    if not looks_like_text(ext):
-        messagebox.showinfo(T.APP_TITLE, "This file type is not treated as text.")
-        return
-    try:
-        old = read_text_full(p)
-    except Exception as e:
-        messagebox.showerror(T.APP_TITLE, f"Cannot read file: {e}")
-        return
-
-    new_text = self.ui.open_text_editor("Edit Text File", p.name, old)
-    if new_text is None:
-        return
-
-    try:
-        write_text_full(p, new_text)
-    except Exception as e:
-        messagebox.showerror(T.APP_TITLE, f"Cannot write file: {e}")
-        return
-
-    self.undo_real.push(UndoAction(
-        label=f"Edit {p.name}",
-        undo=lambda path=p, content=old: (write_text_full(path, content), None)[1]
-    ))
-    self._update_undo_ui()
-    self.log("Edited", str(p))
-    self.refresh_real()
-    self.real_on_select_path(p)
-
-def vm_edit_file(self, node_id: str):
-        n = self.vm.nodes[node_id]
-        if n.is_dir:
+    def real_edit_text(self, p: Path):
+        if p.is_dir():
             return
-        new_text = self.ui.open_text_editor(T.EDITOR_TITLE, n.name, n.content)
+        ext = p.suffix.lower()
+        if not looks_like_text(ext):
+            messagebox.showinfo(T.APP_TITLE, "This file type is not treated as text.")
+            return
+        try:
+            old = read_text_full(p)
+        except Exception as e:
+            messagebox.showerror(T.APP_TITLE, f"Cannot read file: {e}")
+            return
+
+        new_text = self.ui.open_text_editor(T.EDITOR_TITLE_REAL, p.name, old)
         if new_text is None:
             return
-        self._vm_snapshot(f"VM edit {n.name}")
-        n.content = new_text
-        n.updated_ts = now_ts()
+
+        try:
+            write_text_full(p, new_text)
+        except Exception as e:
+            messagebox.showerror(T.APP_TITLE, f"Cannot write file: {e}")
+            return
+
+        self.undo_real.push(
+            UndoAction(
+                label=f"Edit {p.name}",
+                undo=lambda path=p, content=old: (write_text_full(path, content), None)[1],
+            )
+        )
+        self._update_undo_ui()
+        self.log("Edited", str(p))
+        self.refresh_real()
+        self.real_on_select_path(p)
+
+    def vm_edit_file(self, node_id: str):
+        node = self.vm.nodes[node_id]
+        if node.is_dir:
+            return
+        new_text = self.ui.open_text_editor(T.EDITOR_TITLE_VM, node.name, node.content)
+        if new_text is None:
+            return
+        self._vm_snapshot(f"VM edit {node.name}")
+        node.content = new_text
+        node.updated_ts = now_ts()
         self.log("VM edit", self.vm.get_path(node_id))
         self.refresh_vm()
         self.vm_on_select_node(node_id)
 
+    # ----------------- normalize bulk selections -----------------
     def _normalize_real_paths(self, paths: Iterable[Path]) -> List[Path]:
-        uniq, seen = [], set()
+        uniq: List[Path] = []
+        seen = set()
         for p in paths:
             try:
                 rp = p.resolve()
@@ -173,20 +195,23 @@ def vm_edit_file(self, node_id: str):
             if rp not in seen:
                 seen.add(rp)
                 uniq.append(rp)
+        # remove descendants if ancestor selected
         uniq.sort(key=lambda x: len(str(x)))
         selected = set(uniq)
-        result = []
+        result: List[Path] = []
         for p in uniq:
             cur = p.parent
             skip = False
-            while cur != p:
+            while True:
+                if cur == cur.parent:
+                    break
                 try:
                     if cur.resolve() in selected:
                         skip = True
                         break
                 except Exception:
                     pass
-                if cur == cur.parent:
+                if cur == p:
                     break
                 cur = cur.parent
             if not skip:
@@ -195,7 +220,8 @@ def vm_edit_file(self, node_id: str):
         return result
 
     def _normalize_vm_ids(self, ids: Iterable[str]) -> List[str]:
-        uniq, seen = [], set()
+        uniq: List[str] = []
+        seen = set()
         for nid in ids:
             if nid not in seen:
                 seen.add(nid)
@@ -208,10 +234,11 @@ def vm_edit_file(self, node_id: str):
                     return True
                 cur = self.vm.nodes[cur].parent_id
             return False
-        filtered = [nid for nid in uniq if nid != self.vm.root_id and not has_ancestor(nid)]
-        filtered.sort(key=lambda nid: len(self.vm.get_path(nid)), reverse=True)
-        return filtered
+        out = [nid for nid in uniq if nid != self.vm.root_id and not has_ancestor(nid)]
+        out.sort(key=lambda nid: len(self.vm.get_path(nid)), reverse=True)
+        return out
 
+    # ----------------- Real ops -----------------
     def _real_current_folder(self) -> Path:
         if not self.real.root:
             raise ValueError("Select a root folder first.")
@@ -223,7 +250,8 @@ def vm_edit_file(self, node_id: str):
         try:
             parent = self._real_current_folder()
         except Exception as e:
-            messagebox.showinfo(T.APP_TITLE, str(e)); return
+            messagebox.showinfo(T.APP_TITLE, str(e))
+            return
         name = self.ui.prompt("New Folder", "Folder name:")
         if not name:
             return
@@ -240,7 +268,8 @@ def vm_edit_file(self, node_id: str):
         try:
             parent = self._real_current_folder()
         except Exception as e:
-            messagebox.showinfo(T.APP_TITLE, str(e)); return
+            messagebox.showinfo(T.APP_TITLE, str(e))
+            return
         name = self.ui.prompt("New File", "File name:")
         if not name:
             return
@@ -277,25 +306,30 @@ def vm_edit_file(self, node_id: str):
         if not messagebox.askyesno(T.APP_TITLE, f"Move {len(paths)} item(s) to trash?"):
             return
         paths = self._normalize_real_paths(paths)
-        undos, errors = [], []
+        undos = []
+        errors = []
         for p in paths:
             try:
                 undos.append(self.real.delete_to_trash(p))
             except Exception as e:
                 errors.append(f"{p}: {e}")
+
         if undos:
             def undo_all():
                 restored = 0
                 for u in reversed(undos):
                     try:
-                        self.real.restore_from_trash(u); restored += 1
+                        self.real.restore_from_trash(u)
+                        restored += 1
                     except Exception:
                         pass
                 return f"(restored {restored})"
+
             self.undo_real.push(UndoAction(label=f"Delete {len(undos)} item(s)", undo=undo_all))
             self._update_undo_ui()
             self.log("Deleted (to trash)", f"{len(undos)} item(s)")
             self.refresh_real()
+
         if errors:
             messagebox.showwarning(T.APP_TITLE, "Some items failed:\n\n" + "\n".join(errors[:10]))
 
@@ -303,7 +337,8 @@ def vm_edit_file(self, node_id: str):
         if not paths:
             return
         paths = self._normalize_real_paths(paths)
-        moved, errors = [], []
+        moved = []
+        errors = []
         for p in paths:
             try:
                 old_parent = p.parent
@@ -311,19 +346,23 @@ def vm_edit_file(self, node_id: str):
                 moved.append((newp, old_parent))
             except Exception as e:
                 errors.append(f"{p}: {e}")
+
         if moved:
             def undo_all():
                 ok = 0
                 for newp, old_parent in reversed(moved):
                     try:
-                        self.real.move(newp, old_parent); ok += 1
+                        self.real.move(newp, old_parent)
+                        ok += 1
                     except Exception:
                         pass
                 return f"(moved back {ok})"
+
             self.undo_real.push(UndoAction(label=f"Move {len(moved)} item(s)", undo=undo_all))
             self._update_undo_ui()
             self.log("Moved", f"{len(moved)} item(s) -> {dst_folder}")
             self.refresh_real()
+
         if errors:
             messagebox.showwarning(T.APP_TITLE, "Some items failed:\n\n" + "\n".join(errors[:10]))
 
@@ -331,25 +370,30 @@ def vm_edit_file(self, node_id: str):
         if not paths:
             return
         paths = self._normalize_real_paths(paths)
-        created, errors = [], []
+        created = []
+        errors = []
         for p in reversed(paths):
             try:
                 created.append(self.real.copy(p, dst_folder))
             except Exception as e:
                 errors.append(f"{p}: {e}")
+
         if created:
             def undo_all():
                 ok = 0
                 for c in reversed(created):
                     try:
-                        self.real.delete_permanently(c); ok += 1
+                        self.real.delete_permanently(c)
+                        ok += 1
                     except Exception:
                         pass
                 return f"(deleted {ok} copy/copies)"
+
             self.undo_real.push(UndoAction(label=f"Copy {len(created)} item(s)", undo=undo_all))
             self._update_undo_ui()
             self.log("Copied", f"{len(created)} item(s) -> {dst_folder}")
             self.refresh_real()
+
         if errors:
             messagebox.showwarning(T.APP_TITLE, "Some items failed:\n\n" + "\n".join(errors[:10]))
 
@@ -367,6 +411,7 @@ def vm_edit_file(self, node_id: str):
         if dst:
             self.real_copy_many(paths, Path(dst))
 
+    # ----------------- VM ops -----------------
     def _vm_snapshot(self, label: str):
         snap = self.vm.to_json()
         self.undo_vm.push(UndoAction(label=label, undo=lambda s=snap: (self.vm.load_json(s), None)[1]))
@@ -377,26 +422,20 @@ def vm_edit_file(self, node_id: str):
         name = self.ui.prompt("New VM Folder", "Folder name:")
         if not name:
             return
-        try:
-            self._vm_snapshot("VM create folder")
-            nid = self.vm.make_folder(parent_id, name)
-            self.log("VM folder", self.vm.get_path(nid))
-            self.refresh_vm()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        self._vm_snapshot("VM create folder")
+        nid = self.vm.make_folder(parent_id, name)
+        self.log("VM folder", self.vm.get_path(nid))
+        self.refresh_vm()
 
     def vm_new_file(self):
         parent_id = self.vm_selected if self.vm_selected and self.vm.nodes[self.vm_selected].is_dir else self.vm.root_id
         name = self.ui.prompt("New VM File", "File name:")
         if not name:
             return
-        try:
-            self._vm_snapshot("VM create file")
-            nid = self.vm.make_file(parent_id, name, "")
-            self.log("VM file", self.vm.get_path(nid))
-            self.refresh_vm()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        self._vm_snapshot("VM create file")
+        nid = self.vm.make_file(parent_id, name, "")
+        self.log("VM file", self.vm.get_path(nid))
+        self.refresh_vm()
 
     def vm_rename(self):
         nid = self.vm_selected
@@ -405,13 +444,10 @@ def vm_edit_file(self, node_id: str):
         new_name = self.ui.prompt("Rename VM", f"New name for {self.vm.nodes[nid].name}:")
         if not new_name:
             return
-        try:
-            self._vm_snapshot("VM rename")
-            self.vm.rename(nid, new_name)
-            self.log("VM rename", self.vm.get_path(nid))
-            self.refresh_vm()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        self._vm_snapshot("VM rename")
+        self.vm.rename(nid, new_name)
+        self.log("VM rename", self.vm.get_path(nid))
+        self.refresh_vm()
 
     def vm_delete_many(self, ids: List[str]):
         ids = self._normalize_vm_ids(ids)
@@ -419,53 +455,44 @@ def vm_edit_file(self, node_id: str):
             return
         if not messagebox.askyesno(T.APP_TITLE, f"Delete {len(ids)} item(s) from VM?"):
             return
-        try:
-            self._vm_snapshot(f"VM delete {len(ids)} item(s)")
-            for nid in ids:
-                if nid in self.vm.nodes:
-                    self.vm.delete(nid)
-            self.vm_selected = None
-            self.log("VM deleted", f"{len(ids)} item(s)")
-            self.refresh_vm()
-            self.ui.clear_details()
-            self.ui.clear_preview()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        self._vm_snapshot(f"VM delete {len(ids)} item(s)")
+        for nid in ids:
+            if nid in self.vm.nodes:
+                self.vm.delete(nid)
+        self.vm_selected = None
+        self.log("VM deleted", f"{len(ids)} item(s)")
+        self.refresh_vm()
+        self.ui.clear_details()
+        self.ui.clear_preview()
 
     def vm_move_many(self, ids: List[str], dst_id: str):
         ids = self._normalize_vm_ids(ids)
         if not ids:
             return
-        try:
-            self._vm_snapshot(f"VM move {len(ids)} item(s)")
-            for nid in ids:
-                self.vm.move(nid, dst_id)
-            self.log("VM moved", f"{len(ids)} item(s) -> {self.vm.get_path(dst_id)}")
-            self.refresh_vm()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        self._vm_snapshot(f"VM move {len(ids)} item(s)")
+        for nid in ids:
+            self.vm.move(nid, dst_id)
+        self.log("VM moved", f"{len(ids)} item(s) -> {self.vm.get_path(dst_id)}")
+        self.refresh_vm()
 
     def vm_copy_many(self, ids: List[str], dst_id: str):
         ids = self._normalize_vm_ids(ids)
         if not ids:
             return
-        try:
-            self._vm_snapshot(f"VM copy {len(ids)} item(s)")
-            for nid in ids[::-1]:
-                self.vm.copy(nid, dst_id)
-            self.log("VM copied", f"{len(ids)} item(s) -> {self.vm.get_path(dst_id)}")
-            self.refresh_vm()
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        self._vm_snapshot(f"VM copy {len(ids)} item(s)")
+        for nid in ids[::-1]:
+            self.vm.copy(nid, dst_id)
+        self.log("VM copied", f"{len(ids)} item(s) -> {self.vm.get_path(dst_id)}")
+        self.refresh_vm()
 
     def vm_save(self):
-        fp = filedialog.asksaveasfilename(title=T.VM_BTN_SAVE, defaultextension=".json", filetypes=[("JSON","*.json")])
+        fp = filedialog.asksaveasfilename(title=T.VM_BTN_SAVE, defaultextension=".json", filetypes=[("JSON", "*.json")])
         if fp:
             Path(fp).write_text(self.vm.to_json(), encoding="utf-8")
             self.log("VM saved", fp)
 
     def vm_load(self):
-        fp = filedialog.askopenfilename(title=T.VM_BTN_LOAD, filetypes=[("JSON","*.json"),("All files","*.*")])
+        fp = filedialog.askopenfilename(title=T.VM_BTN_LOAD, filetypes=[("JSON", "*.json"), ("All files", "*.*")])
         if not fp:
             return
         s = Path(fp).read_text(encoding="utf-8")

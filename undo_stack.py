@@ -1,11 +1,14 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Callable, Optional, List
+
 
 @dataclass
 class UndoAction:
     label: str
     undo: Callable[[], Optional[str]]
+
 
 class UndoStack:
     def __init__(self, maxlen: int = 50):
@@ -25,6 +28,3 @@ class UndoStack:
 
     def clear(self) -> None:
         self._stack.clear()
-
-    def __len__(self) -> int:
-        return len(self._stack)

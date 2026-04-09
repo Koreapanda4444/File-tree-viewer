@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Optional
+
 
 @dataclass
 class FileMeta:
@@ -9,6 +11,7 @@ class FileMeta:
     type: str
     size_bytes: Optional[int] = None
     modified_ts: Optional[float] = None
+
 
 @dataclass
 class UndoDelete:

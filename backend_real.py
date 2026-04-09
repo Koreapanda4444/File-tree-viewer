@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -7,6 +8,7 @@ from models import FileMeta, UndoDelete
 from utils import ensure_under_root, safe_join, is_hidden_path, human_type_from_name
 
 TRASH_DIRNAME = ".ftv_trash"
+
 
 class RealFSBackend:
     def __init__(self):
@@ -146,14 +148,14 @@ class RealFSBackend:
                 i += 1
             shutil.copytree(str(src), str(candidate))
             return candidate
-        else:
-            i = 1
-            candidate = target
-            while candidate.exists():
-                candidate = dst_folder / f"{src.stem}__copy_{i}{src.suffix}"
-                i += 1
-            shutil.copy2(str(src), str(candidate))
-            return candidate
+
+        i = 1
+        candidate = target
+        while candidate.exists():
+            candidate = dst_folder / f"{src.stem}__copy_{i}{src.suffix}"
+            i += 1
+        shutil.copy2(str(src), str(candidate))
+        return candidate
 
     def delete_permanently(self, p: Path) -> None:
         root = self._require_root()

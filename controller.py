@@ -117,14 +117,22 @@ class FileTreeController:
             self.ui.set_preview_text(node.content if node.content else "(empty file)")
 
     # ----------------- open / reveal / edit -----------------
-    def real_open(self, p: Path):
-        try:
-            if not p.exists():
-                raise FileNotFoundError(str(p))
+def real_open(self, p: Path):
+    try:
+        if not p.exists():
+            raise FileNotFoundError(str(p))
+        if p.is_dir():
+            mode = "reuse"
+            try:
+                mode = self.ui.get_folder_open_mode()
+            except Exception:
+                mode = "reuse"
+            open_folder(p, mode=mode)
+        else:
             open_path_default(p)
-            self.log("Open", str(p))
-        except Exception as e:
-            messagebox.showerror(T.APP_TITLE, str(e))
+        self.log("Open", str(p))
+    except Exception as e:
+        messagebox.showerror(T.APP_TITLE, str(e))
 
     def real_reveal(self, p: Path):
         try:

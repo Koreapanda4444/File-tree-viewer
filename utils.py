@@ -122,6 +122,25 @@ def open_path_default(path: Path) -> None:
         subprocess.run(["xdg-open", p], check=False)
 
 
+def open_folder(path: Path, mode: str = "reuse") -> None:
+    """Best-effort folder open behavior.
+    - mode='reuse' : normal open (may reuse existing window depending on OS)
+    - mode='new'   : try to force a new window (best-effort)
+    """
+    p = str(path)
+    if sys.platform.startswith("win"):
+        if mode == "new":
+            subprocess.run(["explorer.exe", "/n,", p], check=False)
+        else:
+            subprocess.run(["explorer.exe", p], check=False)
+    elif sys.platform == "darwin":
+        if mode == "new":
+            subprocess.run(["open", "-n", p], check=False)
+        else:
+            subprocess.run(["open", p], check=False)
+    else:
+        subprocess.run(["xdg-open", p], check=False)
+
 def reveal_in_explorer(path: Path) -> None:
     p = str(path)
     if sys.platform.startswith("win"):

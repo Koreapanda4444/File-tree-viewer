@@ -100,6 +100,8 @@ class App(ctk.CTk):
         self.var_show_hidden = tk.BooleanVar(value=False)
         self.var_filter_mode = tk.BooleanVar(value=False)
 
+        self.var_open_folder_mode = tk.StringVar(value=T.OPEN_FOLDER_REUSE)
+
         self._configure_ttk()
 
         self.grid_columnconfigure(0, weight=1)
@@ -156,43 +158,53 @@ class App(ctk.CTk):
         style.map("Treeview", background=[("selected", "#1f6aa5")], foreground=[("selected", "#ffffff")])
 
     # ---------- layout blocks ----------
-    def _toolbar(self, parent, is_vm: bool):
-        bar = ctk.CTkFrame(parent)
-        bar.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        bar.grid_columnconfigure(2, weight=1)
+def _toolbar(self, parent, is_vm: bool):
+    bar = ctk.CTkFrame(parent)
+    bar.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
 
-        self.root_label = ctk.CTkLabel(bar, text="Root: -", anchor="w")
-        self.root_label.grid(row=0, column=0, padx=(12, 10), pady=10, sticky="w")
+    # layout columns:
+    # 0 root, 1 select, 2 search(expand), 3 refresh, 4 hidden, 5 filter, (real only) 6 label 7 option, 8 clear, 9 status
+    bar.grid_columnconfigure(2, weight=1)
+    bar.grid_columnconfigure(9, weight=0)
 
-        ctk.CTkButton(bar, text=T.BTN_SELECT_ROOT, width=160, command=self._on_select_root_real).grid(
-            row=0, column=1, padx=(0, 10), pady=10
+    self.root_label = ctk.CTkLabel(bar, text="Root: -", anchor="w")
+    self.root_label.grid(row=0, column=0, padx=(12, 10), pady=10, sticky="w")
+
+    ctk.CTkButton(bar, text=T.BTN_SELECT_ROOT, width=160, command=self._on_select_root_real).grid(row=0, column=1, padx=(0, 10), pady=10)
+
+    entry = ctk.CTkEntry(bar, placeholder_text=T.PLACEHOLDER_SEARCH)
+    entry.grid(row=0, column=2, padx=(0, 10), pady=10, sticky="ew")
+    entry.bind("<Return>", lambda e: self._on_search())
+    if is_vm:
+        self.vm_search_entry = entry
+    else:
+        self.real_search_entry = entry
+
+    ctk.CTkButton(bar, text=T.BTN_REFRESH, width=110, command=self._on_refresh).grid(row=0, column=3, padx=(0, 10), pady=10)
+    ctk.CTkCheckBox(bar, text=T.LBL_SHOW_HIDDEN, variable=self.var_show_hidden, command=self._on_toggle_hidden).grid(row=0, column=4, padx=(0, 12), pady=10)
+    ctk.CTkCheckBox(bar, text=T.LBL_FILTER_MODE, variable=self.var_filter_mode, command=self._on_refresh).grid(row=0, column=5, padx=(0, 12), pady=10)
+
+    col_clear = 6
+    if not is_vm:
+        # Real-only: open folder mode option
+        ctk.CTkLabel(bar, text=f"{T.LBL_OPEN_FOLDER_MODE}:", anchor="w").grid(row=0, column=6, padx=(0, 6), pady=10, sticky="w")
+        opt = ctk.CTkOptionMenu(
+            bar,
+            values=[T.OPEN_FOLDER_REUSE, T.OPEN_FOLDER_NEW],
+            variable=self.var_open_folder_mode,
+            width=140,
         )
+        opt.grid(row=0, column=7, padx=(0, 12), pady=10, sticky="w")
+        col_clear = 8
 
-        entry = ctk.CTkEntry(bar, placeholder_text=T.PLACEHOLDER_SEARCH)
-        entry.grid(row=0, column=2, padx=(0, 10), pady=10, sticky="ew")
-        entry.bind("<Return>", lambda e: self._on_search())
-        if is_vm:
-            self.vm_search_entry = entry
-        else:
-            self.real_search_entry = entry
+    ctk.CTkButton(bar, text=T.BTN_CLEAR_SEARCH, width=90, command=self._on_clear_search).grid(row=0, column=col_clear, padx=(0, 12), pady=10)
 
-        ctk.CTkButton(bar, text=T.BTN_REFRESH, width=110, command=self._on_refresh).grid(row=0, column=3, padx=(0, 10), pady=10)
-        ctk.CTkCheckBox(bar, text=T.LBL_SHOW_HIDDEN, variable=self.var_show_hidden, command=self._on_toggle_hidden).grid(
-            row=0, column=4, padx=(0, 12), pady=10
-        )
-        ctk.CTkCheckBox(bar, text=T.LBL_FILTER_MODE, variable=self.var_filter_mode, command=self._on_refresh).grid(
-            row=0, column=5, padx=(0, 12), pady=10
-        )
-        ctk.CTkButton(bar, text=T.BTN_CLEAR_SEARCH, width=90, command=self._on_clear_search).grid(
-            row=0, column=6, padx=(0, 12), pady=10
-        )
-
-        status = ctk.CTkLabel(bar, text="", anchor="w")
-        status.grid(row=0, column=7, padx=(0, 12), pady=10, sticky="w")
-        if is_vm:
-            self.vm_search_status = status
-        else:
-            self.real_search_status = status
+    status = ctk.CTkLabel(bar, text="", anchor="w")
+    status.grid(row=0, column=col_clear + 1, padx=(0, 12), pady=10, sticky="w")
+    if is_vm:
+        self.vm_search_status = status
+    else:
+        self.real_search_status = status
 
     def set_search_status(self, is_vm: bool, text: str):
         try:
@@ -380,6 +392,14 @@ class App(ctk.CTk):
     def set_root_label(self, root: str):
         self.root_label.configure(text=f"Root: {root}")
 
+def get_folder_open_mode(self) -> str:
+    # returns 'reuse' or 'new'
+    try:
+        v = self.var_open_folder_mode.get()
+        return "new" if v == T.OPEN_FOLDER_NEW else "reuse"
+    except Exception:
+        return "reuse"
+
     def update_details(self, meta):
         target = self._detail_rows if self.tabs.get() == T.TAB_REAL else self._vm_detail_rows
         target["name"].configure(text=meta.name)
@@ -489,8 +509,8 @@ class App(ctk.CTk):
 
                 q = (self.real_search_entry.get() or "").strip()
                 if q and not self.var_filter_mode.get():
-                    cnt = self._apply_highlight(self.tree, q)
-                    self.set_search_status(is_vm=False, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {cnt}")
+                    f_cnt, d_cnt = self._apply_highlight(self.tree, q, is_vm=False)
+                    self.set_search_status(is_vm=False, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {T.LBL_SEARCH_STATUS_FILES} {f_cnt} | {T.LBL_SEARCH_STATUS_DIRS} {d_cnt}")
 
             self.after(0, apply)
 
@@ -533,153 +553,172 @@ class App(ctk.CTk):
             walk(top)
         return count
 
-    def apply_filter_real(self, query: str):
-        if not self.controller or not self.controller.real.root:
-            return
-        query = query.strip()
-        if not query:
-            self.controller.refresh_real()
-            self.clear_search_status(is_vm=False)
-            return
+def apply_filter_real(self, query: str):
+    if not self.controller or not self.controller.real.root:
+        return
+    query = query.strip()
+    if not query:
+        self.controller.refresh_real()
+        self.clear_search_status(is_vm=False)
+        return
 
-        root = self.controller.real.root
-        backend = self.controller.real
-        self._real_filtered = True
-        self.set_search_status(is_vm=False, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: ...")
+    root = self.controller.real.root
+    backend = self.controller.real
+    self._real_filtered = True
+    self.set_search_status(is_vm=False, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: ...")
+    self.append_log(f"Filter (Real): building '{query}' ...")
 
-        def worker():
-            max_nodes = 15000
-            visited = 0
-            matches = 0
-            truncated = False
+    def worker():
+        max_nodes = 15000
+        visited = 0
+        file_matches = 0
+        dir_matches = 0
+        truncated = False
 
-            def dfs(folder: Path):
-                nonlocal visited, matches, truncated
+        def dfs(folder: Path):
+            nonlocal visited, file_matches, dir_matches, truncated
+            if visited > max_nodes:
+                truncated = True
+                return False, []
+            visited += 1
+            included_children = []
+            try:
+                children = backend.list_children(folder)
+            except Exception:
+                children = []
+            folder_match = query.lower() in folder.name.lower()
+            if folder_match:
+                dir_matches += 1
+            any_child = False
+            for p, is_dir in children:
                 if visited > max_nodes:
                     truncated = True
-                    return False, []
-                visited += 1
-                included = []
-                try:
-                    children = backend.list_children(folder)
-                except Exception:
-                    children = []
-                folder_match = query.lower() in folder.name.lower()
-                any_child = False
-                for p, is_dir in children:
-                    if visited > max_nodes:
-                        truncated = True
-                        break
+                    break
+                if is_dir:
+                    ok, kids = dfs(p)
+                    if ok:
+                        included_children.append((p, True, kids))
+                        any_child = True
+                else:
+                    visited += 1
+                    if query.lower() in p.name.lower():
+                        file_matches += 1
+                        included_children.append((p, False, []))
+                        any_child = True
+            return folder_match or any_child, included_children
+
+        _, tree_data = dfs(root)
+
+        def apply():
+            self.tree.delete(*self.tree.get_children())
+            self._tree_item_to_payload = {}
+            r = self.tree.insert("", "end", text=str(root), open=True)
+            self._tree_item_to_payload[r] = root
+
+            def insert(parent_item, nodes):
+                for p, is_dir, kids in nodes:
+                    it = self.tree.insert(parent_item, "end", text=p.name, open=True)
+                    self._tree_item_to_payload[it] = p
                     if is_dir:
-                        ok, kids = dfs(p)
-                        if ok:
-                            included.append((p, True, kids))
-                            any_child = True
-                    else:
-                        visited += 1
-                        if query.lower() in p.name.lower():
-                            matches += 1
-                            included.append((p, False, []))
-                            any_child = True
-                return folder_match or any_child, included
+                        insert(it, kids)
 
-            _, kids = dfs(root)
+            insert(r, tree_data)
+            self._apply_highlight(self.tree, query, is_vm=False)
 
-            def apply():
-                self.tree.delete(*self.tree.get_children())
-                self._tree_item_to_payload = {}
-                r = self.tree.insert("", "end", text=str(root), open=True)
-                self._tree_item_to_payload[r] = root
+            suffix = f" ({T.LBL_SEARCH_STATUS_TRUNCATED})" if truncated else ""
+            self.set_search_status(
+                is_vm=False,
+                text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {T.LBL_SEARCH_STATUS_FILES} {file_matches} | {T.LBL_SEARCH_STATUS_DIRS} {dir_matches}{suffix}",
+            )
+            self.append_log(
+                f"Filter (Real): '{query}' — files: {file_matches}, dirs: {dir_matches}" + (" (partial)" if truncated else "")
+            )
 
-                def insert(parent_item, nodes):
-                    for p, is_dir, ckids in nodes:
-                        it = self.tree.insert(parent_item, "end", text=p.name, open=True)
-                        self._tree_item_to_payload[it] = p
-                        if is_dir:
-                            insert(it, ckids)
+        self.after(0, apply)
 
-                insert(r, kids)
-                self._apply_highlight(self.tree, query)
-                suffix = f" ({T.LBL_SEARCH_STATUS_TRUNCATED})" if truncated else ""
-                self.set_search_status(is_vm=False, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {matches}{suffix}")
-                self.append_log(f"Filter (Real): '{query}' — matches: {matches}" + (" (partial)" if truncated else ""))
+    threading.Thread(target=worker, daemon=True).start()
 
-            self.after(0, apply)
+def apply_filter_vm(self, query: str):
+    if not self.controller:
+        return
+    query = query.strip()
+    if not query:
+        self.controller.refresh_vm()
+        self.clear_search_status(is_vm=True)
+        return
 
-        threading.Thread(target=worker, daemon=True).start()
+    backend = self.controller.vm
+    self._vm_filtered = True
+    self.set_search_status(is_vm=True, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: ...")
+    self.append_log(f"Filter (VM): building '{query}' ...")
 
-    def apply_filter_vm(self, query: str):
-        if not self.controller:
-            return
-        query = query.strip()
-        if not query:
-            self.controller.refresh_vm()
-            self.clear_search_status(is_vm=True)
-            return
+    def worker():
+        max_nodes = 20000
+        visited = 0
+        file_matches = 0
+        dir_matches = 0
+        truncated = False
 
-        backend = self.controller.vm
-        self._vm_filtered = True
-        self.set_search_status(is_vm=True, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: ...")
-
-        def worker():
-            max_nodes = 20000
-            visited = 0
-            matches = 0
-            truncated = False
-
-            def dfs(node_id: str):
-                nonlocal visited, matches, truncated
+        def dfs(node_id: str):
+            nonlocal visited, file_matches, dir_matches, truncated
+            if visited > max_nodes:
+                truncated = True
+                return False, []
+            visited += 1
+            node = backend.nodes[node_id]
+            node_match = query.lower() in node.name.lower()
+            if node_match and node.is_dir:
+                dir_matches += 1
+            included = []
+            any_child = False
+            for cid, is_dir in backend.list_children(node_id):
                 if visited > max_nodes:
                     truncated = True
-                    return False, []
-                visited += 1
-                node = backend.nodes[node_id]
-                node_match = query.lower() in node.name.lower()
-                included = []
-                any_child = False
-                for cid, is_dir in backend.list_children(node_id):
-                    if visited > max_nodes:
-                        truncated = True
-                        break
+                    break
+                if is_dir:
+                    ok, kids = dfs(cid)
+                    if ok:
+                        included.append((cid, True, kids))
+                        any_child = True
+                else:
+                    visited += 1
+                    if query.lower() in backend.nodes[cid].name.lower():
+                        file_matches += 1
+                        included.append((cid, False, []))
+                        any_child = True
+            return node_match or any_child, included
+
+        _, kids = dfs(backend.root_id)
+
+        def apply():
+            self.vm_tree.delete(*self.vm_tree.get_children())
+            self._vm_tree_item_to_id = {}
+            r = self.vm_tree.insert("", "end", text=backend.nodes[backend.root_id].name, open=True)
+            self._vm_tree_item_to_id[r] = backend.root_id
+
+            def insert(parent_item, nodes):
+                for cid, is_dir, ckids in nodes:
+                    it = self.vm_tree.insert(parent_item, "end", text=backend.nodes[cid].name, open=True)
+                    self._vm_tree_item_to_id[it] = cid
                     if is_dir:
-                        ok, kids = dfs(cid)
-                        if ok:
-                            included.append((cid, True, kids))
-                            any_child = True
-                    else:
-                        visited += 1
-                        if query.lower() in backend.nodes[cid].name.lower():
-                            matches += 1
-                            included.append((cid, False, []))
-                            any_child = True
-                return node_match or any_child, included
+                        insert(it, ckids)
 
-            _, kids = dfs(backend.root_id)
+            insert(r, kids)
+            self._apply_highlight(self.vm_tree, query, is_vm=True)
 
-            def apply():
-                self.vm_tree.delete(*self.vm_tree.get_children())
-                self._vm_tree_item_to_id = {}
-                r = self.vm_tree.insert("", "end", text=backend.nodes[backend.root_id].name, open=True)
-                self._vm_tree_item_to_id[r] = backend.root_id
+            suffix = f" ({T.LBL_SEARCH_STATUS_TRUNCATED})" if truncated else ""
+            self.set_search_status(
+                is_vm=True,
+                text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {T.LBL_SEARCH_STATUS_FILES} {file_matches} | {T.LBL_SEARCH_STATUS_DIRS} {dir_matches}{suffix}",
+            )
+            self.append_log(
+                f"Filter (VM): '{query}' — files: {file_matches}, dirs: {dir_matches}" + (" (partial)" if truncated else "")
+            )
 
-                def insert(parent_item, nodes):
-                    for cid, is_dir, ckids in nodes:
-                        it = self.vm_tree.insert(parent_item, "end", text=backend.nodes[cid].name, open=True)
-                        self._vm_tree_item_to_id[it] = cid
-                        if is_dir:
-                            insert(it, ckids)
+        self.after(0, apply)
 
-                insert(r, kids)
-                self._apply_highlight(self.vm_tree, query)
-                suffix = f" ({T.LBL_SEARCH_STATUS_TRUNCATED})" if truncated else ""
-                self.set_search_status(is_vm=True, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {matches}{suffix}")
-                self.append_log(f"Filter (VM): '{query}' — matches: {matches}" + (" (partial)" if truncated else ""))
+    threading.Thread(target=worker, daemon=True).start()
 
-            self.after(0, apply)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    # ---------- menus ----------
     def _make_menu(self, is_vm: bool) -> Menu:
         m = Menu(self, tearoff=0)
         m.add_command(label=T.MENU_OPEN, command=self._on_menu_open)
@@ -904,8 +943,8 @@ class App(ctk.CTk):
             else:
                 self._real_filtered = False
                 self.controller.refresh_real()
-                cnt = self._apply_highlight(self.tree, q)
-                self.set_search_status(is_vm=False, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {cnt}" if q else "")
+                f_cnt, d_cnt = self._apply_highlight(self.tree, q, is_vm=False)
+                self.set_search_status(is_vm=False, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {T.LBL_SEARCH_STATUS_FILES} {f_cnt} | {T.LBL_SEARCH_STATUS_DIRS} {d_cnt}" if q else "")
         else:
             q = (self.vm_search_entry.get() or "").strip()
             if self.var_filter_mode.get() and q:
@@ -913,8 +952,8 @@ class App(ctk.CTk):
             else:
                 self._vm_filtered = False
                 self.controller.refresh_vm()
-                cnt = self._apply_highlight(self.vm_tree, q)
-                self.set_search_status(is_vm=True, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {cnt}" if q else "")
+                f_cnt, d_cnt = self._apply_highlight(self.vm_tree, q, is_vm=True)
+                self.set_search_status(is_vm=True, text=f"{T.LBL_SEARCH_STATUS_PREFIX}: {T.LBL_SEARCH_STATUS_FILES} {f_cnt} | {T.LBL_SEARCH_STATUS_DIRS} {d_cnt}" if q else "")
 
     def _on_toggle_hidden(self):
         if not self.controller:

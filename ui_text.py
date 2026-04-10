@@ -58,3 +58,8 @@ EDITOR_CANCEL = "Cancel"
 
 DIALOG_OK = "OK"
 DIALOG_CANCEL = "Cancel"
+LBL_OPEN_FOLDER_MODE = "Open folder"
+OPEN_FOLDER_REUSE = "Reuse window"
+OPEN_FOLDER_NEW = "New window"
+LBL_SEARCH_STATUS_FILES = "Files"
+LBL_SEARCH_STATUS_DIRS = "Dirs"

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from pathlib import Path
+
+from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -19,6 +23,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from real.tree import FileTreeModel
 
 
 class ExplorerPage(QWidget):
@@ -44,16 +50,27 @@ class ExplorerPage(QWidget):
             self.location.setPlaceholderText("Select a folder or drive")
         row.addWidget(self.location, 1)
 
-        if self.virtual:
-            button_names = ("Save", "Load", "Export", "Reset")
-        else:
-            button_names = ("Select Root", "Refresh")
-
         self.location_buttons = []
-        for name in button_names:
-            button = QPushButton(name)
+        if self.virtual:
+            self.save_button = QPushButton("Save")
+            self.load_button = QPushButton("Load")
+            self.export_button = QPushButton("Export")
+            self.reset_button = QPushButton("Reset")
+            self.location_buttons.extend(
+                (
+                    self.save_button,
+                    self.load_button,
+                    self.export_button,
+                    self.reset_button,
+                )
+            )
+        else:
+            self.select_root_button = QPushButton("Select Root")
+            self.refresh_button = QPushButton("Refresh")
+            self.location_buttons.extend((self.select_root_button, self.refresh_button))
+
+        for button in self.location_buttons:
             button.setEnabled(False)
-            self.location_buttons.append(button)
             row.addWidget(button)
 
         self.show_hidden = QCheckBox("Show hidden")
@@ -145,6 +162,79 @@ class ExplorerPage(QWidget):
         return row
 
 
+class RealExplorerPage(ExplorerPage):
+    status_changed = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__(virtual=False)
+
+        self.model = FileTreeModel(self)
+        self.tree.setModel(self.model)
+        self.tree.header().resizeSection(0, 360)
+        self.tree.header().resizeSection(1, 120)
+        self.tree.header().resizeSection(2, 100)
+        self.tree.header().resizeSection(3, 160)
+
+        self.select_root_button.setEnabled(True)
+        self.show_hidden.setEnabled(True)
+
+        self.select_root_button.clicked.connect(self.choose_root)
+        self.refresh_button.clicked.connect(self.refresh_root)
+        self.show_hidden.toggled.connect(self.toggle_hidden)
+        self.tree.expanded.connect(self.load_expanded_folder)
+        self.tree.collapsed.connect(self.release_collapsed_folder)
+        self.model.directory_error.connect(self.status_changed)
+
+    def choose_root(self) -> None:
+        initial = str(self.model.root_path or Path.home())
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select root folder or drive",
+            initial,
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if selected:
+            self.set_root(Path(selected))
+
+    def set_root(self, path: Path) -> None:
+        try:
+            self.model.set_root(path)
+        except (OSError, ValueError) as error:
+            QMessageBox.critical(self, "Cannot open root", str(error))
+            return
+
+        self.location.setText(str(self.model.root_path))
+        self.refresh_button.setEnabled(True)
+        self._expand_root()
+        self.status_changed.emit(f"Root: {self.model.root_path}")
+
+    def refresh_root(self) -> None:
+        if self.model.root_path is None:
+            return
+        self.model.refresh()
+        self._expand_root()
+        self.status_changed.emit("Tree refreshed")
+
+    def toggle_hidden(self, enabled: bool) -> None:
+        self.model.set_show_hidden(enabled)
+        self._expand_root()
+
+    def load_expanded_folder(self, index: QModelIndex) -> None:
+        if self.model.canFetchMore(index):
+            self.model.fetchMore(index)
+
+    def release_collapsed_folder(self, index: QModelIndex) -> None:
+        self.model.release_children(index)
+
+    def _expand_root(self) -> None:
+        root_index = self.model.index(0, 0)
+        if not root_index.isValid():
+            return
+        if self.model.canFetchMore(root_index):
+            self.model.fetchMore(root_index)
+        self.tree.expand(root_index)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -153,8 +243,9 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1000, 650)
 
         self.tabs = QTabWidget()
-        self.real_page = ExplorerPage(virtual=False)
+        self.real_page = RealExplorerPage()
         self.virtual_page = ExplorerPage(virtual=True)
+        self.real_page.status_changed.connect(self.statusBar().showMessage)
         self.tabs.addTab(self.real_page, "Real File System")
         self.tabs.addTab(self.virtual_page, "Virtual File System")
 

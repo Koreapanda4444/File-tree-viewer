@@ -9,6 +9,10 @@ from ui.window import MainWindow
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setApplicationName("File Tree Viewer")
+    app.setOrganizationName("Koreapanda4444")
+    app.setStyle("Fusion")
+
     window = MainWindow()
     window.show()
     return app.exec()

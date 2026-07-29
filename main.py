@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from ui import App
-from controller import FileTreeController
+import sys
+
+from PySide6.QtWidgets import QApplication
+
+from ui.window import MainWindow
 
 
-def main():
-    app = App()
-    controller = FileTreeController(app)
-    app.set_controller(controller)
-    app.mainloop()
+def main() -> int:
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

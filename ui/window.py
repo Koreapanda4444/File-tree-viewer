@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import time
+from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, Qt, QThread, Signal
-from PySide6.QtGui import QCloseEvent, QStandardItemModel
+from PySide6.QtCore import (
+    QItemSelectionModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    Qt,
+    QThread,
+    QUrl,
+    Signal,
+)
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -32,6 +42,7 @@ from real.operations import (
     create_item,
     rename_item,
 )
+from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.tree import FileTreeModel
 
@@ -137,6 +148,24 @@ class ExplorerPage(QWidget):
 
         preview_group = QGroupBox("Preview")
         preview_layout = QVBoxLayout(preview_group)
+
+        preview_toolbar = QHBoxLayout()
+        self.preview_status = QLabel("Select a file to preview it")
+        self.preview_status.setWordWrap(True)
+        preview_toolbar.addWidget(self.preview_status, 1)
+
+        self.save_file_button = QPushButton("Save")
+        self.reload_file_button = QPushButton("Reload")
+        self.open_external_button = QPushButton("Open Externally")
+        for button in (
+            self.save_file_button,
+            self.reload_file_button,
+            self.open_external_button,
+        ):
+            button.setEnabled(False)
+            preview_toolbar.addWidget(button)
+        preview_layout.addLayout(preview_toolbar)
+
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setPlaceholderText("Select a file to preview it")
@@ -191,6 +220,16 @@ class RealExplorerPage(ExplorerPage):
         self.operation_record: OperationRecord | None = None
         self.operation_outcome: tuple[str, list[FileChange], list[str]] | None = None
         self.undo_stack: list[OperationRecord] = []
+        self.preview_thread: QThread | None = None
+        self.preview_worker: FilePreviewWorker | None = None
+        self.preview_outcome: PreviewResult | None = None
+        self.pending_preview_path: Path | None = None
+        self.current_preview_path: Path | None = None
+        self.current_preview_result: PreviewResult | None = None
+        self.preview_index = QPersistentModelIndex()
+        self.preview_loading = False
+        self.selection_guard = False
+        self.close_cancelled = False
 
         self._set_tree_model(self.model)
         self._configure_tree_columns()
@@ -212,17 +251,25 @@ class RealExplorerPage(ExplorerPage):
         self.move_button.clicked.connect(lambda: self.transfer_selected("move"))
         self.delete_button.clicked.connect(self.delete_selected)
         self.undo_button.clicked.connect(self.undo_last_operation)
+        self.save_file_button.clicked.connect(self.save_current_file)
+        self.reload_file_button.clicked.connect(self.reload_current_file)
+        self.open_external_button.clicked.connect(self.open_current_external)
+        self.preview.textChanged.connect(self.editor_text_changed)
         self.tree.expanded.connect(self.load_expanded_folder)
         self.tree.collapsed.connect(self.release_collapsed_folder)
         self.model.directory_error.connect(self.status_changed)
 
     @property
     def search_is_running(self) -> bool:
-        return bool(self.search_thread and self.search_thread.isRunning())
+        return self.search_thread is not None
 
     @property
     def operation_is_running(self) -> bool:
-        return bool(self.operation_thread and self.operation_thread.isRunning())
+        return self.operation_thread is not None
+
+    @property
+    def preview_is_running(self) -> bool:
+        return self.preview_thread is not None
 
     def choose_root(self) -> None:
         initial = str(self.model.root_path or Path.home())
@@ -236,12 +283,15 @@ class RealExplorerPage(ExplorerPage):
             self.set_root(Path(selected))
 
     def set_root(self, path: Path) -> None:
+        if self.model.root_path is not None and not self._confirm_editor_transition():
+            return
         try:
             self.model.set_root(path)
         except (OSError, ValueError) as error:
             QMessageBox.critical(self, "Cannot open root", str(error))
             return
 
+        self._show_path(None)
         self.search_results.clear()
         self.search_view_active = False
         self._set_tree_model(self.model)
@@ -257,12 +307,19 @@ class RealExplorerPage(ExplorerPage):
     def refresh_root(self) -> None:
         if self.model.root_path is None:
             return
+        if not self._confirm_editor_transition():
+            return
         self.clear_search()
         self.model.refresh()
         self._expand_root()
         self.status_changed.emit("Tree refreshed")
 
     def toggle_hidden(self, enabled: bool) -> None:
+        if not self._confirm_editor_transition():
+            self.show_hidden.blockSignals(True)
+            self.show_hidden.setChecked(not enabled)
+            self.show_hidden.blockSignals(False)
+            return
         self.model.set_show_hidden(enabled)
         if self.search_view_active:
             self.start_search()
@@ -295,7 +352,10 @@ class RealExplorerPage(ExplorerPage):
         query = self.search_input.text().strip()
         if root is None or not query:
             return
+        if not self._confirm_editor_transition():
+            return
 
+        self._show_path(None)
         self.search_results.clear()
         self.search_view_active = True
         self.search_outcome = None
@@ -331,7 +391,10 @@ class RealExplorerPage(ExplorerPage):
         self.status_changed.emit("Cancelling search...")
 
     def clear_search(self) -> None:
+        if not self._confirm_editor_transition():
+            return
         self.cancel_search()
+        self._show_path(None)
         self.search_view_active = False
         self.search_input.clear()
         self.search_results.clear()
@@ -382,6 +445,300 @@ class RealExplorerPage(ExplorerPage):
         if self.close_requested:
             self._emit_ready_to_close()
 
+    def preview_selection_changed(
+        self,
+        current: QModelIndex,
+        previous: QModelIndex,
+    ) -> None:
+        if self.selection_guard:
+            return
+
+        path = self._path_from_index(current)
+        if path == self.current_preview_path:
+            return
+        if not self._confirm_editor_transition():
+            self._restore_preview_selection()
+            return
+
+        self.preview_index = QPersistentModelIndex(current)
+        self._show_path(path)
+
+    def _show_path(self, path: Path | None) -> None:
+        self.current_preview_path = path
+        self.current_preview_result = None
+        self.pending_preview_path = None
+        if self.preview_worker is not None:
+            self.preview_worker.cancel()
+
+        if path is None:
+            self.preview_index = QPersistentModelIndex()
+            self._clear_details()
+            self._set_preview_text("")
+            self.preview.setReadOnly(True)
+            self.preview_status.setText("Select a file to preview it")
+            self.save_file_button.setEnabled(False)
+            self.reload_file_button.setEnabled(False)
+            self.open_external_button.setEnabled(False)
+            return
+
+        self._update_details(path)
+        self.open_external_button.setEnabled(path.exists() or path.is_symlink())
+        if path.is_dir():
+            self._set_preview_text("")
+            self.preview.setReadOnly(True)
+            self.preview_status.setText("Folder selected")
+            self.save_file_button.setEnabled(False)
+            self.reload_file_button.setEnabled(False)
+            return
+
+        self._request_preview(path)
+
+    def _request_preview(self, path: Path) -> None:
+        self._set_preview_text("")
+        self.preview.setReadOnly(True)
+        self.preview_status.setText("Loading preview...")
+        self.save_file_button.setEnabled(False)
+        self.reload_file_button.setEnabled(False)
+
+        if self.preview_is_running:
+            self.pending_preview_path = path
+            if self.preview_worker is not None:
+                self.preview_worker.cancel()
+            return
+        self._start_preview_worker(path)
+
+    def _start_preview_worker(self, path: Path) -> None:
+        thread = QThread(self)
+        worker = FilePreviewWorker(path)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self.receive_preview)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self.preview_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+
+        self.preview_thread = thread
+        self.preview_worker = worker
+        self.preview_outcome = None
+        thread.start()
+
+    def receive_preview(self, result: PreviewResult) -> None:
+        self.preview_outcome = result
+
+    def preview_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self.preview_thread:
+            return
+
+        result = self.preview_outcome
+        pending = self.pending_preview_path
+        self.preview_thread = None
+        self.preview_worker = None
+        self.preview_outcome = None
+        self.pending_preview_path = None
+
+        if pending is not None and pending == self.current_preview_path:
+            self._start_preview_worker(pending)
+        elif (
+            result is not None
+            and not result.cancelled
+            and result.path == self.current_preview_path
+        ):
+            self._display_preview(result)
+
+        if self.close_requested:
+            self._emit_ready_to_close()
+
+    def _display_preview(self, result: PreviewResult) -> None:
+        self.current_preview_result = result
+        self.reload_file_button.setEnabled(True)
+        self.open_external_button.setEnabled(True)
+
+        if result.error:
+            self._set_preview_text("")
+            self.preview.setReadOnly(True)
+            self.preview_status.setText(f"Cannot preview file: {result.error}")
+            return
+        if result.binary:
+            self._set_preview_text("Binary file preview is unavailable.")
+            self.preview.setReadOnly(True)
+            self.preview_status.setText("Binary file - open externally to view or edit")
+            return
+
+        self._set_preview_text(result.text)
+        self.preview.setReadOnly(not result.editable)
+        if result.truncated:
+            self.preview_status.setText(
+                f"Large file - showing the first 1 MB of {self._format_size(result.size)}"
+            )
+        else:
+            self.preview_status.setText(f"Editable text - {result.encoding}")
+        self.editor_text_changed()
+
+    def editor_text_changed(self) -> None:
+        if self.preview_loading:
+            return
+        result = self.current_preview_result
+        editable = bool(result and result.editable)
+        self.save_file_button.setEnabled(
+            editable and self.preview.document().isModified()
+        )
+
+    def save_current_file(self) -> bool:
+        result = self.current_preview_result
+        path = self.current_preview_path
+        if result is None or path is None or not result.editable or not result.encoding:
+            return False
+
+        try:
+            current = path.stat(follow_symlinks=False)
+        except OSError as error:
+            self._show_operation_error("Cannot save file", error)
+            return False
+
+        if current.st_size != result.size or current.st_mtime_ns != result.modified_ns:
+            answer = QMessageBox.warning(
+                self,
+                "File changed",
+                "The file changed outside the editor. Overwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
+
+        try:
+            size, modified_ns = save_text_atomic(
+                path,
+                self.preview.toPlainText(),
+                encoding=result.encoding,
+                newline=result.newline,
+            )
+        except (OSError, UnicodeError) as error:
+            self._show_operation_error("Cannot save file", error)
+            return False
+
+        self.current_preview_result = replace(
+            result,
+            text=self.preview.toPlainText(),
+            size=size,
+            modified_ns=modified_ns,
+        )
+        self.preview.document().setModified(False)
+        self.save_file_button.setEnabled(False)
+        self.preview_status.setText(f"Saved - {result.encoding}")
+        self._update_details(path)
+        self.status_changed.emit(f"Saved {path}")
+        return True
+
+    def reload_current_file(self) -> None:
+        path = self.current_preview_path
+        if path is None or path.is_dir():
+            return
+        if not self._confirm_editor_transition():
+            return
+        self.current_preview_result = None
+        self._request_preview(path)
+
+    def open_current_external(self) -> None:
+        path = self.current_preview_path
+        if path is None:
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            QMessageBox.warning(self, "Cannot open item", str(path))
+
+    def _confirm_editor_transition(self) -> bool:
+        if not self.preview.document().isModified():
+            return True
+
+        answer = QMessageBox.warning(
+            self,
+            "Unsaved changes",
+            "Save changes before continuing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            return self.save_current_file()
+        if answer == QMessageBox.StandardButton.Discard:
+            self.preview.document().setModified(False)
+            self.save_file_button.setEnabled(False)
+            return True
+        return False
+
+    def _restore_preview_selection(self) -> None:
+        if not self.preview_index.isValid():
+            return
+        selection = self.tree.selectionModel()
+        if selection is None:
+            return
+        self.selection_guard = True
+        selection.setCurrentIndex(
+            QModelIndex(self.preview_index),
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        self.selection_guard = False
+
+    def _path_from_index(self, index: QModelIndex) -> Path | None:
+        current_model = self.tree.model()
+        path_from_index = getattr(current_model, "path_from_index", None)
+        if not index.isValid() or not callable(path_from_index):
+            return None
+        return path_from_index(index)
+
+    def _update_details(self, path: Path) -> None:
+        try:
+            details = path.stat(follow_symlinks=False)
+        except OSError:
+            size = "-"
+            modified = "-"
+        else:
+            size = "-" if path.is_dir() else self._format_size(details.st_size)
+            modified = time.strftime(
+                "%Y-%m-%d %H:%M:%S",
+                time.localtime(details.st_mtime),
+            )
+
+        if path.is_dir():
+            file_type = "Folder"
+        elif path.suffix:
+            file_type = f"{path.suffix[1:].upper()} File"
+        else:
+            file_type = "File"
+
+        values = {
+            "name": path.name or str(path),
+            "path": str(path),
+            "type": file_type,
+            "size": size,
+            "modified": modified,
+        }
+        for name, value in values.items():
+            self.detail_values[name].setText(value)
+
+    def _clear_details(self) -> None:
+        for value in self.detail_values.values():
+            value.setText("-")
+
+    def _set_preview_text(self, text: str) -> None:
+        self.preview_loading = True
+        self.preview.setPlainText(text)
+        self.preview.document().setModified(False)
+        self.preview_loading = False
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        value = float(size)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if value < 1_024 or unit == "TB":
+                return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
+            value /= 1_024
+        return "-"
+
     def selected_paths(self) -> list[Path]:
         selection = self.tree.selectionModel()
         current_model = self.tree.model()
@@ -423,6 +780,8 @@ class RealExplorerPage(ExplorerPage):
     def _create_item(self, *, directory: bool) -> None:
         if self.search_is_running or self.operation_is_running:
             return
+        if not self._confirm_editor_transition():
+            return
         parent = self._selected_directory()
         if parent is None:
             return
@@ -450,6 +809,8 @@ class RealExplorerPage(ExplorerPage):
         selected = self._operable_selected_paths()
         if len(selected) != 1 or self.operation_is_running:
             return
+        if not self._confirm_editor_transition():
+            return
         source = selected[0]
         new_name, accepted = QInputDialog.getText(
             self,
@@ -474,6 +835,8 @@ class RealExplorerPage(ExplorerPage):
         sources = self._operable_selected_paths()
         if not sources or self.search_is_running or self.operation_is_running:
             return
+        if not self._confirm_editor_transition():
+            return
 
         initial = self._selected_directory() or self.model.root_path or Path.home()
         selected = QFileDialog.getExistingDirectory(
@@ -494,6 +857,8 @@ class RealExplorerPage(ExplorerPage):
         sources = self._operable_selected_paths()
         if not sources or self.search_is_running or self.operation_is_running:
             return
+        if not self._confirm_editor_transition():
+            return
 
         if len(sources) == 1:
             question = f'Move "{sources[0].name}" to the Recycle Bin?'
@@ -511,6 +876,8 @@ class RealExplorerPage(ExplorerPage):
 
     def undo_last_operation(self) -> None:
         if not self.undo_stack or self.search_is_running or self.operation_is_running:
+            return
+        if not self._confirm_editor_transition():
             return
         record = self.undo_stack[-1]
         self._start_file_operation("undo", record=record)
@@ -626,6 +993,7 @@ class RealExplorerPage(ExplorerPage):
         self.search_view_active = False
         self.search_input.clear()
         self.search_results.clear()
+        self._show_path(None)
         self.model.refresh()
         self._set_tree_model(self.model)
         self._configure_tree_columns()
@@ -649,6 +1017,7 @@ class RealExplorerPage(ExplorerPage):
         selection = self.tree.selectionModel()
         if selection is not None:
             selection.selectionChanged.connect(self.update_action_buttons)
+            selection.currentChanged.connect(self.preview_selection_changed)
         self.update_action_buttons()
 
     def _show_operation_error(self, title: str, error: Exception) -> None:
@@ -664,12 +1033,21 @@ class RealExplorerPage(ExplorerPage):
             self.model.release_children(index)
 
     def prepare_close(self) -> bool:
+        self.close_cancelled = False
+        if not self._confirm_editor_transition():
+            self.close_cancelled = True
+            return False
         waiting = False
         self.close_requested = True
         if self.search_is_running:
             self.cancel_search()
             waiting = True
         if self.operation_is_running:
+            waiting = True
+        if self.preview_is_running:
+            self.pending_preview_path = None
+            if self.preview_worker is not None:
+                self.preview_worker.cancel()
             waiting = True
         if waiting:
             return False
@@ -700,7 +1078,11 @@ class RealExplorerPage(ExplorerPage):
         self.update_action_buttons()
 
     def _emit_ready_to_close(self) -> None:
-        if not self.search_is_running and not self.operation_is_running:
+        if (
+            not self.search_is_running
+            and not self.operation_is_running
+            and not self.preview_is_running
+        ):
             self.ready_to_close.emit()
 
     def _configure_tree_columns(self) -> None:
@@ -743,6 +1125,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if not self.real_page.prepare_close():
+            if self.real_page.close_cancelled:
+                event.ignore()
+                return
             self.setEnabled(False)
             self.statusBar().showMessage("Waiting for file tasks to finish...")
             event.ignore()

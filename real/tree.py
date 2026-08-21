@@ -212,7 +212,7 @@ class FileTreeModel(QAbstractItemModel):
                 break
 
             scanned += 1
-            if not self.show_hidden and _is_hidden(entry):
+            if not self.show_hidden and is_hidden(entry):
                 continue
 
             try:
@@ -297,7 +297,7 @@ class FileTreeModel(QAbstractItemModel):
             stack.extend(node.children)
 
 
-def _is_hidden(entry: os.DirEntry[str]) -> bool:
+def is_hidden(entry: os.DirEntry[str]) -> bool:
     if entry.name.startswith("."):
         return True
     if os.name != "nt":
@@ -308,6 +308,22 @@ def _is_hidden(entry: os.DirEntry[str]) -> bool:
     except (AttributeError, OSError):
         return False
     return bool(attributes & stat.FILE_ATTRIBUTE_HIDDEN)
+
+
+def is_reparse_point(entry: os.DirEntry[str]) -> bool:
+    try:
+        if entry.is_symlink():
+            return True
+    except OSError:
+        return False
+    if os.name != "nt":
+        return False
+
+    try:
+        attributes = entry.stat(follow_symlinks=False).st_file_attributes
+    except (AttributeError, OSError):
+        return False
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def _file_type(node: FileNode) -> str:

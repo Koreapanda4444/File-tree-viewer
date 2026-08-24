@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,8 +56,21 @@ def validate_name(name: str) -> str:
     clean_name = name.strip()
     if not clean_name or clean_name in {".", ".."}:
         raise ValueError("Enter a valid name")
+    if any(ord(character) < 32 for character in clean_name):
+        raise ValueError("A name cannot contain control characters")
     if "\0" in clean_name or "/" in clean_name or "\\" in clean_name:
         raise ValueError("A name cannot contain path separators")
+    if os.name == "nt":
+        if any(character in clean_name for character in '<>:"|?*'):
+            raise ValueError("The name contains an invalid Windows character")
+        if clean_name.endswith((".", " ")):
+            raise ValueError("A Windows name cannot end with a dot or space")
+        stem = clean_name.split(".", 1)[0].casefold()
+        reserved = {"con", "prn", "aux", "nul"}
+        reserved.update(f"com{number}" for number in range(1, 10))
+        reserved.update(f"lpt{number}" for number in range(1, 10))
+        if stem in reserved:
+            raise ValueError("The name is reserved by Windows")
     return clean_name
 
 
@@ -115,7 +129,7 @@ class FileOperationWorker(QObject):
             self.progress.emit(self.action, position, total, name)
             try:
                 change = self._perform(item)
-            except (OSError, shutil.Error, ValueError) as error:
+            except (OSError, RuntimeError, shutil.Error, ValueError) as error:
                 errors.append(f"{name}: {error}")
             else:
                 changes.append(change)
@@ -139,14 +153,35 @@ class FileOperationWorker(QObject):
         destination = self._checked_destination(source, moving=False)
         target = unique_destination(destination, source)
         if source.is_dir() and not source.is_symlink():
-            shutil.copytree(source, target, symlinks=True)
+            target.mkdir()
+            try:
+                shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+            except (OSError, shutil.Error):
+                shutil.rmtree(target, ignore_errors=True)
+                raise
+        elif source.is_symlink():
+            os.symlink(
+                os.readlink(source),
+                target,
+                target_is_directory=source.is_dir(),
+            )
         else:
-            shutil.copy2(source, target, follow_symlinks=False)
+            if not stat.S_ISREG(source.stat(follow_symlinks=False).st_mode):
+                raise ValueError("This file type cannot be copied")
+            try:
+                with source.open("rb") as source_file, target.open("xb") as target_file:
+                    shutil.copyfileobj(source_file, target_file, length=1_024 * 1_024)
+                shutil.copystat(source, target, follow_symlinks=False)
+            except (OSError, shutil.Error):
+                target.unlink(missing_ok=True)
+                raise
         return FileChange(source, target)
 
     def _move(self, source: Path) -> FileChange:
         destination = self._checked_destination(source, moving=True)
         target = unique_destination(destination, source)
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(target)
         shutil.move(str(source), str(target))
         return FileChange(source, target)
 
@@ -157,13 +192,21 @@ class FileOperationWorker(QObject):
         if not source.exists() and not source.is_symlink():
             raise FileNotFoundError(source)
 
-        source_resolved = source.resolve(strict=True)
+        source_resolved = (
+            Path(os.path.abspath(source))
+            if source.is_symlink()
+            else source.resolve(strict=True)
+        )
         destination_resolved = destination.resolve(strict=True)
         if moving and destination_resolved == source.parent.resolve(strict=True):
             raise ValueError("The item is already in that folder")
-        if source.is_dir() and (
-            destination_resolved == source_resolved
-            or source_resolved in destination_resolved.parents
+        if (
+            source.is_dir()
+            and not source.is_symlink()
+            and (
+                destination_resolved == source_resolved
+                or source_resolved in destination_resolved.parents
+            )
         ):
             raise ValueError("A folder cannot be copied or moved inside itself")
         return destination
@@ -187,7 +230,7 @@ class FileOperationWorker(QObject):
             if source.exists() or source.is_symlink():
                 raise FileExistsError(source)
             if not target.exists() and not target.is_symlink():
-                return
+                raise FileNotFoundError(target)
             source.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(target), str(source))
             return
@@ -207,7 +250,7 @@ def unique_destination(destination: Path, source: Path) -> Path:
     if not target.exists() and not target.is_symlink():
         return target
 
-    suffix = "" if source.is_dir() else source.suffix
+    suffix = "" if source.is_dir() and not source.is_symlink() else source.suffix
     stem = source.name if not suffix else source.name[: -len(suffix)]
     number = 2
     while True:

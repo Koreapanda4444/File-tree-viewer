@@ -59,11 +59,24 @@ class SearchWorker(QObject):
         scanned = 0
         matched = 0
         skipped = 0
+        visited: set[tuple[object, ...]] = set()
 
         try:
             while directories and not self._cancelled.is_set():
                 directory = directories.pop()
                 try:
+                    details = directory.stat(follow_symlinks=False)
+                    identity: tuple[object, ...]
+                    if details.st_ino:
+                        identity = ("inode", details.st_dev, details.st_ino)
+                    else:
+                        identity = (
+                            "path",
+                            os.path.normcase(os.path.abspath(directory)),
+                        )
+                    if identity in visited:
+                        continue
+                    visited.add(identity)
                     with os.scandir(directory) as entries:
                         for entry in entries:
                             if self._cancelled.is_set():

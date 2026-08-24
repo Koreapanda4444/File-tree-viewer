@@ -320,7 +320,11 @@ class RealExplorerPage(ExplorerPage):
         if not self._confirm_editor_transition():
             return
         self.clear_search()
-        self.model.refresh()
+        try:
+            self.model.refresh()
+        except (OSError, ValueError) as error:
+            self._show_operation_error("Cannot refresh root", error)
+            return
         self._expand_root()
         self.status_changed.emit("Tree refreshed")
 
@@ -330,7 +334,15 @@ class RealExplorerPage(ExplorerPage):
             self.show_hidden.setChecked(not enabled)
             self.show_hidden.blockSignals(False)
             return
-        self.model.set_show_hidden(enabled)
+        try:
+            self.model.set_show_hidden(enabled)
+        except (OSError, ValueError) as error:
+            self.model.show_hidden = not enabled
+            self.show_hidden.blockSignals(True)
+            self.show_hidden.setChecked(not enabled)
+            self.show_hidden.blockSignals(False)
+            self._show_operation_error("Cannot update hidden files", error)
+            return
         if self.search_view_active:
             self.start_search()
         else:
@@ -582,6 +594,10 @@ class RealExplorerPage(ExplorerPage):
             self.preview_status.setText(
                 f"Large file - showing the first 1 MB of {self._format_size(result.size)}"
             )
+        elif result.is_link:
+            self.preview_status.setText(
+                f"Symbolic link - read-only text - {result.encoding}"
+            )
         else:
             self.preview_status.setText(f"Editable text - {result.encoding}")
         self.editor_text_changed()
@@ -599,6 +615,13 @@ class RealExplorerPage(ExplorerPage):
         result = self.current_preview_result
         path = self.current_preview_path
         if result is None or path is None or not result.editable or not result.encoding:
+            return False
+        if path.is_symlink():
+            QMessageBox.warning(
+                self,
+                "Cannot save file",
+                "Symbolic links are read-only in the built-in editor.",
+            )
             return False
 
         try:
@@ -713,7 +736,9 @@ class RealExplorerPage(ExplorerPage):
                 time.localtime(details.st_mtime),
             )
 
-        if path.is_dir():
+        if path.is_symlink():
+            file_type = "Symbolic Link"
+        elif path.is_dir():
             file_type = "Folder"
         elif path.suffix:
             file_type = f"{path.suffix[1:].upper()} File"
@@ -1004,7 +1029,11 @@ class RealExplorerPage(ExplorerPage):
         self.search_input.clear()
         self.search_results.clear()
         self._show_path(None)
-        self.model.refresh()
+        try:
+            self.model.refresh()
+        except (OSError, ValueError) as error:
+            self.status_changed.emit(f"Cannot refresh root: {error}")
+            return
         self._set_tree_model(self.model)
         self._configure_tree_columns()
         self._expand_root()
@@ -1013,7 +1042,7 @@ class RealExplorerPage(ExplorerPage):
         selected = self.selected_paths()
         if len(selected) == 1:
             path = selected[0]
-            if path.is_dir():
+            if path.is_dir() and not path.is_symlink():
                 return path
             return path.parent
         return self.model.root_path

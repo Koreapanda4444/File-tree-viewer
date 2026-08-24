@@ -13,7 +13,9 @@ from PySide6.QtCore import (
     QFileInfo,
     QModelIndex,
     QObject,
+    QPersistentModelIndex,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtWidgets import QFileIconProvider
@@ -29,6 +31,7 @@ class FileNode:
     name: str
     is_directory: bool
     parent: FileNode | None
+    is_link: bool = False
     row: int = 0
     children: list[FileNode] = field(default_factory=list)
     iterator: Iterator[os.DirEntry[str]] | None = None
@@ -36,6 +39,7 @@ class FileNode:
     details_loaded: bool = False
     size: int | None = None
     modified: float | None = None
+    load_generation: int = 0
 
     def load_details(self) -> None:
         if self.details_loaded:
@@ -119,6 +123,7 @@ class FileTreeModel(QAbstractItemModel):
             return
 
         node.close_iterator()
+        node.load_generation += 1
         if node.children:
             self.beginRemoveRows(parent, 0, len(node.children) - 1)
             for child in node.children:
@@ -219,6 +224,9 @@ class FileTreeModel(QAbstractItemModel):
                 is_directory = entry.is_dir(follow_symlinks=False)
             except OSError:
                 continue
+            is_link = is_reparse_point(entry)
+            if is_link:
+                is_directory = False
 
             children.append(
                 FileNode(
@@ -226,10 +234,18 @@ class FileTreeModel(QAbstractItemModel):
                     name=entry.name,
                     is_directory=is_directory,
                     parent=node,
+                    is_link=is_link,
                 )
             )
 
         if not children:
+            if not node.fully_loaded:
+                generation = node.load_generation
+                persistent = QPersistentModelIndex(parent)
+                QTimer.singleShot(
+                    0,
+                    lambda: self._continue_fetch(persistent, generation),
+                )
             return
 
         first = len(node.children)
@@ -239,6 +255,20 @@ class FileTreeModel(QAbstractItemModel):
             child.row = row
             node.children.append(child)
         self.endInsertRows()
+
+    def _continue_fetch(
+        self,
+        parent: QPersistentModelIndex,
+        generation: int,
+    ) -> None:
+        if not parent.isValid():
+            return
+        index = QModelIndex(parent)
+        node = self.node_from_index(index)
+        if node is None or node.load_generation != generation:
+            return
+        if self.canFetchMore(index):
+            self.fetchMore(index)
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         node = self.node_from_index(index)
@@ -327,6 +357,8 @@ def is_reparse_point(entry: os.DirEntry[str]) -> bool:
 
 
 def _file_type(node: FileNode) -> str:
+    if node.is_link:
+        return "Symbolic Link"
     if node.is_directory:
         return "Folder"
     suffix = node.path.suffix

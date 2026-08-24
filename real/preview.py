@@ -27,6 +27,7 @@ class PreviewResult:
     editable: bool
     truncated: bool
     binary: bool
+    is_link: bool = False
     cancelled: bool = False
     error: str | None = None
 
@@ -45,7 +46,12 @@ class FilePreviewWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            details = self.path.stat(follow_symlinks=False)
+            is_link = self.path.is_symlink()
+            details = (
+                self.path.stat() if is_link else self.path.stat(follow_symlinks=False)
+            )
+            if not stat.S_ISREG(details.st_mode):
+                raise OSError("Preview is unavailable for this file type")
             size = details.st_size
             modified_ns = details.st_mtime_ns
             truncated = size > MAX_EDIT_BYTES
@@ -64,12 +70,13 @@ class FilePreviewWorker(QObject):
                     newline=detect_newline(text),
                     size=size,
                     modified_ns=modified_ns,
-                    editable=not binary and not truncated,
+                    editable=not binary and not truncated and not is_link,
                     truncated=truncated,
                     binary=binary,
+                    is_link=is_link,
                 )
             )
-        except (OSError, UnicodeError, ValueError) as error:
+        except (OSError, RuntimeError, UnicodeError, ValueError) as error:
             self.finished.emit(
                 PreviewResult(
                     path=self.path,
@@ -181,6 +188,8 @@ def save_text_atomic(
     encoding: str,
     newline: str,
 ) -> tuple[int, int]:
+    if path.is_symlink():
+        raise OSError("Symbolic links are read-only in the built-in editor")
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     if newline != "\n":
         normalized = normalized.replace("\n", newline)

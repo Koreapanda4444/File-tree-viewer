@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -390,7 +391,7 @@ class RealExplorerPage(ExplorerPage):
         worker = SearchWorker(root, query, self.show_hidden.isChecked())
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.batch_found.connect(self.search_results.append_results)
+        worker.batch_found.connect(self.receive_search_batch)
         worker.progress.connect(self.show_search_progress)
         worker.failed.connect(self.show_search_error)
         worker.finished.connect(self.finish_search)
@@ -404,6 +405,19 @@ class RealExplorerPage(ExplorerPage):
         self._set_search_running(True)
         self.status_changed.emit(f'Searching for "{query}"...')
         thread.start()
+
+    def receive_search_batch(self, batch: list) -> None:
+        worker = self.search_worker
+        try:
+            if self.search_view_active:
+                self.search_results.append_results(batch)
+        except (OSError, sqlite3.Error) as error:
+            if worker is not None:
+                worker.cancel()
+            self.status_changed.emit(f"Cannot store search results: {error}")
+        finally:
+            if worker is not None:
+                worker.batch_processed()
 
     def cancel_search(self) -> None:
         if self.search_worker is None or not self.search_is_running:
@@ -1580,7 +1594,7 @@ class VirtualExplorerPage(ExplorerPage):
         )
         if not selected:
             return False
-        self._start_task("save", Path(selected), self.model.to_data())
+        self._start_task("save", Path(selected), self.model.root)
         return True
 
     def load_workspace_dialog(self) -> None:
@@ -1608,7 +1622,7 @@ class VirtualExplorerPage(ExplorerPage):
             QFileDialog.Option.ShowDirsOnly,
         )
         if selected:
-            self._start_task("export", Path(selected), self.model.to_data())
+            self._start_task("export", Path(selected), self.model.root)
 
     def reset_workspace(self) -> None:
         if self.task_is_running or not self._confirm_editor_transition():
@@ -1641,7 +1655,7 @@ class VirtualExplorerPage(ExplorerPage):
         self,
         action: str,
         path: Path,
-        data: dict | None = None,
+        data: dict | VirtualNode | None = None,
     ) -> None:
         thread = QThread(self)
         worker = VirtualTaskWorker(action, path, data)
@@ -1686,9 +1700,9 @@ class VirtualExplorerPage(ExplorerPage):
                 self.workspace_path = result
                 self._set_workspace_dirty(False)
                 self.status_changed.emit(f"Virtual workspace saved: {result}")
-            elif action == "load" and isinstance(result, dict):
+            elif action == "load" and isinstance(result, VirtualNode):
                 self.selection_guard = True
-                self.model.replace_workspace(result)
+                self.model.replace_root(result)
                 self.selection_guard = False
                 self.undo_stack.clear()
                 self.workspace_path = task_path

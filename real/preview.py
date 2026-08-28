@@ -92,17 +92,17 @@ class FilePreviewWorker(QObject):
                 )
             )
 
-    def _read_bytes(self, limit: int) -> bytes:
-        chunks = []
+    def _read_bytes(self, limit: int) -> bytearray:
+        data = bytearray()
         remaining = limit
         with self.path.open("rb") as file:
             while remaining > 0 and not self._cancelled.is_set():
                 chunk = file.read(min(READ_CHUNK_SIZE, remaining))
                 if not chunk:
                     break
-                chunks.append(chunk)
+                data.extend(chunk)
                 remaining -= len(chunk)
-        return b"".join(chunks)
+        return data
 
     def _cancelled_result(self, size: int, modified_ns: int) -> PreviewResult:
         return PreviewResult(
@@ -119,7 +119,11 @@ class FilePreviewWorker(QObject):
         )
 
 
-def decode_text(data: bytes, *, truncated: bool) -> tuple[str, str | None, bool]:
+def decode_text(
+    data: bytes | bytearray,
+    *,
+    truncated: bool,
+) -> tuple[str, str | None, bool]:
     if data.startswith(codecs.BOM_UTF8):
         return (
             decode_with_encoding(data, "utf-8-sig", truncated=truncated),
@@ -153,7 +157,7 @@ def decode_text(data: bytes, *, truncated: bool) -> tuple[str, str | None, bool]
     return "", None, True
 
 
-def looks_binary(data: bytes) -> bool:
+def looks_binary(data: bytes | bytearray) -> bool:
     sample = data[:8_192]
     if not sample:
         return False
@@ -164,7 +168,12 @@ def looks_binary(data: bytes) -> bool:
     return controls / len(sample) > 0.1
 
 
-def decode_with_encoding(data: bytes, encoding: str, *, truncated: bool) -> str:
+def decode_with_encoding(
+    data: bytes | bytearray,
+    encoding: str,
+    *,
+    truncated: bool,
+) -> str:
     decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
     return decoder.decode(data, final=not truncated)
 

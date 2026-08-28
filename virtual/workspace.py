@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from PySide6.QtCore import (
     QAbstractItemModel,
@@ -317,7 +317,9 @@ class VirtualTreeModel(QAbstractItemModel):
         self.endResetModel()
 
     def replace_workspace(self, data: dict[str, Any]) -> None:
-        root = node_from_data(data)
+        self.replace_root(node_from_data(data))
+
+    def replace_root(self, root: VirtualNode) -> None:
         root.name = "VM:"
         root.parent = None
         root.is_directory = True
@@ -553,7 +555,68 @@ def save_workspace(path: Path, root_data: dict[str, Any]) -> None:
         raise
 
 
+def save_workspace_root(path: Path, root: VirtualNode) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as file:
+            file.write('{"format":')
+            json.dump(WORKSPACE_FORMAT, file)
+            file.write(',"root":')
+            write_node_json(file, root)
+            file.write("}")
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, path)
+    except (OSError, TypeError, ValueError):
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def write_node_json(file: TextIO, root: VirtualNode) -> None:
+    def write_start(node: VirtualNode) -> None:
+        file.write('{"name":')
+        json.dump(node.name, file, ensure_ascii=False)
+        file.write(',"directory":')
+        file.write("true" if node.is_directory else "false")
+        file.write(',"content":')
+        json.dump(node.content, file, ensure_ascii=False)
+        file.write(',"modified":')
+        json.dump(node.modified, file)
+        file.write(',"children":[')
+
+    write_start(root)
+    stack = [(root, 0)]
+    while stack:
+        node, position = stack[-1]
+        if position >= len(node.children):
+            file.write("]}")
+            stack.pop()
+            continue
+        if position:
+            file.write(",")
+        child = node.children[position]
+        stack[-1] = (node, position + 1)
+        write_start(child)
+        stack.append((child, 0))
+
+
 def load_workspace(path: Path) -> dict[str, Any]:
+    root = load_workspace_data(path)
+    node_from_data(root)
+    return root
+
+
+def load_workspace_root(path: Path) -> VirtualNode:
+    return node_from_data(load_workspace_data(path))
+
+
+def load_workspace_data(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as file:
         document = json.load(file)
     if not isinstance(document, dict) or document.get("format") != WORKSPACE_FORMAT:
@@ -561,7 +624,6 @@ def load_workspace(path: Path) -> dict[str, Any]:
     root = document.get("root")
     if not isinstance(root, dict):
         raise TypeError("The workspace root is missing")
-    node_from_data(root)
     return root
 
 
@@ -592,6 +654,32 @@ def export_workspace(destination: Path, root_data: dict[str, Any]) -> Path:
     return output
 
 
+def export_workspace_root(destination: Path, root: VirtualNode) -> Path:
+    if not destination.is_dir():
+        raise NotADirectoryError(destination)
+    output = destination / "Virtual Workspace"
+    if output.exists():
+        raise FileExistsError(output)
+    temporary = destination / f".file-tree-viewer-export-{uuid.uuid4().hex}"
+    temporary.mkdir()
+    try:
+        stack = [(temporary, root)]
+        while stack:
+            parent_path, node = stack.pop()
+            for child in node.children:
+                target = parent_path / child.name
+                if child.is_directory:
+                    target.mkdir()
+                    stack.append((target, child))
+                else:
+                    target.write_text(child.content, encoding="utf-8", newline="")
+        os.replace(temporary, output)
+    except (OSError, TypeError, ValueError):
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    return output
+
+
 class VirtualTaskWorker(QObject):
     finished = Signal(str, object, str)
 
@@ -599,7 +687,7 @@ class VirtualTaskWorker(QObject):
         self,
         action: str,
         path: Path,
-        root_data: dict[str, Any] | None = None,
+        root_data: dict[str, Any] | VirtualNode | None = None,
     ) -> None:
         super().__init__()
         self.action = action
@@ -612,14 +700,20 @@ class VirtualTaskWorker(QObject):
             if self.action == "save":
                 if self.root_data is None:
                     raise ValueError("Workspace data is missing")
-                save_workspace(self.path, self.root_data)
+                if isinstance(self.root_data, VirtualNode):
+                    save_workspace_root(self.path, self.root_data)
+                else:
+                    save_workspace(self.path, self.root_data)
                 result: object = self.path
             elif self.action == "load":
-                result = load_workspace(self.path)
+                result = load_workspace_root(self.path)
             elif self.action == "export":
                 if self.root_data is None:
                     raise ValueError("Workspace data is missing")
-                result = export_workspace(self.path, self.root_data)
+                if isinstance(self.root_data, VirtualNode):
+                    result = export_workspace_root(self.path, self.root_data)
+                else:
+                    result = export_workspace(self.path, self.root_data)
             else:
                 raise ValueError(f"Unknown virtual task: {self.action}")
             self.finished.emit(self.action, result, "")

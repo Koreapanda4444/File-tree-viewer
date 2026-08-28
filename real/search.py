@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,9 +22,11 @@ from PySide6.QtWidgets import QFileIconProvider
 
 from real.tree import is_hidden, is_reparse_point
 
-RESULT_BATCH_SIZE = 256
+RESULT_BATCH_SIZE = 1_024
 PROGRESS_INTERVAL = 2_048
 CACHE_PAGE_SIZE = 256
+MAX_CACHE_PAGES = 64
+MAX_PENDING_BATCHES = 8
 CATEGORY_INDEX_BASE = 1
 RESULT_INDEX_BASE = 101
 INVALID_INDEX = QModelIndex()
@@ -48,76 +51,117 @@ class SearchWorker(QObject):
         self.query = query.casefold()
         self.show_hidden = show_hidden
         self._cancelled = threading.Event()
+        self._pending_batches = threading.Semaphore(MAX_PENDING_BATCHES)
 
     def cancel(self) -> None:
         self._cancelled.set()
 
+    def batch_processed(self) -> None:
+        self._pending_batches.release()
+
+    def _emit_batch(self, batch: list[SearchResult]) -> bool:
+        while not self._cancelled.is_set():
+            if self._pending_batches.acquire(timeout=0.1):
+                self.batch_found.emit(batch)
+                return True
+        return False
+
     @Slot()
     def run(self) -> None:
-        directories = [self.root]
         batch: list[SearchResult] = []
         scanned = 0
         matched = 0
         skipped = 0
-        visited: set[tuple[object, ...]] = set()
+        active_directories: set[tuple[object, ...]] = set()
+        iterators = []
+        stopped = False
+
+        def open_directory(directory: Path):
+            nonlocal skipped
+            try:
+                details = directory.stat(follow_symlinks=False)
+                identity: tuple[object, ...]
+                if details.st_ino:
+                    identity = ("inode", details.st_dev, details.st_ino)
+                else:
+                    identity = (
+                        "path",
+                        os.path.normcase(os.path.abspath(directory)),
+                    )
+                if identity in active_directories:
+                    return None
+                iterator = os.scandir(directory)
+                active_directories.add(identity)
+                return iterator, identity
+            except OSError:
+                skipped += 1
+                return None
 
         try:
-            while directories and not self._cancelled.is_set():
-                directory = directories.pop()
+            root_iterator = open_directory(self.root)
+            if root_iterator is not None:
+                iterators.append(root_iterator)
+
+            while iterators and not self._cancelled.is_set() and not stopped:
                 try:
-                    details = directory.stat(follow_symlinks=False)
-                    identity: tuple[object, ...]
-                    if details.st_ino:
-                        identity = ("inode", details.st_dev, details.st_ino)
-                    else:
-                        identity = (
-                            "path",
-                            os.path.normcase(os.path.abspath(directory)),
-                        )
-                    if identity in visited:
-                        continue
-                    visited.add(identity)
-                    with os.scandir(directory) as entries:
-                        for entry in entries:
-                            if self._cancelled.is_set():
-                                break
-
-                            scanned += 1
-                            if not self.show_hidden and is_hidden(entry):
-                                continue
-
-                            try:
-                                is_directory = entry.is_dir(follow_symlinks=False)
-                            except OSError:
-                                skipped += 1
-                                continue
-
-                            if is_directory and not is_reparse_point(entry):
-                                directories.append(Path(entry.path))
-
-                            if self.query in entry.name.casefold():
-                                batch.append(
-                                    SearchResult(
-                                        path=entry.path,
-                                        name=entry.name,
-                                        is_directory=is_directory,
-                                    )
-                                )
-                                matched += 1
-
-                            if len(batch) >= RESULT_BATCH_SIZE:
-                                self.batch_found.emit(batch)
-                                batch = []
-
-                            if scanned % PROGRESS_INTERVAL == 0:
-                                self.progress.emit(scanned, matched)
+                    entry = next(iterators[-1][0])
+                except StopIteration:
+                    iterator, identity = iterators.pop()
+                    iterator.close()
+                    active_directories.discard(identity)
+                    continue
                 except OSError:
                     skipped += 1
+                    iterator, identity = iterators.pop()
+                    iterator.close()
+                    active_directories.discard(identity)
+                    continue
+
+                scanned += 1
+                if not self.show_hidden and is_hidden(entry):
+                    continue
+
+                try:
+                    is_directory = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    skipped += 1
+                    continue
+
+                if self.query in entry.name.casefold():
+                    batch.append(
+                        SearchResult(
+                            path=entry.path,
+                            name=entry.name,
+                            is_directory=is_directory,
+                        )
+                    )
+                    matched += 1
+
+                if is_directory and not is_reparse_point(entry):
+                    child_iterator = open_directory(Path(entry.path))
+                    if child_iterator is not None:
+                        iterators.append(child_iterator)
+
+                if len(batch) >= RESULT_BATCH_SIZE:
+                    if self._emit_batch(batch):
+                        batch = []
+                    else:
+                        matched -= len(batch)
+                        batch = []
+                        stopped = True
+
+                if scanned % PROGRESS_INTERVAL == 0:
+                    self.progress.emit(scanned, matched)
         except (OSError, RuntimeError, ValueError) as error:
             self.failed.emit(str(error))
+        finally:
+            while iterators:
+                iterator, identity = iterators.pop()
+                iterator.close()
+                active_directories.discard(identity)
 
-        if batch:
-            self.batch_found.emit(batch)
+        if batch and not self._emit_batch(batch):
+            matched -= len(batch)
         self.progress.emit(scanned, matched)
         self.finished.emit(
             scanned,
@@ -138,20 +182,20 @@ class SearchResultsModel(QAbstractItemModel):
         )
         database_path = Path(self._temporary_directory.name) / "results.sqlite3"
         self._database = sqlite3.connect(database_path)
-        self._database.execute("PRAGMA journal_mode=MEMORY")
+        self._database.execute("PRAGMA journal_mode=OFF")
         self._database.execute("PRAGMA synchronous=OFF")
+        self._database.execute("PRAGMA locking_mode=EXCLUSIVE")
+        self._database.execute("PRAGMA cache_size=-8192")
         self._database.execute(
             "CREATE TABLE results ("
-            "id INTEGER PRIMARY KEY, "
             "category INTEGER NOT NULL, "
+            "position INTEGER NOT NULL, "
             "name TEXT NOT NULL, "
-            "path TEXT NOT NULL)"
-        )
-        self._database.execute(
-            "CREATE INDEX results_category_id ON results(category, id)"
+            "path TEXT NOT NULL, "
+            "PRIMARY KEY(category, position)) WITHOUT ROWID"
         )
         self._counts = [0, 0]
-        self._cache: dict[tuple[int, int], list[tuple[str, str]]] = {}
+        self._cache: OrderedDict[tuple[int, int], list[tuple[str, str]]] = OrderedDict()
         self._closed = False
         self.icons = QFileIconProvider()
 
@@ -164,7 +208,7 @@ class SearchResultsModel(QAbstractItemModel):
         grouped = ([], [])
         for result in results:
             category = 0 if result.is_directory else 1
-            grouped[category].append((category, result.name, result.path))
+            grouped[category].append((result.name, result.path))
 
         for category, rows in enumerate(grouped):
             if not rows:
@@ -176,15 +220,20 @@ class SearchResultsModel(QAbstractItemModel):
             for key in tuple(self._cache):
                 if key[0] == category and key[1] >= first_changed_page:
                     del self._cache[key]
-            self.beginInsertRows(parent, first, last)
+            database_rows = [
+                (category, first + offset, name, path)
+                for offset, (name, path) in enumerate(rows)
+            ]
             self._database.executemany(
-                "INSERT INTO results(category, name, path) VALUES (?, ?, ?)",
-                rows,
+                "INSERT INTO results(category, position, name, path) "
+                "VALUES (?, ?, ?, ?)",
+                database_rows,
             )
+            self._database.commit()
+            self.beginInsertRows(parent, first, last)
             self._counts[category] += len(rows)
             self.endInsertRows()
             self.dataChanged.emit(parent, parent, [Qt.ItemDataRole.DisplayRole])
-        self._database.commit()
 
     def clear(self) -> None:
         self.beginResetModel()
@@ -314,11 +363,20 @@ class SearchResultsModel(QAbstractItemModel):
             results = list(
                 self._database.execute(
                     "SELECT name, path FROM results "
-                    "WHERE category = ? ORDER BY id LIMIT ? OFFSET ?",
-                    (category, CACHE_PAGE_SIZE, page * CACHE_PAGE_SIZE),
+                    "WHERE category = ? AND position >= ? AND position < ? "
+                    "ORDER BY position",
+                    (
+                        category,
+                        page * CACHE_PAGE_SIZE,
+                        (page + 1) * CACHE_PAGE_SIZE,
+                    ),
                 )
             )
             self._cache[key] = results
+            while len(self._cache) > MAX_CACHE_PAGES:
+                self._cache.popitem(last=False)
+        else:
+            self._cache.move_to_end(key)
 
         offset = row % CACHE_PAGE_SIZE
         return results[offset] if offset < len(results) else None

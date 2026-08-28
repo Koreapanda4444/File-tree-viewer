@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install "ruff>=0.12,<1"
+
+      - name: Check formatting
+        run: ruff format --check main.py ui real virtual
+
+      - name: Check code
+        run: ruff check main.py ui real virtual
+
+      - name: Check syntax
+        run: python -m compileall -q main.py ui real virtual
+
+      - name: Check imports
+        run: python -c "import main, real.operations, real.preview, real.search, real.tree, ui.window, virtual.workspace"

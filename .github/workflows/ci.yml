@@ -29,13 +29,13 @@ jobs:
           python -m pip install "ruff>=0.12,<1"
 
       - name: Check formatting
-        run: ruff format --check main.py planning.py ui real virtual
+        run: ruff format --check main.py planning.py snapshot.py ui real virtual
 
       - name: Check code
-        run: ruff check main.py planning.py ui real virtual
+        run: ruff check main.py planning.py snapshot.py ui real virtual
 
       - name: Check syntax
-        run: python -m compileall -q main.py planning.py ui real virtual
+        run: python -m compileall -q main.py planning.py snapshot.py ui real virtual
 
       - name: Check imports
-        run: python -c "import main, planning, real.operations, real.preview, real.search, real.tree, ui.window, virtual.workspace"
+        run: python -c "import main, planning, snapshot, real.operations, real.preview, real.search, real.tree, ui.window, virtual.workspace"

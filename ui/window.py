@@ -47,6 +47,7 @@ from real.operations import (
 from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.tree import FileTreeModel
+from ui.plan import PlanExplorerPage
 from virtual.workspace import (
     VirtualNode,
     VirtualTaskWorker,
@@ -1806,13 +1807,17 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.real_page = RealExplorerPage()
         self.virtual_page = VirtualExplorerPage()
+        self.plan_page = PlanExplorerPage()
         self.real_page.status_changed.connect(self.statusBar().showMessage)
         self.real_page.ready_to_close.connect(self.close)
         self.virtual_page.status_changed.connect(self.statusBar().showMessage)
         self.virtual_page.ready_to_close.connect(self.close)
         self.virtual_page.close_aborted.connect(self.cancel_pending_close)
+        self.plan_page.status_changed.connect(self.statusBar().showMessage)
+        self.plan_page.ready_to_close.connect(self.close)
         self.tabs.addTab(self.real_page, "Real File System")
         self.tabs.addTab(self.virtual_page, "Virtual File System")
+        self.tabs.addTab(self.plan_page, "Plan")
 
         self.setCentralWidget(self.tabs)
         self.statusBar().showMessage("Ready")
@@ -1835,11 +1840,23 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Waiting for virtual workspace task...")
             event.ignore()
             return
+        if not self.plan_page.prepare_close():
+            if self.plan_page.close_cancelled:
+                self.real_page.cancel_close_request()
+                self.virtual_page.cancel_close_request()
+                event.ignore()
+                return
+            self.setEnabled(False)
+            self.statusBar().showMessage("Waiting for snapshot task...")
+            event.ignore()
+            return
         self.real_page.finalize_close()
+        self.plan_page.finalize_close()
         event.accept()
 
     def cancel_pending_close(self) -> None:
         self.real_page.cancel_close_request()
         self.virtual_page.cancel_close_request()
+        self.plan_page.cancel_close_request()
         self.setEnabled(True)
         self.statusBar().showMessage("Close cancelled")

@@ -34,9 +34,11 @@ from PySide6.QtWidgets import (
 )
 
 from planning import FilePlan, PlanAction, PlanOperation, normalize_plan_path
+from plan_diff import simulate_plan
 from real.operations import validate_name
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
 from ui.batch import BatchDialog
+from ui.plan_diff import PlanDiffDialog
 
 INVALID_INDEX = QModelIndex()
 PLAN_MIME_TYPE = "application/x-file-tree-viewer-plan-paths"
@@ -368,6 +370,7 @@ class PlanExplorerPage(QWidget):
         self.delete_button = QPushButton("Delete")
         self.batch_rename_button = QPushButton("Batch Rename")
         self.organize_button = QPushButton("Organize Files")
+        self.diff_button = QPushButton("Diff / Simulate")
         for button in (
             self.new_file_button,
             self.new_folder_button,
@@ -376,6 +379,7 @@ class PlanExplorerPage(QWidget):
             self.delete_button,
             self.batch_rename_button,
             self.organize_button,
+            self.diff_button,
         ):
             row.addWidget(button)
         row.addStretch(1)
@@ -386,6 +390,7 @@ class PlanExplorerPage(QWidget):
         self.delete_button.clicked.connect(self.stage_delete)
         self.batch_rename_button.clicked.connect(lambda: self.stage_batch(True))
         self.organize_button.clicked.connect(lambda: self.stage_batch(False))
+        self.diff_button.clicked.connect(self.show_plan_diff)
         return row
 
     def select_snapshot_root(self) -> None:
@@ -660,6 +665,26 @@ class PlanExplorerPage(QWidget):
         self._refresh_plan_list()
         self.status_changed.emit("Plan cleared")
 
+    def show_plan_diff(self) -> None:
+        if self.snapshot is None or not len(self.plan) or self.scan_is_running:
+            return
+        try:
+            simulation = simulate_plan(self.snapshot, self.plan)
+        except (ValueError, RuntimeError, sqlite3.Error) as error:
+            self._show_plan_error(error)
+            return
+        dialog = PlanDiffDialog(simulation, self)
+        dialog.exec()
+        dialog.deleteLater()
+        if simulation.can_apply:
+            self.status_changed.emit(
+                f"Simulation complete: {len(simulation.changes):,} changes, no problems"
+            )
+        else:
+            self.status_changed.emit(
+                f"Simulation complete: {len(simulation.issues):,} problem(s)"
+            )
+
     def _finish_staging(self, operation: PlanOperation) -> None:
         self._refresh_plan_list()
         self.status_changed.emit(f"Staged {operation.action.value}")
@@ -751,6 +776,7 @@ class PlanExplorerPage(QWidget):
         self.delete_button.setEnabled(bool(entries))
         self.batch_rename_button.setEnabled(bool(entries))
         self.organize_button.setEnabled(ready)
+        self.diff_button.setEnabled(ready and bool(len(self.plan)))
         self.remove_button.setEnabled(bool(self.plan_list.selectedItems()))
         self.clear_button.setEnabled(bool(len(self.plan)) and not self.scan_is_running)
 

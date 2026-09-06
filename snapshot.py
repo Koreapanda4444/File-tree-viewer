@@ -278,6 +278,8 @@ def build_snapshot(
                 continue
 
             relative_path = f"{parent_path}/{entry.name}" if parent_path else entry.name
+            if not parent_path and entry.name.casefold() == ".file-tree-viewer":
+                continue
             scanned += 1
             is_directory = False
             is_symlink = False

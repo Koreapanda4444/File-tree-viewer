@@ -154,6 +154,8 @@ def normalize_plan_path(path: PurePosixPath | str) -> PurePosixPath:
         "\0" in part or any(ord(character) < 32 for character in part) for part in parts
     ):
         raise ValueError("Plan paths cannot contain control characters")
+    if parts[0].casefold() == ".file-tree-viewer":
+        raise ValueError("This path is reserved for File Tree Viewer recovery data")
     return PurePosixPath(*parts)
 
 

@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from conflicts import resolve_plan_conflicts
+from plan_apply import ApplicationStatus, PlanApplicationRecord
 from planning import (
     ConflictPolicy,
     FilePlan,
@@ -46,6 +47,7 @@ from real.operations import validate_name
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
+from ui.plan_apply import PlanApplyWorker
 from ui.plan_diff import PlanDiffDialog
 
 INVALID_INDEX = QModelIndex()
@@ -295,6 +297,10 @@ class PlanExplorerPage(QWidget):
         self.scan_thread: QThread | None = None
         self.scan_worker: SnapshotWorker | None = None
         self.scan_outcome: tuple[object, bool, str] | None = None
+        self.apply_thread: QThread | None = None
+        self.apply_worker: PlanApplyWorker | None = None
+        self.apply_outcome: tuple[object, str] | None = None
+        self.last_application: PlanApplicationRecord | None = None
         self.close_requested = False
         self.close_cancelled = False
 
@@ -309,6 +315,10 @@ class PlanExplorerPage(QWidget):
     @property
     def scan_is_running(self) -> bool:
         return self.scan_thread is not None
+
+    @property
+    def apply_is_running(self) -> bool:
+        return self.apply_thread is not None
 
     def _create_root_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -380,6 +390,8 @@ class PlanExplorerPage(QWidget):
         self.batch_rename_button = QPushButton("Batch Rename")
         self.organize_button = QPushButton("Organize Files")
         self.diff_button = QPushButton("Diff / Simulate")
+        self.apply_button = QPushButton("Apply All")
+        self.cancel_apply_button = QPushButton("Cancel Apply")
         for button in (
             self.new_file_button,
             self.new_folder_button,
@@ -389,6 +401,8 @@ class PlanExplorerPage(QWidget):
             self.batch_rename_button,
             self.organize_button,
             self.diff_button,
+            self.apply_button,
+            self.cancel_apply_button,
         ):
             row.addWidget(button)
         row.addStretch(1)
@@ -400,10 +414,12 @@ class PlanExplorerPage(QWidget):
         self.batch_rename_button.clicked.connect(lambda: self.stage_batch(True))
         self.organize_button.clicked.connect(lambda: self.stage_batch(False))
         self.diff_button.clicked.connect(self.show_plan_diff)
+        self.apply_button.clicked.connect(self.confirm_plan_apply)
+        self.cancel_apply_button.clicked.connect(self.cancel_plan_apply)
         return row
 
     def select_snapshot_root(self) -> None:
-        if self.scan_is_running:
+        if self.scan_is_running or self.apply_is_running:
             return
         directory = QFileDialog.getExistingDirectory(self, "Import Snapshot")
         if not directory:
@@ -413,7 +429,7 @@ class PlanExplorerPage(QWidget):
         self.start_snapshot(Path(directory))
 
     def start_snapshot(self, root: Path) -> None:
-        if self.scan_is_running:
+        if self.scan_is_running or self.apply_is_running:
             return
         thread = QThread(self)
         worker = SnapshotWorker(root)
@@ -675,7 +691,12 @@ class PlanExplorerPage(QWidget):
         self.status_changed.emit("Plan cleared")
 
     def show_plan_diff(self) -> None:
-        if self.snapshot is None or not len(self.plan) or self.scan_is_running:
+        if (
+            self.snapshot is None
+            or not len(self.plan)
+            or self.scan_is_running
+            or self.apply_is_running
+        ):
             return
         try:
             simulation = simulate_plan(self.snapshot, self.plan)
@@ -734,6 +755,153 @@ class PlanExplorerPage(QWidget):
         result_dialog = PlanDiffDialog(resolved_simulation, self)
         result_dialog.exec()
         result_dialog.deleteLater()
+
+    def confirm_plan_apply(self) -> None:
+        if (
+            self.snapshot is None
+            or not len(self.plan)
+            or self.scan_is_running
+            or self.apply_is_running
+        ):
+            return
+        try:
+            simulation = simulate_plan(self.snapshot, self.plan)
+        except (ValueError, RuntimeError, sqlite3.Error) as error:
+            self._show_plan_error(error)
+            return
+        if not simulation.can_apply:
+            dialog = PlanDiffDialog(simulation, self)
+            dialog.exec()
+            resolve_requested = dialog.resolve_requested
+            dialog.deleteLater()
+            if resolve_requested:
+                self.resolve_plan_problems(simulation)
+            return
+
+        active_count = len(simulation.changes) - simulation.skipped_count
+        delete_count = sum(
+            operation.action is PlanAction.DELETE
+            and operation.conflict_policy is not ConflictPolicy.SKIP
+            for operation in self.plan.operations
+        )
+        overwrite_count = sum(
+            operation.conflict_policy is ConflictPolicy.OVERWRITE
+            for operation in self.plan.operations
+        )
+        answer = QMessageBox.warning(
+            self,
+            "Apply Plan to real files",
+            f"Apply {active_count:,} operation(s) to:\n{self.snapshot.root}\n\n"
+            f"Deletes: {delete_count:,} · Overwrites: {overwrite_count:,}\n"
+            "The filesystem will change immediately. Recovery data will be kept "
+            "for the full Undo feature.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.start_plan_apply()
+
+    def start_plan_apply(self) -> None:
+        if self.snapshot is None or self.apply_is_running or self.scan_is_running:
+            return
+        thread = QThread(self)
+        worker = PlanApplyWorker(self.snapshot, self.plan)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self.show_apply_progress)
+        worker.finished.connect(self.receive_apply_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self.apply_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.apply_thread = thread
+        self.apply_worker = worker
+        self.apply_outcome = None
+        self._set_applying(True)
+        self.progress_label.setText("Applying Plan…")
+        self.status_changed.emit("Applying Plan to real files…")
+        thread.start()
+
+    def cancel_plan_apply(self) -> None:
+        if self.apply_worker is not None:
+            self.apply_worker.cancel()
+            self.progress_label.setText("Cancelling and restoring changes…")
+
+    def show_apply_progress(
+        self,
+        phase: str,
+        completed: int,
+        total: int,
+        name: str,
+    ) -> None:
+        self.progress_label.setText(
+            f"{phase}: {completed:,}/{total:,} — {name}"
+        )
+
+    def receive_apply_result(self, result: object, error: str) -> None:
+        self.apply_outcome = (result, error)
+
+    def apply_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self.apply_thread:
+            return
+        outcome = self.apply_outcome
+        self.apply_thread = None
+        self.apply_worker = None
+        self.apply_outcome = None
+        self._set_applying(False)
+
+        if self.close_requested:
+            self.ready_to_close.emit()
+            return
+        if outcome is None:
+            self.progress_label.setText("Apply failed")
+            return
+        result, error = outcome
+        if error or not isinstance(result, PlanApplicationRecord):
+            message = error or "The Plan worker returned no application record"
+            self.progress_label.setText("Apply failed before changes")
+            QMessageBox.warning(self, "Cannot apply Plan", message)
+            self.status_changed.emit(message)
+            return
+
+        self.last_application = result
+        if result.status is ApplicationStatus.COMPLETED:
+            self.plan.clear()
+            self._refresh_plan_list()
+            self.progress_label.setText(
+                f"Applied {len(result.completed_operation_ids):,} operation(s)"
+            )
+            QMessageBox.information(
+                self,
+                "Plan applied",
+                f"Applied {len(result.completed_operation_ids):,} operation(s). "
+                "Recovery data was saved for full Undo.",
+            )
+            self.start_snapshot(result.root)
+            return
+        if result.status is ApplicationStatus.ROLLED_BACK:
+            self.progress_label.setText("Apply stopped; changes restored")
+            QMessageBox.warning(
+                self,
+                "Plan not applied",
+                f"{result.error}\n\nAll changes from this attempt were restored.",
+            )
+            self.status_changed.emit("Plan apply stopped and was rolled back")
+            return
+
+        self.plan.clear()
+        self._refresh_plan_list()
+        self.progress_label.setText("Recovery incomplete")
+        QMessageBox.critical(
+            self,
+            "Manual recovery required",
+            f"{result.error}\n\nSome changes could not be restored. "
+            "Do not apply another Plan until this recovery record is checked:\n"
+            f"{result.journal_path}",
+        )
+        self.start_snapshot(result.root)
 
     def _finish_staging(self, operation: PlanOperation) -> None:
         self._refresh_plan_list()
@@ -813,14 +981,27 @@ class PlanExplorerPage(QWidget):
         self.status_changed.emit(str(error))
 
     def _set_scanning(self, scanning: bool) -> None:
-        self.import_button.setEnabled(not scanning)
+        busy = scanning or self.apply_is_running
+        self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(scanning)
-        self.tree.setEnabled(not scanning)
-        self.plan_list.setEnabled(not scanning)
+        self.tree.setEnabled(not busy)
+        self.plan_list.setEnabled(not busy)
+        self.update_buttons()
+
+    def _set_applying(self, applying: bool) -> None:
+        busy = applying or self.scan_is_running
+        self.import_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(self.scan_is_running)
+        self.tree.setEnabled(not busy)
+        self.plan_list.setEnabled(not busy)
         self.update_buttons()
 
     def update_buttons(self) -> None:
-        ready = self.snapshot is not None and not self.scan_is_running
+        ready = (
+            self.snapshot is not None
+            and not self.scan_is_running
+            and not self.apply_is_running
+        )
         entries = self._selected_entries() if ready else []
         self.new_file_button.setEnabled(ready)
         self.new_folder_button.setEnabled(ready)
@@ -830,11 +1011,17 @@ class PlanExplorerPage(QWidget):
         self.batch_rename_button.setEnabled(bool(entries))
         self.organize_button.setEnabled(ready)
         self.diff_button.setEnabled(ready and bool(len(self.plan)))
+        self.apply_button.setEnabled(ready and bool(len(self.plan)))
+        self.cancel_apply_button.setEnabled(self.apply_is_running)
         self.remove_button.setEnabled(bool(self.plan_list.selectedItems()))
         self.clear_button.setEnabled(bool(len(self.plan)) and not self.scan_is_running)
 
     def prepare_close(self) -> bool:
         self.close_cancelled = False
+        if self.apply_is_running:
+            self.close_requested = True
+            self.cancel_plan_apply()
+            return False
         if self.scan_is_running:
             self.close_requested = True
             self.cancel_snapshot()

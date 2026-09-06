@@ -14,18 +14,27 @@ class PlanAction(str, Enum):
     CREATE_FOLDER = "create_folder"
 
 
+class ConflictPolicy(str, Enum):
+    ERROR = "error"
+    OVERWRITE = "overwrite"
+    AUTO_RENAME = "auto_rename"
+    SKIP = "skip"
+
+
 @dataclass(frozen=True, slots=True)
 class PlanOperation:
     action: PlanAction
     source: PurePosixPath | str | None = None
     target: PurePosixPath | str | None = None
     operation_id: str = field(default_factory=lambda: uuid4().hex)
+    conflict_policy: ConflictPolicy = ConflictPolicy.ERROR
 
     def __post_init__(self) -> None:
         action = PlanAction(self.action)
         source = normalize_plan_path(self.source) if self.source is not None else None
         target = normalize_plan_path(self.target) if self.target is not None else None
         operation_id = self.operation_id.strip()
+        conflict_policy = ConflictPolicy(self.conflict_policy)
 
         if not operation_id:
             raise ValueError("An operation ID is required")
@@ -35,6 +44,7 @@ class PlanOperation:
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "target", target)
         object.__setattr__(self, "operation_id", operation_id)
+        object.__setattr__(self, "conflict_policy", conflict_policy)
 
 
 class FilePlan:

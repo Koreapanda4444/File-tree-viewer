@@ -33,11 +33,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from planning import FilePlan, PlanAction, PlanOperation, normalize_plan_path
+from conflicts import resolve_plan_conflicts
+from planning import (
+    ConflictPolicy,
+    FilePlan,
+    PlanAction,
+    PlanOperation,
+    normalize_plan_path,
+)
 from plan_diff import simulate_plan
 from real.operations import validate_name
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
 from ui.batch import BatchDialog
+from ui.conflicts import ConflictResolutionDialog
 from ui.plan_diff import PlanDiffDialog
 
 INVALID_INDEX = QModelIndex()
@@ -339,12 +347,13 @@ class PlanExplorerPage(QWidget):
         self.plan_count = QLabel()
         right_layout.addWidget(self.plan_count)
         self.plan_list = QTreeWidget()
-        self.plan_list.setHeaderLabels(("Action", "Source", "Target"))
+        self.plan_list.setHeaderLabels(("Action", "Source", "Target", "Policy"))
         self.plan_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
         self.plan_list.header().resizeSection(0, 110)
         self.plan_list.header().resizeSection(1, 260)
+        self.plan_list.header().resizeSection(2, 260)
         right_layout.addWidget(self.plan_list, 1)
         plan_buttons = QHBoxLayout()
         self.remove_button = QPushButton("Remove Selected")
@@ -675,7 +684,11 @@ class PlanExplorerPage(QWidget):
             return
         dialog = PlanDiffDialog(simulation, self)
         dialog.exec()
+        resolve_requested = dialog.resolve_requested
         dialog.deleteLater()
+        if resolve_requested:
+            self.resolve_plan_problems(simulation)
+            return
         if simulation.can_apply:
             self.status_changed.emit(
                 f"Simulation complete: {len(simulation.changes):,} changes, no problems"
@@ -684,6 +697,43 @@ class PlanExplorerPage(QWidget):
             self.status_changed.emit(
                 f"Simulation complete: {len(simulation.issues):,} problem(s)"
             )
+
+    def resolve_plan_problems(self, simulation) -> None:
+        if self.snapshot is None:
+            return
+        dialog = ConflictResolutionDialog(self.plan, simulation, self)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            resolved_plan = resolve_plan_conflicts(
+                self.snapshot,
+                self.plan,
+                simulation,
+                dialog.choices,
+            )
+            resolved_simulation = simulate_plan(self.snapshot, resolved_plan)
+        except (ValueError, RuntimeError, sqlite3.Error) as error:
+            self._show_plan_error(error)
+            return
+        finally:
+            dialog.deleteLater()
+
+        if not resolved_simulation.can_apply:
+            QMessageBox.warning(
+                self,
+                "Plan still has problems",
+                "The selected resolutions produced new conflicts. "
+                "The original Plan was kept unchanged.",
+            )
+            return
+        self.plan = resolved_plan
+        self._refresh_plan_list()
+        self.status_changed.emit(
+            f"Resolved Plan: {resolved_simulation.skipped_count:,} operation(s) skipped"
+        )
+        result_dialog = PlanDiffDialog(resolved_simulation, self)
+        result_dialog.exec()
+        result_dialog.deleteLater()
 
     def _finish_staging(self, operation: PlanOperation) -> None:
         self._refresh_plan_list()
@@ -700,6 +750,9 @@ class PlanExplorerPage(QWidget):
                     else "-",
                     operation.target.as_posix()
                     if operation.target is not None
+                    else "-",
+                    operation.conflict_policy.value.replace("_", " ").upper()
+                    if operation.conflict_policy is not ConflictPolicy.ERROR
                     else "-",
                 )
             )

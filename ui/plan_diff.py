@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QGroupBox,
     QLabel,
+    QPushButton,
     QTableView,
     QVBoxLayout,
 )
@@ -40,11 +41,18 @@ class PlanDiffModel(QAbstractTableModel):
         change = self.changes[index.row()]
         issues = self.issues.get(change.operation_id, ())
         if role == Qt.ItemDataRole.DisplayRole:
+            result = (
+                "Skipped"
+                if change.skipped
+                else "Ready"
+                if not issues
+                else issue_result(issues)
+            )
             return (
                 change.kind.value.upper(),
                 change.source.as_posix() if change.source is not None else "-",
                 change.target.as_posix() if change.target is not None else "-",
-                "Ready" if not issues else issue_result(issues),
+                result,
             )[index.column()]
         if role == Qt.ItemDataRole.ToolTipRole and issues:
             return "\n".join(issue.message for issue in issues)
@@ -99,6 +107,7 @@ class IssueModel(QAbstractTableModel):
 class PlanDiffDialog(QDialog):
     def __init__(self, simulation: PlanSimulation, parent=None) -> None:
         super().__init__(parent)
+        self.resolve_requested = False
         self.setWindowTitle("Plan Diff and Simulation")
         self.resize(980, 760)
         layout = QVBoxLayout(self)
@@ -142,8 +151,19 @@ class PlanDiffDialog(QDialog):
         layout.addWidget(note)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        self.resolve_button: QPushButton | None = None
+        if simulation.issues:
+            self.resolve_button = buttons.addButton(
+                "Resolve Problems",
+                QDialogButtonBox.ButtonRole.ActionRole,
+            )
+            self.resolve_button.clicked.connect(self.request_resolution)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def request_resolution(self) -> None:
+        self.resolve_requested = True
+        self.accept()
 
 
 def issue_result(issues) -> str:
@@ -157,12 +177,14 @@ def summary_text(simulation: PlanSimulation) -> str:
     counts = simulation.change_counts
     issue_counts = simulation.issue_counts
     parts = [
-        f"{len(simulation.changes):,} changes",
+        f"{len(simulation.changes) - simulation.skipped_count:,} active changes",
         f"{counts[ChangeKind.MOVED]:,} moved",
         f"{counts[ChangeKind.RENAMED]:,} renamed",
         f"{counts[ChangeKind.CREATED]:,} created",
         f"{counts[ChangeKind.DELETED]:,} deleted",
     ]
+    if simulation.skipped_count:
+        parts.append(f"{simulation.skipped_count:,} skipped")
     status = (
         "Ready to apply"
         if simulation.can_apply

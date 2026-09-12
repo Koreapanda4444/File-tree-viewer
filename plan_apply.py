@@ -25,6 +25,9 @@ class ApplicationStatus(str, Enum):
     COMPLETED = "completed"
     ROLLED_BACK = "rolled_back"
     ROLLBACK_FAILED = "rollback_failed"
+    UNDOING = "undoing"
+    UNDONE = "undone"
+    UNDO_FAILED = "undo_failed"
 
 
 class MutationKind(str, Enum):
@@ -66,6 +69,7 @@ class PlanApplicationRecord:
     started_at: str
     status: ApplicationStatus = ApplicationStatus.RUNNING
     finished_at: str | None = None
+    undone_at: str | None = None
     completed_operation_ids: list[str] = field(default_factory=list)
     skipped_operation_ids: list[str] = field(default_factory=list)
     mutations: list[AppliedMutation] = field(default_factory=list)
@@ -74,13 +78,14 @@ class PlanApplicationRecord:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "version": 1,
+            "version": 2,
             "transaction_id": self.transaction_id,
             "root": str(self.root),
             "transaction_directory": str(self.transaction_directory),
             "mutation_log": str(self.mutation_log_path),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "undone_at": self.undone_at,
             "status": self.status.value,
             "completed_operation_ids": self.completed_operation_ids,
             "skipped_operation_ids": self.skipped_operation_ids,
@@ -148,6 +153,135 @@ def apply_plan(
     record.finished_at = now_text()
     record.save()
     return record
+
+
+def undo_application(
+    record: PlanApplicationRecord,
+    *,
+    progress: ProgressCallback | None = None,
+) -> PlanApplicationRecord:
+    if record.status is not ApplicationStatus.COMPLETED:
+        raise ValueError("Only a completed Plan can be undone")
+    validate_application_record(record)
+    validate_undo_state(record)
+
+    record.status = ApplicationStatus.UNDOING
+    record.rollback_errors.clear()
+    record.save()
+    total = len(record.mutations)
+    errors: list[str] = []
+    for completed, mutation in enumerate(reversed(record.mutations)):
+        path = mutation.target or mutation.source or record.root
+        if progress is not None:
+            progress("Undoing Plan", completed, total, path.name)
+        try:
+            reverse_mutation(mutation)
+        except (OSError, RuntimeError, shutil.Error, ValueError) as error:
+            errors.append(f"{mutation.operation_id}: {error}")
+
+    record.rollback_errors = errors
+    record.status = (
+        ApplicationStatus.UNDO_FAILED if errors else ApplicationStatus.UNDONE
+    )
+    record.undone_at = now_text()
+    record.save()
+    if progress is not None:
+        progress("Undo complete", total, total, record.root.name)
+    return record
+
+
+def latest_completed_application(
+    root: Path | str,
+) -> PlanApplicationRecord | None:
+    root_path = Path(root).expanduser().absolute()
+    transactions = root_path / INTERNAL_DIRECTORY / "transactions"
+    if not transactions.is_dir():
+        return None
+    records: list[PlanApplicationRecord] = []
+    try:
+        directories = tuple(transactions.iterdir())
+    except OSError:
+        return None
+    for directory in directories:
+        journal_path = directory / "journal.json"
+        if not directory.is_dir() or not journal_path.is_file():
+            continue
+        try:
+            record = load_application_record(journal_path)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            continue
+        if normalized_path(record.root) == normalized_path(root_path):
+            records.append(record)
+    if not records:
+        return None
+    newest = max(records, key=lambda record: record.started_at)
+    if newest.status in {
+        ApplicationStatus.RUNNING,
+        ApplicationStatus.ROLLBACK_FAILED,
+        ApplicationStatus.UNDOING,
+        ApplicationStatus.UNDO_FAILED,
+    }:
+        return None
+    completed = [
+        record for record in records if record.status is ApplicationStatus.COMPLETED
+    ]
+    return max(completed, key=lambda record: record.started_at, default=None)
+
+
+def load_application_record(journal_path: Path | str) -> PlanApplicationRecord:
+    path = Path(journal_path).expanduser().absolute()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("version") not in {1, 2}:
+        raise ValueError("Unsupported recovery record version")
+    transaction_id = required_text(data, "transaction_id")
+    transaction_directory = Path(
+        required_text(data, "transaction_directory")
+    ).absolute()
+    if normalized_path(transaction_directory) != normalized_path(path.parent):
+        raise ValueError("Recovery record directory mismatch")
+    root = Path(required_text(data, "root")).absolute()
+    mutation_log_path = transaction_directory / "mutations.jsonl"
+    record = PlanApplicationRecord(
+        transaction_id=transaction_id,
+        root=root,
+        transaction_directory=transaction_directory,
+        journal_path=path,
+        mutation_log_path=mutation_log_path,
+        started_at=required_text(data, "started_at"),
+        status=ApplicationStatus(required_text(data, "status")),
+        finished_at=optional_text(data.get("finished_at")),
+        undone_at=optional_text(data.get("undone_at")),
+        completed_operation_ids=text_list(data, "completed_operation_ids"),
+        skipped_operation_ids=text_list(data, "skipped_operation_ids"),
+        error=optional_text(data.get("error")) or "",
+        rollback_errors=text_list(data, "rollback_errors"),
+    )
+    record.mutations = load_mutations(mutation_log_path)
+    validate_application_record(record)
+    return record
+
+
+def load_mutations(path: Path) -> list[AppliedMutation]:
+    mutations: list[AppliedMutation] = []
+    with path.open("r", encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+                operation_id = required_text(data, "operation_id")
+                mutation = AppliedMutation(
+                    MutationKind(required_text(data, "kind")),
+                    operation_id,
+                    optional_path(data.get("source")),
+                    optional_path(data.get("target")),
+                )
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+                raise ValueError(
+                    f"Invalid recovery mutation on line {line_number}"
+                ) from error
+            mutations.append(mutation)
+    return mutations
 
 
 def perform_plan(
@@ -390,3 +524,119 @@ def emit_progress(
 
 def now_text() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def validate_application_record(record: PlanApplicationRecord) -> None:
+    expected_directory = (
+        record.root / INTERNAL_DIRECTORY / "transactions" / record.transaction_id
+    )
+    if normalized_path(record.transaction_directory) != normalized_path(
+        expected_directory
+    ):
+        raise ValueError("Recovery record is outside the expected transaction folder")
+    if normalized_path(record.journal_path.parent) != normalized_path(
+        record.transaction_directory
+    ):
+        raise ValueError("Recovery journal path mismatch")
+    if normalized_path(record.mutation_log_path.parent) != normalized_path(
+        record.transaction_directory
+    ):
+        raise ValueError("Recovery mutation log path mismatch")
+    for mutation in record.mutations:
+        for path in (mutation.source, mutation.target):
+            if path is not None and not path_is_within(path, record.root):
+                raise ValueError("Recovery mutation points outside the Plan root")
+
+
+def validate_undo_state(record: PlanApplicationRecord) -> None:
+    state: dict[str, bool] = {}
+    owned_targets = {
+        normalized_path(required_path(mutation.target))
+        for mutation in record.mutations
+        if mutation.kind
+        in {
+            MutationKind.FINAL_MOVE,
+            MutationKind.CREATE_FILE,
+            MutationKind.CREATE_FOLDER,
+        }
+    }
+
+    def exists(path: Path) -> bool:
+        key = normalized_path(path)
+        if key not in state:
+            state[key] = path_exists(path)
+        return state[key]
+
+    def set_exists(path: Path, value: bool) -> None:
+        state[normalized_path(path)] = value
+
+    for mutation in reversed(record.mutations):
+        if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
+            target = required_path(mutation.target)
+            if exists(target):
+                if mutation.kind is MutationKind.CREATE_FILE:
+                    if target.is_symlink() or not target.is_file():
+                        raise ValueError(f"Undo target changed type: {target}")
+                    if target.stat().st_size:
+                        raise ValueError(f"Created file is no longer empty: {target}")
+                elif target.is_symlink() or not target.is_dir():
+                    raise ValueError(f"Undo target changed type: {target}")
+                else:
+                    for child in target.iterdir():
+                        if normalized_path(child) not in owned_targets:
+                            raise ValueError(
+                                f"Created folder contains a new item: {child}"
+                            )
+                set_exists(target, False)
+            continue
+
+        source = required_path(mutation.source)
+        target = required_path(mutation.target)
+        if not exists(target):
+            raise FileNotFoundError(f"Undo source is missing: {target}")
+        if exists(source):
+            raise FileExistsError(f"Undo destination already exists: {source}")
+        set_exists(target, False)
+        set_exists(source, True)
+
+
+def path_is_within(path: Path, parent: Path) -> bool:
+    try:
+        common = os.path.commonpath((normalized_path(path), normalized_path(parent)))
+    except ValueError:
+        return False
+    return common == normalized_path(parent)
+
+
+def normalized_path(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def required_text(data: dict[str, object], key: str) -> str:
+    value = data[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Recovery field is missing: {key}")
+    return value
+
+
+def optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("Invalid recovery text field")
+    return value
+
+
+def text_list(data: dict[str, object], key: str) -> list[str]:
+    value = data.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"Invalid recovery list: {key}")
+    return list(value)
+
+
+def optional_path(value: object) -> Path | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError("Invalid recovery path")
+    return Path(value).absolute()

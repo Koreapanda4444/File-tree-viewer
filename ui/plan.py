@@ -35,7 +35,11 @@ from PySide6.QtWidgets import (
 )
 
 from conflicts import resolve_plan_conflicts
-from plan_apply import ApplicationStatus, PlanApplicationRecord
+from plan_apply import (
+    ApplicationStatus,
+    PlanApplicationRecord,
+    latest_completed_application,
+)
 from plan_diff import simulate_plan
 from planning import (
     ConflictPolicy,
@@ -48,7 +52,7 @@ from real.operations import validate_name
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
-from ui.plan_apply import PlanApplyWorker
+from ui.plan_apply import PlanApplyWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
 
 INVALID_INDEX = QModelIndex()
@@ -301,6 +305,9 @@ class PlanExplorerPage(QWidget):
         self.apply_thread: QThread | None = None
         self.apply_worker: PlanApplyWorker | None = None
         self.apply_outcome: tuple[object, str] | None = None
+        self.undo_thread: QThread | None = None
+        self.undo_worker: PlanUndoWorker | None = None
+        self.undo_outcome: tuple[object, str] | None = None
         self.last_application: PlanApplicationRecord | None = None
         self.close_requested = False
         self.close_cancelled = False
@@ -320,6 +327,10 @@ class PlanExplorerPage(QWidget):
     @property
     def apply_is_running(self) -> bool:
         return self.apply_thread is not None
+
+    @property
+    def undo_is_running(self) -> bool:
+        return self.undo_thread is not None
 
     def _create_root_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -393,6 +404,7 @@ class PlanExplorerPage(QWidget):
         self.diff_button = QPushButton("Diff / Simulate")
         self.apply_button = QPushButton("Apply All")
         self.cancel_apply_button = QPushButton("Cancel Apply")
+        self.undo_plan_button = QPushButton("Undo Last Apply")
         for button in (
             self.new_file_button,
             self.new_folder_button,
@@ -404,6 +416,7 @@ class PlanExplorerPage(QWidget):
             self.diff_button,
             self.apply_button,
             self.cancel_apply_button,
+            self.undo_plan_button,
         ):
             row.addWidget(button)
         row.addStretch(1)
@@ -417,10 +430,11 @@ class PlanExplorerPage(QWidget):
         self.diff_button.clicked.connect(self.show_plan_diff)
         self.apply_button.clicked.connect(self.confirm_plan_apply)
         self.cancel_apply_button.clicked.connect(self.cancel_plan_apply)
+        self.undo_plan_button.clicked.connect(self.confirm_plan_undo)
         return row
 
     def select_snapshot_root(self) -> None:
-        if self.scan_is_running or self.apply_is_running:
+        if self.scan_is_running or self.apply_is_running or self.undo_is_running:
             return
         directory = QFileDialog.getExistingDirectory(self, "Import Snapshot")
         if not directory:
@@ -430,7 +444,7 @@ class PlanExplorerPage(QWidget):
         self.start_snapshot(Path(directory))
 
     def start_snapshot(self, root: Path) -> None:
-        if self.scan_is_running or self.apply_is_running:
+        if self.scan_is_running or self.apply_is_running or self.undo_is_running:
             return
         thread = QThread(self)
         worker = SnapshotWorker(root)
@@ -510,6 +524,7 @@ class PlanExplorerPage(QWidget):
             self.snapshot_model.fetchMore(root_index)
         self.tree.expand(root_index)
         self.plan = FilePlan(snapshot.root)
+        self.last_application = latest_completed_application(snapshot.root)
         self.location.setText(str(snapshot.root))
         self.progress_label.setText(
             f"{snapshot.entry_count:,} items, {snapshot.error_count:,} errors"
@@ -697,6 +712,7 @@ class PlanExplorerPage(QWidget):
             or not len(self.plan)
             or self.scan_is_running
             or self.apply_is_running
+            or self.undo_is_running
         ):
             return
         try:
@@ -763,6 +779,7 @@ class PlanExplorerPage(QWidget):
             or not len(self.plan)
             or self.scan_is_running
             or self.apply_is_running
+            or self.undo_is_running
         ):
             return
         try:
@@ -804,7 +821,12 @@ class PlanExplorerPage(QWidget):
         self.start_plan_apply()
 
     def start_plan_apply(self) -> None:
-        if self.snapshot is None or self.apply_is_running or self.scan_is_running:
+        if (
+            self.snapshot is None
+            or self.apply_is_running
+            or self.scan_is_running
+            or self.undo_is_running
+        ):
             return
         thread = QThread(self)
         worker = PlanApplyWorker(self.snapshot, self.plan)
@@ -902,6 +924,107 @@ class PlanExplorerPage(QWidget):
         )
         self.start_snapshot(result.root)
 
+    def confirm_plan_undo(self) -> None:
+        record = self.last_application
+        if (
+            record is None
+            or self.snapshot is None
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+        ):
+            return
+        if len(self.plan):
+            QMessageBox.warning(
+                self,
+                "Cannot undo last Plan",
+                "Clear the currently staged Plan before undoing the last application.",
+            )
+            return
+        answer = QMessageBox.warning(
+            self,
+            "Undo last applied Plan",
+            f"Undo the last applied Plan on:\n{record.root}\n\n"
+            f"This will reverse {len(record.completed_operation_ids):,} operation(s). "
+            "The current filesystem will be checked for path conflicts first.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.start_plan_undo(record)
+
+    def start_plan_undo(self, record: PlanApplicationRecord) -> None:
+        if self.scan_is_running or self.apply_is_running or self.undo_is_running:
+            return
+        thread = QThread(self)
+        worker = PlanUndoWorker(record)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self.show_apply_progress)
+        worker.finished.connect(self.receive_undo_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self.undo_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.undo_thread = thread
+        self.undo_worker = worker
+        self.undo_outcome = None
+        self._set_undoing(True)
+        self.progress_label.setText("Checking and undoing last Plan…")
+        self.status_changed.emit("Undoing last applied Plan…")
+        thread.start()
+
+    def receive_undo_result(self, result: object, error: str) -> None:
+        self.undo_outcome = (result, error)
+
+    def undo_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self.undo_thread:
+            return
+        outcome = self.undo_outcome
+        self.undo_thread = None
+        self.undo_worker = None
+        self.undo_outcome = None
+        self._set_undoing(False)
+
+        if self.close_requested:
+            self.ready_to_close.emit()
+            return
+        if outcome is None:
+            self.progress_label.setText("Undo failed")
+            return
+        result, error = outcome
+        if error or not isinstance(result, PlanApplicationRecord):
+            message = error or "The Undo worker returned no application record"
+            self.progress_label.setText("Undo could not start")
+            QMessageBox.warning(self, "Cannot undo last Plan", message)
+            self.status_changed.emit(message)
+            return
+        if result.status is ApplicationStatus.UNDONE:
+            self.last_application = None
+            self.progress_label.setText("Last Plan fully undone")
+            QMessageBox.information(
+                self,
+                "Plan undone",
+                f"Restored {len(result.completed_operation_ids):,} operation(s).",
+            )
+            self.status_changed.emit("Last applied Plan was fully undone")
+            self.start_snapshot(result.root)
+            return
+
+        self.last_application = None
+        self.progress_label.setText("Undo recovery incomplete")
+        QMessageBox.critical(
+            self,
+            "Manual recovery required",
+            "Some Plan changes could not be undone. Do not apply another Plan "
+            "until this recovery record is checked:\n"
+            f"{result.journal_path}",
+        )
+        self.status_changed.emit("Plan Undo requires manual recovery")
+        self.start_snapshot(result.root)
+
     def _finish_staging(self, operation: PlanOperation) -> None:
         self._refresh_plan_list()
         self.status_changed.emit(f"Staged {operation.action.value}")
@@ -980,7 +1103,7 @@ class PlanExplorerPage(QWidget):
         self.status_changed.emit(str(error))
 
     def _set_scanning(self, scanning: bool) -> None:
-        busy = scanning or self.apply_is_running
+        busy = scanning or self.apply_is_running or self.undo_is_running
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(scanning)
         self.tree.setEnabled(not busy)
@@ -988,7 +1111,15 @@ class PlanExplorerPage(QWidget):
         self.update_buttons()
 
     def _set_applying(self, applying: bool) -> None:
-        busy = applying or self.scan_is_running
+        busy = applying or self.scan_is_running or self.undo_is_running
+        self.import_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(self.scan_is_running)
+        self.tree.setEnabled(not busy)
+        self.plan_list.setEnabled(not busy)
+        self.update_buttons()
+
+    def _set_undoing(self, undoing: bool) -> None:
+        busy = undoing or self.scan_is_running or self.apply_is_running
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
         self.tree.setEnabled(not busy)
@@ -1000,6 +1131,7 @@ class PlanExplorerPage(QWidget):
             self.snapshot is not None
             and not self.scan_is_running
             and not self.apply_is_running
+            and not self.undo_is_running
         )
         entries = self._selected_entries() if ready else []
         self.new_file_button.setEnabled(ready)
@@ -1012,6 +1144,9 @@ class PlanExplorerPage(QWidget):
         self.diff_button.setEnabled(ready and bool(len(self.plan)))
         self.apply_button.setEnabled(ready and bool(len(self.plan)))
         self.cancel_apply_button.setEnabled(self.apply_is_running)
+        self.undo_plan_button.setEnabled(
+            ready and not len(self.plan) and self.last_application is not None
+        )
         self.remove_button.setEnabled(bool(self.plan_list.selectedItems()))
         self.clear_button.setEnabled(bool(len(self.plan)) and not self.scan_is_running)
 
@@ -1020,6 +1155,14 @@ class PlanExplorerPage(QWidget):
         if self.apply_is_running:
             self.close_requested = True
             self.cancel_plan_apply()
+            return False
+        if self.undo_is_running:
+            self.close_cancelled = True
+            QMessageBox.information(
+                self,
+                "Undo in progress",
+                "Wait for the full Plan Undo to finish before closing.",
+            )
             return False
         if self.scan_is_running:
             self.close_requested = True

@@ -51,9 +51,7 @@ class ConflictResolutionDialog(QDialog):
         self.table.setHorizontalHeaderLabels(
             ("Action", "Source", "Target", "Problem", "Resolution")
         )
-        self.table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setColumnWidth(0, 100)
         self.table.setColumnWidth(1, 230)
@@ -66,12 +64,8 @@ class ConflictResolutionDialog(QDialog):
             operation = operations[operation_id]
             values = (
                 operation.action.value.replace("_", " ").upper(),
-                operation.source.as_posix()
-                if operation.source is not None
-                else "-",
-                operation.target.as_posix()
-                if operation.target is not None
-                else "-",
+                operation.source.as_posix() if operation.source is not None else "-",
+                operation.target.as_posix() if operation.target is not None else "-",
                 "; ".join(dict.fromkeys(issue.message for issue in issues)),
             )
             for column, value in enumerate(values):
@@ -88,8 +82,7 @@ class ConflictResolutionDialog(QDialog):
             self.rows.append((operation_id, combo))
 
         self.buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self.apply_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.apply_button.setText("Apply Resolutions")

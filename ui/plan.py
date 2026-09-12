@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from conflicts import resolve_plan_conflicts
 from plan_apply import ApplicationStatus, PlanApplicationRecord
+from plan_diff import simulate_plan
 from planning import (
     ConflictPolicy,
     FilePlan,
@@ -42,7 +44,6 @@ from planning import (
     PlanOperation,
     normalize_plan_path,
 )
-from plan_diff import simulate_plan
 from real.operations import validate_name
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
 from ui.batch import BatchDialog
@@ -835,9 +836,7 @@ class PlanExplorerPage(QWidget):
         total: int,
         name: str,
     ) -> None:
-        self.progress_label.setText(
-            f"{phase}: {completed:,}/{total:,} — {name}"
-        )
+        self.progress_label.setText(f"{phase}: {completed:,}/{total:,} — {name}")
 
     def receive_apply_result(self, result: object, error: str) -> None:
         self.apply_outcome = (result, error)

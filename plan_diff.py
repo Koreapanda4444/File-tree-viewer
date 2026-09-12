@@ -99,9 +99,7 @@ def simulate_plan(
     operations = plan.operations
     changes = tuple(change_from_operation(operation) for operation in operations)
     issues: list[SimulationIssue] = []
-    issue_keys: set[
-        tuple[str, IssueKind, IssueCode, str, PurePosixPath | None]
-    ] = set()
+    issue_keys: set[tuple[str, IssueKind, IssueCode, str, PurePosixPath | None]] = set()
     entry_cache: dict[PurePosixPath, SnapshotEntry | None] = {}
 
     def entry(path: PurePosixPath) -> SnapshotEntry | None:
@@ -130,9 +128,7 @@ def simulate_plan(
         if operation.conflict_policy is not ConflictPolicy.SKIP
     )
     source_operations = tuple(
-        operation
-        for operation in active_operations
-        if operation.source is not None
+        operation for operation in active_operations if operation.source is not None
     )
     source_map: dict[PurePosixPath, list[PlanOperation]] = defaultdict(list)
     target_operations: dict[str, list[PlanOperation]] = defaultdict(list)

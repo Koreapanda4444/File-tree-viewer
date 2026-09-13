@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from analysis import StructureAnalysis
 from conflicts import resolve_plan_conflicts
 from plan_apply import (
     ApplicationStatus,
@@ -50,6 +51,7 @@ from planning import (
 )
 from real.operations import validate_name
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
+from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
 from ui.plan_apply import PlanApplyWorker, PlanUndoWorker
@@ -308,6 +310,9 @@ class PlanExplorerPage(QWidget):
         self.undo_thread: QThread | None = None
         self.undo_worker: PlanUndoWorker | None = None
         self.undo_outcome: tuple[object, str] | None = None
+        self.analysis_thread: QThread | None = None
+        self.analysis_worker: StructureAnalysisWorker | None = None
+        self.analysis_outcome: tuple[object, bool, str] | None = None
         self.last_application: PlanApplicationRecord | None = None
         self.close_requested = False
         self.close_cancelled = False
@@ -331,6 +336,10 @@ class PlanExplorerPage(QWidget):
     @property
     def undo_is_running(self) -> bool:
         return self.undo_thread is not None
+
+    @property
+    def analysis_is_running(self) -> bool:
+        return self.analysis_thread is not None
 
     def _create_root_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -401,6 +410,7 @@ class PlanExplorerPage(QWidget):
         self.delete_button = QPushButton("Delete")
         self.batch_rename_button = QPushButton("Batch Rename")
         self.organize_button = QPushButton("Organize Files")
+        self.analysis_button = QPushButton("Analyze Structure")
         self.diff_button = QPushButton("Diff / Simulate")
         self.apply_button = QPushButton("Apply All")
         self.cancel_apply_button = QPushButton("Cancel Apply")
@@ -413,6 +423,7 @@ class PlanExplorerPage(QWidget):
             self.delete_button,
             self.batch_rename_button,
             self.organize_button,
+            self.analysis_button,
             self.diff_button,
             self.apply_button,
             self.cancel_apply_button,
@@ -427,6 +438,7 @@ class PlanExplorerPage(QWidget):
         self.delete_button.clicked.connect(self.stage_delete)
         self.batch_rename_button.clicked.connect(lambda: self.stage_batch(True))
         self.organize_button.clicked.connect(lambda: self.stage_batch(False))
+        self.analysis_button.clicked.connect(self.toggle_analysis)
         self.diff_button.clicked.connect(self.show_plan_diff)
         self.apply_button.clicked.connect(self.confirm_plan_apply)
         self.cancel_apply_button.clicked.connect(self.cancel_plan_apply)
@@ -434,7 +446,12 @@ class PlanExplorerPage(QWidget):
         return row
 
     def select_snapshot_root(self) -> None:
-        if self.scan_is_running or self.apply_is_running or self.undo_is_running:
+        if (
+            self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+        ):
             return
         directory = QFileDialog.getExistingDirectory(self, "Import Snapshot")
         if not directory:
@@ -444,7 +461,12 @@ class PlanExplorerPage(QWidget):
         self.start_snapshot(Path(directory))
 
     def start_snapshot(self, root: Path) -> None:
-        if self.scan_is_running or self.apply_is_running or self.undo_is_running:
+        if (
+            self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+        ):
             return
         thread = QThread(self)
         worker = SnapshotWorker(root)
@@ -706,6 +728,86 @@ class PlanExplorerPage(QWidget):
         self._refresh_plan_list()
         self.status_changed.emit("Plan cleared")
 
+    def toggle_analysis(self) -> None:
+        if self.analysis_is_running:
+            if self.analysis_worker is not None:
+                self.analysis_worker.cancel()
+                self.progress_label.setText("Cancelling analysis…")
+            return
+        if (
+            self.snapshot is None
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+        ):
+            return
+        thread = QThread(self)
+        worker = StructureAnalysisWorker(self.snapshot)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self.show_analysis_progress)
+        worker.finished.connect(self.receive_analysis_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self.analysis_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.analysis_thread = thread
+        self.analysis_worker = worker
+        self.analysis_outcome = None
+        self._set_analyzing(True)
+        self.progress_label.setText("Analyzing snapshot…")
+        self.status_changed.emit("Analyzing folder structure…")
+        thread.start()
+
+    def show_analysis_progress(self, message: str) -> None:
+        self.progress_label.setText(message)
+
+    def receive_analysis_result(
+        self,
+        result: object,
+        cancelled: bool,
+        error: str,
+    ) -> None:
+        self.analysis_outcome = (result, cancelled, error)
+
+    def analysis_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self.analysis_thread:
+            return
+        outcome = self.analysis_outcome
+        self.analysis_thread = None
+        self.analysis_worker = None
+        self.analysis_outcome = None
+        self._set_analyzing(False)
+
+        if self.close_requested:
+            self.ready_to_close.emit()
+            return
+        if outcome is None:
+            self.progress_label.setText("Analysis failed")
+            return
+        result, cancelled, error = outcome
+        if error:
+            self.progress_label.setText("Analysis failed")
+            QMessageBox.warning(self, "Cannot analyze snapshot", error)
+            self.status_changed.emit(error)
+            return
+        if cancelled:
+            self.progress_label.setText("Analysis cancelled")
+            self.status_changed.emit("Folder analysis cancelled")
+            return
+        if not isinstance(result, StructureAnalysis):
+            self.progress_label.setText("Analysis failed")
+            return
+
+        self.progress_label.setText(
+            f"Analyzed {result.file_count + result.folder_count:,} items"
+        )
+        self.status_changed.emit("Folder structure analysis complete")
+        dialog = StructureAnalysisDialog(result, self)
+        dialog.exec()
+        dialog.deleteLater()
+
     def show_plan_diff(self) -> None:
         if (
             self.snapshot is None
@@ -713,6 +815,7 @@ class PlanExplorerPage(QWidget):
             or self.scan_is_running
             or self.apply_is_running
             or self.undo_is_running
+            or self.analysis_is_running
         ):
             return
         try:
@@ -780,6 +883,7 @@ class PlanExplorerPage(QWidget):
             or self.scan_is_running
             or self.apply_is_running
             or self.undo_is_running
+            or self.analysis_is_running
         ):
             return
         try:
@@ -826,6 +930,7 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.scan_is_running
             or self.undo_is_running
+            or self.analysis_is_running
         ):
             return
         thread = QThread(self)
@@ -932,6 +1037,7 @@ class PlanExplorerPage(QWidget):
             or self.scan_is_running
             or self.apply_is_running
             or self.undo_is_running
+            or self.analysis_is_running
         ):
             return
         if len(self.plan):
@@ -955,7 +1061,12 @@ class PlanExplorerPage(QWidget):
         self.start_plan_undo(record)
 
     def start_plan_undo(self, record: PlanApplicationRecord) -> None:
-        if self.scan_is_running or self.apply_is_running or self.undo_is_running:
+        if (
+            self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+        ):
             return
         thread = QThread(self)
         worker = PlanUndoWorker(record)
@@ -1103,7 +1214,12 @@ class PlanExplorerPage(QWidget):
         self.status_changed.emit(str(error))
 
     def _set_scanning(self, scanning: bool) -> None:
-        busy = scanning or self.apply_is_running or self.undo_is_running
+        busy = (
+            scanning
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+        )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(scanning)
         self.tree.setEnabled(not busy)
@@ -1111,7 +1227,12 @@ class PlanExplorerPage(QWidget):
         self.update_buttons()
 
     def _set_applying(self, applying: bool) -> None:
-        busy = applying or self.scan_is_running or self.undo_is_running
+        busy = (
+            applying
+            or self.scan_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+        )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
         self.tree.setEnabled(not busy)
@@ -1119,7 +1240,25 @@ class PlanExplorerPage(QWidget):
         self.update_buttons()
 
     def _set_undoing(self, undoing: bool) -> None:
-        busy = undoing or self.scan_is_running or self.apply_is_running
+        busy = (
+            undoing
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.analysis_is_running
+        )
+        self.import_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(self.scan_is_running)
+        self.tree.setEnabled(not busy)
+        self.plan_list.setEnabled(not busy)
+        self.update_buttons()
+
+    def _set_analyzing(self, analyzing: bool) -> None:
+        busy = (
+            analyzing
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+        )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
         self.tree.setEnabled(not busy)
@@ -1132,6 +1271,7 @@ class PlanExplorerPage(QWidget):
             and not self.scan_is_running
             and not self.apply_is_running
             and not self.undo_is_running
+            and not self.analysis_is_running
         )
         entries = self._selected_entries() if ready else []
         self.new_file_button.setEnabled(ready)
@@ -1141,14 +1281,18 @@ class PlanExplorerPage(QWidget):
         self.delete_button.setEnabled(bool(entries))
         self.batch_rename_button.setEnabled(bool(entries))
         self.organize_button.setEnabled(ready)
+        self.analysis_button.setText(
+            "Cancel Analysis" if self.analysis_is_running else "Analyze Structure"
+        )
+        self.analysis_button.setEnabled(self.analysis_is_running or ready)
         self.diff_button.setEnabled(ready and bool(len(self.plan)))
         self.apply_button.setEnabled(ready and bool(len(self.plan)))
         self.cancel_apply_button.setEnabled(self.apply_is_running)
         self.undo_plan_button.setEnabled(
             ready and not len(self.plan) and self.last_application is not None
         )
-        self.remove_button.setEnabled(bool(self.plan_list.selectedItems()))
-        self.clear_button.setEnabled(bool(len(self.plan)) and not self.scan_is_running)
+        self.remove_button.setEnabled(ready and bool(self.plan_list.selectedItems()))
+        self.clear_button.setEnabled(ready and bool(len(self.plan)))
 
     def prepare_close(self) -> bool:
         self.close_cancelled = False
@@ -1163,6 +1307,11 @@ class PlanExplorerPage(QWidget):
                 "Undo in progress",
                 "Wait for the full Plan Undo to finish before closing.",
             )
+            return False
+        if self.analysis_is_running:
+            self.close_requested = True
+            if self.analysis_worker is not None:
+                self.analysis_worker.cancel()
             return False
         if self.scan_is_running:
             self.close_requested = True

@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from analysis import StructureAnalysis
 from conflicts import resolve_plan_conflicts
+from diagnostics import DiagnosticReport
 from plan_apply import (
     ApplicationStatus,
     PlanApplicationRecord,
@@ -54,6 +55,7 @@ from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorke
 from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
+from ui.diagnostics import DiagnosticDialog, DiagnosticWorker
 from ui.plan_apply import PlanApplyWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
 
@@ -313,6 +315,9 @@ class PlanExplorerPage(QWidget):
         self.analysis_thread: QThread | None = None
         self.analysis_worker: StructureAnalysisWorker | None = None
         self.analysis_outcome: tuple[object, bool, str] | None = None
+        self.diagnostic_thread: QThread | None = None
+        self.diagnostic_worker: DiagnosticWorker | None = None
+        self.diagnostic_outcome: tuple[object, bool, str] | None = None
         self.last_application: PlanApplicationRecord | None = None
         self.close_requested = False
         self.close_cancelled = False
@@ -340,6 +345,10 @@ class PlanExplorerPage(QWidget):
     @property
     def analysis_is_running(self) -> bool:
         return self.analysis_thread is not None
+
+    @property
+    def diagnostic_is_running(self) -> bool:
+        return self.diagnostic_thread is not None
 
     def _create_root_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -411,6 +420,7 @@ class PlanExplorerPage(QWidget):
         self.batch_rename_button = QPushButton("Batch Rename")
         self.organize_button = QPushButton("Organize Files")
         self.analysis_button = QPushButton("Analyze Structure")
+        self.diagnostic_button = QPushButton("Find Problems")
         self.diff_button = QPushButton("Diff / Simulate")
         self.apply_button = QPushButton("Apply All")
         self.cancel_apply_button = QPushButton("Cancel Apply")
@@ -424,6 +434,7 @@ class PlanExplorerPage(QWidget):
             self.batch_rename_button,
             self.organize_button,
             self.analysis_button,
+            self.diagnostic_button,
             self.diff_button,
             self.apply_button,
             self.cancel_apply_button,
@@ -439,6 +450,7 @@ class PlanExplorerPage(QWidget):
         self.batch_rename_button.clicked.connect(lambda: self.stage_batch(True))
         self.organize_button.clicked.connect(lambda: self.stage_batch(False))
         self.analysis_button.clicked.connect(self.toggle_analysis)
+        self.diagnostic_button.clicked.connect(self.toggle_diagnostics)
         self.diff_button.clicked.connect(self.show_plan_diff)
         self.apply_button.clicked.connect(self.confirm_plan_apply)
         self.cancel_apply_button.clicked.connect(self.cancel_plan_apply)
@@ -451,6 +463,7 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         ):
             return
         directory = QFileDialog.getExistingDirectory(self, "Import Snapshot")
@@ -466,6 +479,7 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         ):
             return
         thread = QThread(self)
@@ -739,6 +753,7 @@ class PlanExplorerPage(QWidget):
             or self.scan_is_running
             or self.apply_is_running
             or self.undo_is_running
+            or self.diagnostic_is_running
         ):
             return
         thread = QThread(self)
@@ -808,6 +823,103 @@ class PlanExplorerPage(QWidget):
         dialog.exec()
         dialog.deleteLater()
 
+    def toggle_diagnostics(self) -> None:
+        if self.diagnostic_is_running:
+            if self.diagnostic_worker is not None:
+                self.diagnostic_worker.cancel()
+                self.progress_label.setText("Cancelling problem scan…")
+            return
+        if (
+            self.snapshot is None
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+        ):
+            return
+        thread = QThread(self)
+        worker = DiagnosticWorker(self.snapshot)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self.show_diagnostic_progress)
+        worker.finished.connect(self.receive_diagnostic_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self.diagnostic_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.diagnostic_thread = thread
+        self.diagnostic_worker = worker
+        self.diagnostic_outcome = None
+        self._set_diagnosing(True)
+        self.progress_label.setText("Scanning for problems…")
+        self.status_changed.emit("Scanning for duplicate and problem files…")
+        thread.start()
+
+    def show_diagnostic_progress(self, message: str) -> None:
+        self.progress_label.setText(message)
+
+    def receive_diagnostic_result(
+        self,
+        result: object,
+        cancelled: bool,
+        error: str,
+    ) -> None:
+        self.diagnostic_outcome = (result, cancelled, error)
+
+    def diagnostic_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self.diagnostic_thread:
+            return
+        outcome = self.diagnostic_outcome
+        self.diagnostic_thread = None
+        self.diagnostic_worker = None
+        self.diagnostic_outcome = None
+        self._set_diagnosing(False)
+
+        if self.close_requested:
+            self.ready_to_close.emit()
+            return
+        if outcome is None:
+            self.progress_label.setText("Problem scan failed")
+            return
+        result, cancelled, error = outcome
+        if error:
+            self.progress_label.setText("Problem scan failed")
+            QMessageBox.warning(self, "Cannot scan for problems", error)
+            self.status_changed.emit(error)
+            return
+        if cancelled:
+            self.progress_label.setText("Problem scan cancelled")
+            self.status_changed.emit("Problem scan cancelled")
+            return
+        if not isinstance(result, DiagnosticReport):
+            self.progress_label.setText("Problem scan failed")
+            return
+
+        duplicate_groups = len(result.duplicate_groups)
+        total_problems = result.problem_count + duplicate_groups
+        self.progress_label.setText(f"Found {total_problems:,} problem group(s)")
+        self.status_changed.emit("Duplicate and problem file scan complete")
+        dialog = DiagnosticDialog(result, self)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        staged_paths = dialog.staged_delete_paths if accepted else ()
+        dialog.deleteLater()
+        existing_deletes = {
+            operation.source
+            for operation in self.plan.operations
+            if operation.action is PlanAction.DELETE
+        }
+        staged = 0
+        for path in staged_paths:
+            if path in existing_deletes:
+                continue
+            self.plan.add_delete(path)
+            existing_deletes.add(path)
+            staged += 1
+        if staged:
+            self._refresh_plan_list()
+            self.status_changed.emit(f"Staged {staged:,} duplicate file deletion(s)")
+
     def show_plan_diff(self) -> None:
         if (
             self.snapshot is None
@@ -816,6 +928,7 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         ):
             return
         try:
@@ -884,6 +997,7 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         ):
             return
         try:
@@ -931,6 +1045,7 @@ class PlanExplorerPage(QWidget):
             or self.scan_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         ):
             return
         thread = QThread(self)
@@ -1038,6 +1153,7 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         ):
             return
         if len(self.plan):
@@ -1066,6 +1182,7 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         ):
             return
         thread = QThread(self)
@@ -1219,6 +1336,7 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(scanning)
@@ -1232,6 +1350,7 @@ class PlanExplorerPage(QWidget):
             or self.scan_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
@@ -1245,6 +1364,7 @@ class PlanExplorerPage(QWidget):
             or self.scan_is_running
             or self.apply_is_running
             or self.analysis_is_running
+            or self.diagnostic_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
@@ -1258,6 +1378,21 @@ class PlanExplorerPage(QWidget):
             or self.scan_is_running
             or self.apply_is_running
             or self.undo_is_running
+            or self.diagnostic_is_running
+        )
+        self.import_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(self.scan_is_running)
+        self.tree.setEnabled(not busy)
+        self.plan_list.setEnabled(not busy)
+        self.update_buttons()
+
+    def _set_diagnosing(self, diagnosing: bool) -> None:
+        busy = (
+            diagnosing
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
@@ -1272,6 +1407,7 @@ class PlanExplorerPage(QWidget):
             and not self.apply_is_running
             and not self.undo_is_running
             and not self.analysis_is_running
+            and not self.diagnostic_is_running
         )
         entries = self._selected_entries() if ready else []
         self.new_file_button.setEnabled(ready)
@@ -1285,6 +1421,10 @@ class PlanExplorerPage(QWidget):
             "Cancel Analysis" if self.analysis_is_running else "Analyze Structure"
         )
         self.analysis_button.setEnabled(self.analysis_is_running or ready)
+        self.diagnostic_button.setText(
+            "Cancel Problem Scan" if self.diagnostic_is_running else "Find Problems"
+        )
+        self.diagnostic_button.setEnabled(self.diagnostic_is_running or ready)
         self.diff_button.setEnabled(ready and bool(len(self.plan)))
         self.apply_button.setEnabled(ready and bool(len(self.plan)))
         self.cancel_apply_button.setEnabled(self.apply_is_running)
@@ -1312,6 +1452,11 @@ class PlanExplorerPage(QWidget):
             self.close_requested = True
             if self.analysis_worker is not None:
                 self.analysis_worker.cancel()
+            return False
+        if self.diagnostic_is_running:
+            self.close_requested = True
+            if self.diagnostic_worker is not None:
+                self.diagnostic_worker.cancel()
             return False
         if self.scan_is_running:
             self.close_requested = True

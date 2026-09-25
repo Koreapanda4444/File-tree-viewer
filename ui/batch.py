@@ -10,10 +10,13 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QTableView,
@@ -26,6 +29,7 @@ from organization import (
     batch_operations,
     scope_entries,
 )
+from persistence import load_rule, organization_presets, save_rule
 from planning import FilePlan, PlanOperation
 from snapshot import FileSnapshot, SnapshotEntry
 
@@ -126,6 +130,19 @@ class BatchDialog(QDialog):
             self.digits.setValue(3)
             form.addRow("Minimum digits", self.digits)
         else:
+            preset_row = QHBoxLayout()
+            self.preset = QComboBox()
+            self.preset.addItem("Choose a preset…", "")
+            for preset_name in organization_presets():
+                self.preset.addItem(preset_name, preset_name)
+            self.load_preset_button = QPushButton("Load Preset")
+            self.save_rule_button = QPushButton("Save Rule")
+            self.load_rule_button = QPushButton("Load Rule")
+            preset_row.addWidget(self.preset, 1)
+            preset_row.addWidget(self.load_preset_button)
+            preset_row.addWidget(self.save_rule_button)
+            preset_row.addWidget(self.load_rule_button)
+            form.addRow("Reusable rule", preset_row)
             self.scope = self._combo(
                 form, "Scope", ("Selected items and descendants", "Entire snapshot")
             )
@@ -151,6 +168,9 @@ class BatchDialog(QDialog):
             self.grouping = self._combo(
                 form, "Subfolders", ("None", "Extension", "Year", "Year / Month")
             )
+            self.load_preset_button.clicked.connect(self.load_selected_preset)
+            self.save_rule_button.clicked.connect(self.save_current_rule)
+            self.load_rule_button.clicked.connect(self.load_saved_rule)
         note = QLabel(
             "Preview → Add to Plan. Files stay unchanged. Name conflicts are not resolved here.\nItems already changed in the Plan, links and inaccessible items are skipped."
         )
@@ -245,20 +265,7 @@ class BatchDialog(QDialog):
                     ),
                 )
             else:
-                options = OrganizationRule(
-                    destination=self.destination.text(),
-                    pattern=self.pattern.text(),
-                    extensions=self.extensions.text(),
-                    minimum=int(self.minimum.text() or "0"),
-                    maximum=int(self.maximum.text()) if self.maximum.text() else None,
-                    after=date.fromisoformat(self.after.text())
-                    if self.after.text()
-                    else None,
-                    before=date.fromisoformat(self.before.text())
-                    if self.before.text()
-                    else None,
-                    grouping=self.grouping.currentText(),
-                )
+                options = self.current_rule()
                 entries = scope_entries(
                     self.snapshot,
                     self.selected if self.scope.currentIndex() == 0 else None,
@@ -301,6 +308,89 @@ class BatchDialog(QDialog):
                 f"Preview ready: {len(self.operations):,} operations (including new folders). Add to Plan to stage them."
             )
             self.add_button.setEnabled(bool(self.operations))
+
+    def current_rule(self) -> OrganizationRule:
+        if self.rename:
+            raise ValueError("Batch rename settings are not organization rules")
+        try:
+            minimum = int(self.minimum.text() or "0")
+            maximum = int(self.maximum.text()) if self.maximum.text() else None
+        except ValueError as error:
+            raise ValueError("File sizes must be whole numbers") from error
+        try:
+            after = date.fromisoformat(self.after.text()) if self.after.text() else None
+            before = (
+                date.fromisoformat(self.before.text()) if self.before.text() else None
+            )
+        except ValueError as error:
+            raise ValueError("Dates must use YYYY-MM-DD") from error
+        return OrganizationRule(
+            destination=self.destination.text(),
+            pattern=self.pattern.text(),
+            extensions=self.extensions.text(),
+            minimum=minimum,
+            maximum=maximum,
+            after=after,
+            before=before,
+            grouping=self.grouping.currentText(),
+        )
+
+    def set_rule(self, rule: OrganizationRule) -> None:
+        self.destination.setText(rule.destination)
+        self.pattern.setText(rule.pattern)
+        self.extensions.setText(rule.extensions)
+        self.minimum.setText(str(rule.minimum) if rule.minimum else "")
+        self.maximum.setText(str(rule.maximum) if rule.maximum is not None else "")
+        self.after.setText(rule.after.isoformat() if rule.after is not None else "")
+        self.before.setText(rule.before.isoformat() if rule.before is not None else "")
+        self.grouping.setCurrentText(rule.grouping)
+        self.invalidate()
+
+    def load_selected_preset(self) -> None:
+        name = self.preset.currentData()
+        if not name:
+            return
+        self.set_rule(organization_presets()[name])
+        self.status.setText(f"Loaded {name} preset. Preview to review its operations.")
+
+    def save_current_rule(self) -> None:
+        try:
+            rule = self.current_rule()
+        except ValueError as error:
+            QMessageBox.warning(self, "Cannot save rule", str(error))
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Organization Rule",
+            "organization-rule.json",
+            "File Tree Viewer Rules (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            save_rule(path, rule)
+        except (OSError, TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot save rule", str(error))
+            return
+        self.status.setText("Organization rule saved.")
+
+    def load_saved_rule(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Organization Rule",
+            "",
+            "File Tree Viewer Rules (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            rule = load_rule(path)
+        except (OSError, UnicodeError, TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot load rule", str(error))
+            return
+        self.set_rule(rule)
+        self.preset.setCurrentIndex(0)
+        self.status.setText("Organization rule loaded. Preview before adding it.")
 
     def accept(self):
         if self.iterator is None and self.add_button.isEnabled():

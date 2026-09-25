@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 from analysis import StructureAnalysis
 from conflicts import resolve_plan_conflicts
 from diagnostics import DiagnosticReport
+from persistence import load_plan, save_plan
 from plan_apply import (
     ApplicationStatus,
     PlanApplicationRecord,
@@ -398,12 +399,18 @@ class PlanExplorerPage(QWidget):
         plan_buttons = QHBoxLayout()
         self.remove_button = QPushButton("Remove Selected")
         self.clear_button = QPushButton("Clear Plan")
+        self.save_plan_button = QPushButton("Save Plan")
+        self.load_plan_button = QPushButton("Load Plan")
         plan_buttons.addWidget(self.remove_button)
         plan_buttons.addWidget(self.clear_button)
+        plan_buttons.addWidget(self.save_plan_button)
+        plan_buttons.addWidget(self.load_plan_button)
         plan_buttons.addStretch(1)
         right_layout.addLayout(plan_buttons)
         self.remove_button.clicked.connect(self.remove_selected_operations)
         self.clear_button.clicked.connect(self.clear_plan)
+        self.save_plan_button.clicked.connect(self.save_current_plan)
+        self.load_plan_button.clicked.connect(self.load_saved_plan)
         self.plan_list.itemSelectionChanged.connect(self.update_buttons)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 3)
@@ -741,6 +748,64 @@ class PlanExplorerPage(QWidget):
         self.plan.clear()
         self._refresh_plan_list()
         self.status_changed.emit("Plan cleared")
+
+    def save_current_plan(self) -> None:
+        if self.snapshot is None or not len(self.plan):
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Reusable Plan",
+            "file-plan.json",
+            "File Tree Viewer Plans (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            save_plan(path, self.plan)
+        except (OSError, TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot save Plan", str(error))
+            self.status_changed.emit(str(error))
+            return
+        self.status_changed.emit(f"Saved {len(self.plan):,} planned operation(s)")
+
+    def load_saved_plan(self) -> None:
+        if self.snapshot is None:
+            return
+        if len(self.plan):
+            answer = QMessageBox.question(
+                self,
+                "Replace current Plan",
+                "Loading a saved Plan will replace all staged operations. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Reusable Plan",
+            "",
+            "File Tree Viewer Plans (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            loaded, source_root = load_plan(path, self.snapshot.root)
+        except (OSError, UnicodeError, TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot load Plan", str(error))
+            self.status_changed.emit(str(error))
+            return
+        self.plan = loaded
+        self._refresh_plan_list()
+        root_note = (
+            f" (originally saved for {source_root})"
+            if source_root and source_root != str(self.snapshot.root)
+            else ""
+        )
+        self.status_changed.emit(
+            f"Loaded {len(self.plan):,} planned operation(s){root_note}. "
+            "Run Diff / Simulate before applying."
+        )
 
     def toggle_analysis(self) -> None:
         if self.analysis_is_running:
@@ -1433,6 +1498,8 @@ class PlanExplorerPage(QWidget):
         )
         self.remove_button.setEnabled(ready and bool(self.plan_list.selectedItems()))
         self.clear_button.setEnabled(ready and bool(len(self.plan)))
+        self.save_plan_button.setEnabled(ready and bool(len(self.plan)))
+        self.load_plan_button.setEnabled(ready)
 
     def prepare_close(self) -> bool:
         self.close_cancelled = False

@@ -16,6 +16,7 @@ from real.tree import is_reparse_point
 SNAPSHOT_BATCH_SIZE = 1_024
 PROGRESS_INTERVAL = 2_048
 QUERY_PAGE_SIZE = 512
+LOOKUP_BATCH_SIZE = 500
 
 
 class SnapshotCancelled(Exception):
@@ -104,6 +105,31 @@ class FileSnapshot:
             .fetchone()
         )
         return snapshot_entry_from_row(row) if row is not None else None
+
+    def entries_by_path(
+        self,
+        paths,
+    ) -> dict[PurePosixPath, SnapshotEntry | None]:
+        normalized = tuple(
+            dict.fromkeys(
+                normalize_plan_path(path) for path in paths if path is not None
+            )
+        )
+        results: dict[PurePosixPath, SnapshotEntry | None] = {
+            path: None for path in normalized
+        }
+        database = self._connection()
+        for offset in range(0, len(normalized), LOOKUP_BATCH_SIZE):
+            batch = normalized[offset : offset + LOOKUP_BATCH_SIZE]
+            placeholders = ",".join("?" for _ in batch)
+            rows = database.execute(
+                entry_select() + f" WHERE entries.path IN ({placeholders})",
+                tuple(path.as_posix() for path in batch),
+            )
+            for row in rows:
+                entry = snapshot_entry_from_row(row)
+                results[entry.path] = entry
+        return results
 
     def iter_entries(
         self, batch_size: int = SNAPSHOT_BATCH_SIZE
@@ -366,6 +392,13 @@ def initialize_database(database: sqlite3.Connection) -> None:
     database.execute(
         "CREATE INDEX entries_parent ON entries("
         "parent, is_directory DESC, name COLLATE NOCASE, name)"
+    )
+    database.execute(
+        "CREATE INDEX entries_largest ON entries(is_directory, size DESC, path)"
+    )
+    database.execute(
+        "CREATE INDEX entries_duplicates ON entries("
+        "is_directory, is_symlink, size, path)"
     )
     database.execute(
         "CREATE TABLE errors ("

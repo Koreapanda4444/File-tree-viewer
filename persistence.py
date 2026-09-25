@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from organization import OrganizationRule
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation, normalize_root
@@ -13,34 +15,116 @@ from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation, normal
 PLAN_FORMAT = "file-tree-viewer-plan"
 RULE_FORMAT = "file-tree-viewer-organization-rule"
 FORMAT_VERSION = 1
+PLAN_IO_BATCH_SIZE = 1_024
+JSON_READ_CHUNK_SIZE = 64 * 1_024
+MAX_SINGLE_JSON_VALUE = 8 * 1_024 * 1_024
+PersistenceProgress = Callable[[str, int], None]
 
 
-def save_plan(path: Path | str, plan: FilePlan) -> None:
-    payload = {
-        "format": PLAN_FORMAT,
-        "version": FORMAT_VERSION,
-        "source_root": str(plan.root) if plan.root is not None else None,
-        "operations": [operation_to_dict(operation) for operation in plan.operations],
-    }
-    atomic_json_write(path, payload)
+class PersistenceCancelled(Exception):
+    pass
 
 
-def load_plan(path: Path | str, root: Path | str) -> tuple[FilePlan, str | None]:
-    payload = read_json_object(path)
-    require_format(payload, PLAN_FORMAT)
-    operations = payload.get("operations")
-    if not isinstance(operations, list):
-        raise TypeError("Plan operations must be a list")
-    source_root = payload.get("source_root")
-    if source_root is not None and not isinstance(source_root, str):
-        raise ValueError("Plan source_root must be text or null")
+def save_plan(
+    path: Path | str,
+    plan: FilePlan,
+    *,
+    cancelled: threading.Event | None = None,
+    progress: PersistenceProgress | None = None,
+) -> None:
+    operations = plan.operations
 
+    def write(stream: TextIO) -> None:
+        stream.write('{"format":')
+        write_json_value(stream, PLAN_FORMAT)
+        stream.write(',"version":')
+        write_json_value(stream, FORMAT_VERSION)
+        stream.write(',"source_root":')
+        write_json_value(stream, str(plan.root) if plan.root is not None else None)
+        stream.write(',"operations":[\n')
+        for position, operation in enumerate(operations):
+            check_persistence_cancelled(cancelled)
+            if position:
+                stream.write(",\n")
+            write_json_value(stream, operation_to_dict(operation))
+            if progress is not None and (position + 1) % PLAN_IO_BATCH_SIZE == 0:
+                progress("Saving Plan", position + 1)
+        stream.write("\n]}\n")
+        if progress is not None:
+            progress("Plan saved", len(operations))
+
+    atomic_text_write(path, write)
+
+
+def load_plan(
+    path: Path | str,
+    root: Path | str,
+    *,
+    cancelled: threading.Event | None = None,
+    progress: PersistenceProgress | None = None,
+) -> tuple[FilePlan, str | None]:
     plan = FilePlan(normalize_root(root))
-    for position, raw_operation in enumerate(operations, start=1):
-        try:
-            plan.append(operation_from_dict(raw_operation))
-        except (TypeError, ValueError) as error:
-            raise ValueError(f"Invalid operation {position}: {error}") from error
+    metadata: dict[str, Any] = {}
+    seen_keys: set[str] = set()
+    operation_count = 0
+    operations_seen = False
+    with Path(path).expanduser().open(encoding="utf-8") as stream:
+        reader = StreamingJsonReader(stream)
+        reader.expect("{")
+        while reader.peek() != "}":
+            key = reader.read_value()
+            if not isinstance(key, str):
+                raise TypeError("Plan object keys must be text")
+            if key in seen_keys:
+                raise ValueError(f"Duplicate Plan field: {key}")
+            seen_keys.add(key)
+            reader.expect(":")
+            if key == "operations":
+                operations_seen = True
+                reader.expect("[")
+                batch: list[PlanOperation] = []
+                while reader.peek() != "]":
+                    check_persistence_cancelled(cancelled)
+                    raw_operation = reader.read_value()
+                    operation_count += 1
+                    try:
+                        batch.append(operation_from_dict(raw_operation))
+                    except (TypeError, ValueError) as error:
+                        raise ValueError(
+                            f"Invalid operation {operation_count}: {error}"
+                        ) from error
+                    if len(batch) >= PLAN_IO_BATCH_SIZE:
+                        plan.extend(batch)
+                        batch.clear()
+                        if progress is not None:
+                            progress("Loading Plan", operation_count)
+                    if reader.peek() == ",":
+                        reader.expect(",")
+                        if reader.peek() == "]":
+                            raise ValueError("Trailing comma in Plan operations")
+                    elif reader.peek() != "]":
+                        raise ValueError("Expected ',' or ']' in Plan operations")
+                reader.expect("]")
+                plan.extend(batch)
+            else:
+                metadata[key] = reader.read_value()
+            if reader.peek() == ",":
+                reader.expect(",")
+                if reader.peek() == "}":
+                    raise ValueError("Trailing comma in Plan file")
+            elif reader.peek() != "}":
+                raise ValueError("Expected ',' or '}' in Plan file")
+        reader.expect("}")
+        reader.finish()
+
+    if not operations_seen:
+        raise ValueError("Plan operations are missing")
+    require_format(metadata, PLAN_FORMAT)
+    source_root = metadata.get("source_root")
+    if source_root is not None and not isinstance(source_root, str):
+        raise TypeError("Plan source_root must be text or null")
+    if progress is not None:
+        progress("Plan loaded", operation_count)
     return plan, source_root
 
 
@@ -147,6 +231,16 @@ def rule_from_dict(payload: dict[str, Any]) -> OrganizationRule:
 
 
 def atomic_json_write(path: Path | str, payload: object) -> None:
+    atomic_text_write(
+        path,
+        lambda stream: (
+            json.dump(payload, stream, ensure_ascii=False, indent=2),
+            stream.write("\n"),
+        ),
+    )
+
+
+def atomic_text_write(path: Path | str, writer: Callable[[TextIO], object]) -> None:
     destination = Path(path).expanduser().absolute()
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
@@ -161,8 +255,7 @@ def atomic_json_write(path: Path | str, payload: object) -> None:
             delete=False,
         ) as stream:
             temporary_path = Path(stream.name)
-            json.dump(payload, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
+            writer(stream)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary_path, destination)
@@ -170,6 +263,89 @@ def atomic_json_write(path: Path | str, payload: object) -> None:
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def write_json_value(stream: TextIO, value: object) -> None:
+    json.dump(value, stream, ensure_ascii=False, separators=(",", ":"))
+
+
+class StreamingJsonReader:
+    def __init__(self, stream: TextIO) -> None:
+        self.stream = stream
+        self.decoder = json.JSONDecoder()
+        self.buffer = ""
+        self.position = 0
+        self.eof = False
+
+    def peek(self) -> str:
+        self._skip_whitespace()
+        if self.position >= len(self.buffer):
+            raise ValueError("Unexpected end of JSON")
+        return self.buffer[self.position]
+
+    def expect(self, token: str) -> None:
+        if self.peek() != token:
+            raise ValueError(f"Expected {token!r} in JSON")
+        self.position += 1
+        self._compact()
+
+    def read_value(self) -> object:
+        self._skip_whitespace()
+        while True:
+            try:
+                value, end = self.decoder.raw_decode(self.buffer, self.position)
+            except json.JSONDecodeError as error:
+                if self.eof:
+                    raise ValueError(
+                        f"Invalid JSON at line {error.lineno}, column {error.colno}"
+                    ) from error
+                if len(self.buffer) - self.position > MAX_SINGLE_JSON_VALUE:
+                    raise ValueError("A JSON value is too large") from error
+                self._fill()
+                continue
+            self.position = end
+            self._compact()
+            return value
+
+    def finish(self) -> None:
+        self._skip_whitespace()
+        if self.position < len(self.buffer):
+            raise ValueError("Unexpected data after the Plan JSON object")
+        if not self.eof:
+            self._fill()
+            self._skip_whitespace()
+            if self.position < len(self.buffer):
+                raise ValueError("Unexpected data after the Plan JSON object")
+
+    def _skip_whitespace(self) -> None:
+        while True:
+            while (
+                self.position < len(self.buffer)
+                and self.buffer[self.position].isspace()
+            ):
+                self.position += 1
+            if self.position < len(self.buffer) or self.eof:
+                self._compact()
+                return
+            self._fill()
+
+    def _fill(self) -> None:
+        chunk = self.stream.read(JSON_READ_CHUNK_SIZE)
+        if chunk:
+            self.buffer += chunk
+        else:
+            self.eof = True
+
+    def _compact(self) -> None:
+        if self.position < JSON_READ_CHUNK_SIZE:
+            return
+        self.buffer = self.buffer[self.position :]
+        self.position = 0
+
+
+def check_persistence_cancelled(cancelled: threading.Event | None) -> None:
+    if cancelled is not None and cancelled.is_set():
+        raise PersistenceCancelled
 
 
 def read_json_object(path: Path | str) -> dict[str, Any]:

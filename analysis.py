@@ -53,6 +53,7 @@ def analyze_snapshot(
     database = sqlite3.connect(snapshot.database_path)
     database.execute("PRAGMA query_only=ON")
     database.execute("PRAGMA cache_size=-8192")
+    database.execute("PRAGMA temp_store=FILE")
     database.create_function("file_extension", 1, file_extension, deterministic=True)
 
     def interrupt_if_cancelled() -> int:

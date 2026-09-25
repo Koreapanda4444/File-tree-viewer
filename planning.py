@@ -52,11 +52,14 @@ class FilePlan:
         self.root = normalize_root(root)
         self._operations: list[PlanOperation] = []
         self._operation_ids: set[str] = set()
+        self._operations_cache: tuple[PlanOperation, ...] | None = ()
         self.revision = 0
 
     @property
     def operations(self) -> tuple[PlanOperation, ...]:
-        return tuple(self._operations)
+        if self._operations_cache is None:
+            self._operations_cache = tuple(self._operations)
+        return self._operations_cache
 
     def __len__(self) -> int:
         return len(self._operations)
@@ -99,23 +102,66 @@ class FilePlan:
             raise ValueError(f"Duplicate operation ID: {operation.operation_id}")
         self._operations.append(operation)
         self._operation_ids.add(operation.operation_id)
+        self._operations_cache = None
         self.revision += 1
         return operation
+
+    def extend(self, operations) -> int:
+        additions = tuple(operations)
+        incoming_ids = [operation.operation_id for operation in additions]
+        if len(incoming_ids) != len(set(incoming_ids)):
+            raise ValueError("Duplicate operation IDs in added operations")
+        duplicate = next(
+            (
+                operation_id
+                for operation_id in incoming_ids
+                if operation_id in self._operation_ids
+            ),
+            None,
+        )
+        if duplicate is not None:
+            raise ValueError(f"Duplicate operation ID: {duplicate}")
+        if not additions:
+            return 0
+        self._operations.extend(additions)
+        self._operation_ids.update(incoming_ids)
+        self._operations_cache = None
+        self.revision += 1
+        return len(additions)
 
     def remove(self, operation_id: str) -> PlanOperation:
         for position, operation in enumerate(self._operations):
             if operation.operation_id == operation_id:
                 removed = self._operations.pop(position)
                 self._operation_ids.remove(operation_id)
+                self._operations_cache = None
                 self.revision += 1
                 return removed
         raise KeyError(operation_id)
+
+    def remove_many(self, operation_ids) -> int:
+        requested = set(operation_ids)
+        if not requested:
+            return 0
+        existing = requested & self._operation_ids
+        if not existing:
+            return 0
+        self._operations = [
+            operation
+            for operation in self._operations
+            if operation.operation_id not in existing
+        ]
+        self._operation_ids.difference_update(existing)
+        self._operations_cache = None
+        self.revision += 1
+        return len(existing)
 
     def clear(self) -> None:
         if not self._operations:
             return
         self._operations.clear()
         self._operation_ids.clear()
+        self._operations_cache = ()
         self.revision += 1
 
     def absolute_path(self, relative_path: PurePosixPath | str) -> Path:

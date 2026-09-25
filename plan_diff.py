@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import os
 import stat
+import threading
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import PurePosixPath
 
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot, SnapshotEntry
+
+SIMULATION_PROGRESS_INTERVAL = 512
+SimulationProgress = Callable[[str, int, int], None]
+
+
+class SimulationCancelled(Exception):
+    pass
 
 
 class ChangeKind(str, Enum):
@@ -64,6 +73,35 @@ class SimulationIssue:
 class PlanSimulation:
     changes: tuple[PlanChange, ...]
     issues: tuple[SimulationIssue, ...]
+    _change_counts: Counter[ChangeKind] = field(init=False, repr=False, compare=False)
+    _issue_counts: Counter[IssueKind] = field(init=False, repr=False, compare=False)
+    _skipped_count: int = field(init=False, repr=False, compare=False)
+    _issues_by_operation: dict[str, tuple[SimulationIssue, ...]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        grouped: dict[str, list[SimulationIssue]] = defaultdict(list)
+        for issue in self.issues:
+            grouped[issue.operation_id].append(issue)
+        object.__setattr__(
+            self,
+            "_change_counts",
+            Counter(change.kind for change in self.changes if not change.skipped),
+        )
+        object.__setattr__(self, "_issue_counts", Counter(x.kind for x in self.issues))
+        object.__setattr__(
+            self,
+            "_skipped_count",
+            sum(change.skipped for change in self.changes),
+        )
+        object.__setattr__(
+            self,
+            "_issues_by_operation",
+            {key: tuple(value) for key, value in grouped.items()},
+        )
 
     @property
     def can_apply(self) -> bool:
@@ -71,20 +109,18 @@ class PlanSimulation:
 
     @property
     def change_counts(self) -> Counter[ChangeKind]:
-        return Counter(change.kind for change in self.changes if not change.skipped)
+        return self._change_counts.copy()
 
     @property
     def skipped_count(self) -> int:
-        return sum(change.skipped for change in self.changes)
+        return self._skipped_count
 
     @property
     def issue_counts(self) -> Counter[IssueKind]:
-        return Counter(issue.kind for issue in self.issues)
+        return self._issue_counts.copy()
 
     def issues_for(self, operation_id: str) -> tuple[SimulationIssue, ...]:
-        return tuple(
-            issue for issue in self.issues if issue.operation_id == operation_id
-        )
+        return self._issues_by_operation.get(operation_id, ())
 
 
 def simulate_plan(
@@ -92,20 +128,19 @@ def simulate_plan(
     plan: FilePlan,
     *,
     validate_live: bool = True,
+    cancelled: threading.Event | None = None,
+    progress: SimulationProgress | None = None,
 ) -> PlanSimulation:
     if plan.root is None or plan.root != snapshot.root:
         raise ValueError("The Plan and Snapshot roots do not match")
 
     operations = plan.operations
+    total = len(operations)
+    check_simulation_cancelled(cancelled)
+    emit_simulation_progress(progress, "Preparing Plan simulation", 0, total)
     changes = tuple(change_from_operation(operation) for operation in operations)
     issues: list[SimulationIssue] = []
     issue_keys: set[tuple[str, IssueKind, IssueCode, str, PurePosixPath | None]] = set()
-    entry_cache: dict[PurePosixPath, SnapshotEntry | None] = {}
-
-    def entry(path: PurePosixPath) -> SnapshotEntry | None:
-        if path not in entry_cache:
-            entry_cache[path] = snapshot.entry(path)
-        return entry_cache[path]
 
     def report(
         operation: PlanOperation,
@@ -134,10 +169,19 @@ def simulate_plan(
     target_operations: dict[str, list[PlanOperation]] = defaultdict(list)
     created_folders: set[PurePosixPath] = set()
     vacated_paths: set[PurePosixPath] = set()
+    lookup_paths: set[PurePosixPath] = set()
 
-    for operation in active_operations:
+    for position, operation in enumerate(active_operations, start=1):
+        simulation_checkpoint(
+            cancelled,
+            progress,
+            "Indexing planned paths",
+            position,
+            total,
+        )
         if operation.source is not None:
             source_map[operation.source].append(operation)
+            lookup_paths.add(operation.source)
             if operation.action in {
                 PlanAction.MOVE,
                 PlanAction.RENAME,
@@ -145,11 +189,33 @@ def simulate_plan(
             }:
                 vacated_paths.add(operation.source)
         if operation.target is not None:
+            lookup_paths.add(operation.target)
+            if operation.target.parent != PurePosixPath("."):
+                lookup_paths.add(operation.target.parent)
             target_operations[path_collision_key(operation.target)].append(operation)
             if operation.action is PlanAction.CREATE_FOLDER:
                 created_folders.add(operation.target)
 
-    for operation in source_operations:
+    check_simulation_cancelled(cancelled)
+    emit_simulation_progress(
+        progress,
+        "Loading Snapshot metadata",
+        0,
+        len(lookup_paths),
+    )
+    entry_cache = snapshot.entries_by_path(lookup_paths)
+
+    def entry(path: PurePosixPath) -> SnapshotEntry | None:
+        return entry_cache.get(path)
+
+    for position, operation in enumerate(source_operations, start=1):
+        simulation_checkpoint(
+            cancelled,
+            progress,
+            "Checking planned sources",
+            position,
+            len(source_operations),
+        )
         source = operation.source
         if source is None:
             continue
@@ -206,7 +272,14 @@ def simulate_plan(
                     parent,
                 )
 
-    for operation in active_operations:
+    for position, operation in enumerate(active_operations, start=1):
+        simulation_checkpoint(
+            cancelled,
+            progress,
+            "Checking planned destinations",
+            position,
+            len(active_operations),
+        )
         target = operation.target
         if target is None:
             continue
@@ -298,7 +371,37 @@ def simulate_plan(
                 parent,
             )
 
+    check_simulation_cancelled(cancelled)
+    emit_simulation_progress(progress, "Simulation complete", total, total)
     return PlanSimulation(changes, tuple(issues))
+
+
+def simulation_checkpoint(
+    cancelled: threading.Event | None,
+    progress: SimulationProgress | None,
+    message: str,
+    completed: int,
+    total: int,
+) -> None:
+    if completed % SIMULATION_PROGRESS_INTERVAL != 0 and completed != total:
+        return
+    check_simulation_cancelled(cancelled)
+    emit_simulation_progress(progress, message, completed, total)
+
+
+def check_simulation_cancelled(cancelled: threading.Event | None) -> None:
+    if cancelled is not None and cancelled.is_set():
+        raise SimulationCancelled
+
+
+def emit_simulation_progress(
+    progress: SimulationProgress | None,
+    message: str,
+    completed: int,
+    total: int,
+) -> None:
+    if progress is not None:
+        progress(message, completed, total)
 
 
 def change_from_operation(operation: PlanOperation) -> PlanChange:

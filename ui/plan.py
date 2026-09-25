@@ -27,9 +27,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStyle,
+    QTableView,
     QTreeView,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -37,13 +36,12 @@ from PySide6.QtWidgets import (
 from analysis import StructureAnalysis
 from conflicts import resolve_plan_conflicts
 from diagnostics import DiagnosticReport
-from persistence import load_plan, save_plan
 from plan_apply import (
     ApplicationStatus,
     PlanApplicationRecord,
     latest_completed_application,
 )
-from plan_diff import simulate_plan
+from plan_diff import PlanSimulation, simulate_plan
 from planning import (
     ConflictPolicy,
     FilePlan,
@@ -57,6 +55,7 @@ from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
 from ui.diagnostics import DiagnosticDialog, DiagnosticWorker
+from ui.performance import PlanLoadWorker, PlanSaveWorker, PlanSimulationWorker
 from ui.plan_apply import PlanApplyWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
 
@@ -295,6 +294,83 @@ class SnapshotTreeModel(QAbstractItemModel):
         return "-"
 
 
+class PlanListModel(QAbstractItemModel):
+    headers = ("Action", "Source", "Target", "Policy")
+
+    def __init__(self, plan: FilePlan, parent=None) -> None:
+        super().__init__(parent)
+        self.plan = plan
+
+    def set_plan(self, plan: FilePlan) -> None:
+        self.beginResetModel()
+        self.plan = plan
+        self.endResetModel()
+
+    def rowCount(self, parent=INVALID_INDEX) -> int:
+        return 0 if parent.isValid() else len(self.plan)
+
+    def columnCount(self, parent=INVALID_INDEX) -> int:
+        return len(self.headers)
+
+    def index(
+        self,
+        row: int,
+        column: int,
+        parent: QModelIndex = INVALID_INDEX,
+    ) -> QModelIndex:
+        if (
+            parent.isValid()
+            or row < 0
+            or row >= len(self.plan)
+            or column < 0
+            or column >= len(self.headers)
+        ):
+            return QModelIndex()
+        return self.createIndex(row, column)
+
+    def parent(self, index: QModelIndex) -> QModelIndex:
+        return QModelIndex()
+
+    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or not 0 <= index.row() < len(self.plan):
+            return None
+        operation = self.plan.operations[index.row()]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return (
+                operation.action.value.replace("_", " ").upper(),
+                operation.source.as_posix() if operation.source is not None else "-",
+                operation.target.as_posix() if operation.target is not None else "-",
+                operation.conflict_policy.value.replace("_", " ").upper()
+                if operation.conflict_policy is not ConflictPolicy.ERROR
+                else "-",
+            )[index.column()]
+        if role == Qt.ItemDataRole.ToolTipRole:
+            value = self.data(index, Qt.ItemDataRole.DisplayRole)
+            return value if value != "-" else None
+        if role == Qt.ItemDataRole.UserRole:
+            return operation.operation_id
+        return None
+
+    def headerData(
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role=Qt.ItemDataRole.DisplayRole,
+    ):
+        if (
+            orientation == Qt.Orientation.Horizontal
+            and role == Qt.ItemDataRole.DisplayRole
+            and 0 <= section < len(self.headers)
+        ):
+            return self.headers[section]
+        return None
+
+    def operation_id(self, row: int) -> str | None:
+        if not 0 <= row < len(self.plan):
+            return None
+        return self.plan.operations[row].operation_id
+
+
 class PlanExplorerPage(QWidget):
     status_changed = Signal(str)
     ready_to_close = Signal()
@@ -319,6 +395,14 @@ class PlanExplorerPage(QWidget):
         self.diagnostic_thread: QThread | None = None
         self.diagnostic_worker: DiagnosticWorker | None = None
         self.diagnostic_outcome: tuple[object, bool, str] | None = None
+        self.plan_io_thread: QThread | None = None
+        self.plan_io_worker: PlanLoadWorker | PlanSaveWorker | None = None
+        self.plan_io_outcome: tuple[object, bool, str] | None = None
+        self.plan_io_kind = ""
+        self.simulation_thread: QThread | None = None
+        self.simulation_worker: PlanSimulationWorker | None = None
+        self.simulation_outcome: tuple[object, bool, str] | None = None
+        self.simulation_purpose = ""
         self.last_application: PlanApplicationRecord | None = None
         self.close_requested = False
         self.close_cancelled = False
@@ -350,6 +434,14 @@ class PlanExplorerPage(QWidget):
     @property
     def diagnostic_is_running(self) -> bool:
         return self.diagnostic_thread is not None
+
+    @property
+    def plan_io_is_running(self) -> bool:
+        return self.plan_io_thread is not None
+
+    @property
+    def simulation_is_running(self) -> bool:
+        return self.simulation_thread is not None
 
     def _create_root_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -387,14 +479,20 @@ class PlanExplorerPage(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         self.plan_count = QLabel()
         right_layout.addWidget(self.plan_count)
-        self.plan_list = QTreeWidget()
-        self.plan_list.setHeaderLabels(("Action", "Source", "Target", "Policy"))
+        self.plan_list = QTableView()
+        self.plan_model = PlanListModel(self.plan, self)
+        self.plan_list.setModel(self.plan_model)
         self.plan_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self.plan_list.header().resizeSection(0, 110)
-        self.plan_list.header().resizeSection(1, 260)
-        self.plan_list.header().resizeSection(2, 260)
+        self.plan_list.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.plan_list.setAlternatingRowColors(True)
+        self.plan_list.setColumnWidth(0, 110)
+        self.plan_list.setColumnWidth(1, 260)
+        self.plan_list.setColumnWidth(2, 260)
+        self.plan_list.horizontalHeader().setStretchLastSection(True)
         right_layout.addWidget(self.plan_list, 1)
         plan_buttons = QHBoxLayout()
         self.remove_button = QPushButton("Remove Selected")
@@ -411,7 +509,7 @@ class PlanExplorerPage(QWidget):
         self.clear_button.clicked.connect(self.clear_plan)
         self.save_plan_button.clicked.connect(self.save_current_plan)
         self.load_plan_button.clicked.connect(self.load_saved_plan)
-        self.plan_list.itemSelectionChanged.connect(self.update_buttons)
+        self.plan_list.selectionModel().selectionChanged.connect(self.update_buttons)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -471,6 +569,8 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
         directory = QFileDialog.getExistingDirectory(self, "Import Snapshot")
@@ -487,6 +587,8 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
         thread = QThread(self)
@@ -639,8 +741,7 @@ class PlanExplorerPage(QWidget):
         try:
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
-            for operation in dialog.operations:
-                self.plan.append(operation)
+            self.plan.extend(dialog.operations)
             self._refresh_plan_list()
             self.status_changed.emit(
                 f"Staged {len(dialog.operations):,} batch operation(s)"
@@ -725,19 +826,18 @@ class PlanExplorerPage(QWidget):
             self.status_changed.emit(f"Staged {added} move operation(s)")
 
     def remove_selected_operations(self) -> None:
-        operation_ids = {
-            item.data(0, Qt.ItemDataRole.UserRole)
-            for item in self.plan_list.selectedItems()
-        }
-        removed = 0
-        for operation_id in operation_ids:
-            if not isinstance(operation_id, str):
-                continue
-            try:
-                self.plan.remove(operation_id)
-            except KeyError:
-                continue
-            removed += 1
+        selection = self.plan_list.selectionModel()
+        operation_ids = (
+            {
+                operation_id
+                for index in selection.selectedRows(0)
+                if (operation_id := self.plan_model.operation_id(index.row()))
+                is not None
+            }
+            if selection is not None
+            else set()
+        )
+        removed = self.plan.remove_many(operation_ids)
         if removed:
             self._refresh_plan_list()
             self.status_changed.emit(f"Removed {removed} planned operation(s)")
@@ -750,7 +850,17 @@ class PlanExplorerPage(QWidget):
         self.status_changed.emit("Plan cleared")
 
     def save_current_plan(self) -> None:
-        if self.snapshot is None or not len(self.plan):
+        if (
+            self.snapshot is None
+            or not len(self.plan)
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+            or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
+        ):
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -760,16 +870,19 @@ class PlanExplorerPage(QWidget):
         )
         if not path:
             return
-        try:
-            save_plan(path, self.plan)
-        except (OSError, TypeError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot save Plan", str(error))
-            self.status_changed.emit(str(error))
-            return
-        self.status_changed.emit(f"Saved {len(self.plan):,} planned operation(s)")
+        self.start_plan_io(PlanSaveWorker(Path(path), self.plan), "save")
 
     def load_saved_plan(self) -> None:
-        if self.snapshot is None:
+        if (
+            self.snapshot is None
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+            or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
+        ):
             return
         if len(self.plan):
             answer = QMessageBox.question(
@@ -789,19 +902,105 @@ class PlanExplorerPage(QWidget):
         )
         if not path:
             return
-        try:
-            loaded, source_root = load_plan(path, self.snapshot.root)
-        except (OSError, UnicodeError, TypeError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot load Plan", str(error))
-            self.status_changed.emit(str(error))
+        self.start_plan_io(
+            PlanLoadWorker(Path(path), self.snapshot.root),
+            "load",
+        )
+
+    def start_plan_io(
+        self,
+        worker: PlanLoadWorker | PlanSaveWorker,
+        kind: str,
+    ) -> None:
+        if (
+            self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+            or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
+        ):
+            return
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self.show_plan_io_progress)
+        worker.finished.connect(self.receive_plan_io_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self.plan_io_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.plan_io_thread = thread
+        self.plan_io_worker = worker
+        self.plan_io_outcome = None
+        self.plan_io_kind = kind
+        self._set_plan_io(True)
+        self.progress_label.setText(
+            "Loading Plan…" if kind == "load" else "Saving Plan…"
+        )
+        thread.start()
+
+    def show_plan_io_progress(self, message: str, completed: int) -> None:
+        self.progress_label.setText(f"{message}: {completed:,} operations")
+
+    def receive_plan_io_result(
+        self,
+        result: object,
+        cancelled: bool,
+        error: str,
+    ) -> None:
+        self.plan_io_outcome = (result, cancelled, error)
+
+    def plan_io_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self.plan_io_thread:
+            return
+        outcome = self.plan_io_outcome
+        kind = self.plan_io_kind
+        self.plan_io_thread = None
+        self.plan_io_worker = None
+        self.plan_io_outcome = None
+        self.plan_io_kind = ""
+        self._set_plan_io(False)
+
+        if self.close_requested:
+            self.ready_to_close.emit()
+            return
+        if outcome is None:
+            self.progress_label.setText("Plan file operation failed")
+            return
+        result, cancelled, error = outcome
+        if error:
+            self.progress_label.setText("Plan file operation failed")
+            QMessageBox.warning(self, "Cannot process Plan file", error)
+            self.status_changed.emit(error)
+            return
+        if cancelled:
+            self.progress_label.setText("Plan file operation cancelled")
+            self.status_changed.emit("Plan file operation cancelled")
+            return
+        if kind == "save":
+            self.progress_label.setText(f"Saved {len(self.plan):,} operations")
+            self.status_changed.emit(f"Saved {len(self.plan):,} planned operation(s)")
+            return
+        if not isinstance(result, tuple) or len(result) != 2:
+            self.progress_label.setText("Plan load failed")
+            return
+        loaded, source_root = result
+        if not isinstance(loaded, FilePlan):
+            self.progress_label.setText("Plan load failed")
             return
         self.plan = loaded
         self._refresh_plan_list()
         root_note = (
             f" (originally saved for {source_root})"
-            if source_root and source_root != str(self.snapshot.root)
+            if source_root
+            and self.snapshot is not None
+            and source_root != str(self.snapshot.root)
             else ""
         )
+        self.progress_label.setText(f"Loaded {len(self.plan):,} operations")
         self.status_changed.emit(
             f"Loaded {len(self.plan):,} planned operation(s){root_note}. "
             "Run Diff / Simulate before applying."
@@ -819,6 +1018,8 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
         thread = QThread(self)
@@ -900,6 +1101,8 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
         thread = QThread(self)
@@ -986,6 +1189,11 @@ class PlanExplorerPage(QWidget):
             self.status_changed.emit(f"Staged {staged:,} duplicate file deletion(s)")
 
     def show_plan_diff(self) -> None:
+        if self.simulation_is_running:
+            if self.simulation_worker is not None:
+                self.simulation_worker.cancel()
+                self.progress_label.setText("Cancelling simulation…")
+            return
         if (
             self.snapshot is None
             or not len(self.plan)
@@ -994,13 +1202,98 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
-        try:
-            simulation = simulate_plan(self.snapshot, self.plan)
-        except (ValueError, RuntimeError, sqlite3.Error) as error:
-            self._show_plan_error(error)
+        self.start_plan_simulation("preview")
+
+    def start_plan_simulation(self, purpose: str) -> None:
+        if (
+            self.snapshot is None
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+            or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
+        ):
             return
+        thread = QThread(self)
+        worker = PlanSimulationWorker(self.snapshot, self.plan)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self.show_simulation_progress)
+        worker.finished.connect(self.receive_simulation_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self.simulation_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.simulation_thread = thread
+        self.simulation_worker = worker
+        self.simulation_outcome = None
+        self.simulation_purpose = purpose
+        self._set_simulating(True)
+        self.progress_label.setText("Simulating Plan…")
+        self.status_changed.emit("Simulating Plan without changing files…")
+        thread.start()
+
+    def show_simulation_progress(
+        self,
+        message: str,
+        completed: int,
+        total: int,
+    ) -> None:
+        self.progress_label.setText(f"{message}: {completed:,}/{total:,}")
+
+    def receive_simulation_result(
+        self,
+        result: object,
+        cancelled: bool,
+        error: str,
+    ) -> None:
+        self.simulation_outcome = (result, cancelled, error)
+
+    def simulation_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self.simulation_thread:
+            return
+        outcome = self.simulation_outcome
+        purpose = self.simulation_purpose
+        self.simulation_thread = None
+        self.simulation_worker = None
+        self.simulation_outcome = None
+        self.simulation_purpose = ""
+        self._set_simulating(False)
+
+        if self.close_requested:
+            self.ready_to_close.emit()
+            return
+        if outcome is None:
+            self.progress_label.setText("Simulation failed")
+            return
+        result, cancelled, error = outcome
+        if error:
+            self.progress_label.setText("Simulation failed")
+            self._show_plan_error(RuntimeError(error))
+            return
+        if cancelled:
+            self.progress_label.setText("Simulation cancelled")
+            self.status_changed.emit("Plan simulation cancelled")
+            return
+        if not isinstance(result, PlanSimulation):
+            self.progress_label.setText("Simulation failed")
+            return
+        self.progress_label.setText(
+            f"Simulated {len(result.changes):,} planned operations"
+        )
+        if purpose == "apply":
+            self.confirm_plan_apply_result(result)
+        else:
+            self.present_plan_diff(result)
+
+    def present_plan_diff(self, simulation: PlanSimulation) -> None:
         dialog = PlanDiffDialog(simulation, self)
         dialog.exec()
         resolve_requested = dialog.resolve_requested
@@ -1063,12 +1356,14 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
-        try:
-            simulation = simulate_plan(self.snapshot, self.plan)
-        except (ValueError, RuntimeError, sqlite3.Error) as error:
-            self._show_plan_error(error)
+        self.start_plan_simulation("apply")
+
+    def confirm_plan_apply_result(self, simulation: PlanSimulation) -> None:
+        if self.snapshot is None:
             return
         if not simulation.can_apply:
             dialog = PlanDiffDialog(simulation, self)
@@ -1111,6 +1406,8 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
         thread = QThread(self)
@@ -1219,6 +1516,8 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
         if len(self.plan):
@@ -1248,6 +1547,8 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         ):
             return
         thread = QThread(self)
@@ -1323,24 +1624,7 @@ class PlanExplorerPage(QWidget):
         self.status_changed.emit(f"Staged {operation.action.value}")
 
     def _refresh_plan_list(self) -> None:
-        self.plan_list.clear()
-        for operation in self.plan.operations:
-            item = QTreeWidgetItem(
-                (
-                    operation.action.value.replace("_", " ").upper(),
-                    operation.source.as_posix()
-                    if operation.source is not None
-                    else "-",
-                    operation.target.as_posix()
-                    if operation.target is not None
-                    else "-",
-                    operation.conflict_policy.value.replace("_", " ").upper()
-                    if operation.conflict_policy is not ConflictPolicy.ERROR
-                    else "-",
-                )
-            )
-            item.setData(0, Qt.ItemDataRole.UserRole, operation.operation_id)
-            self.plan_list.addTopLevelItem(item)
+        self.plan_model.set_plan(self.plan)
         self.plan_count.setText(f"PLAN — {len(self.plan):,} staged operation(s)")
         self.update_buttons()
 
@@ -1402,6 +1686,8 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(scanning)
@@ -1416,6 +1702,8 @@ class PlanExplorerPage(QWidget):
             or self.undo_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
@@ -1430,6 +1718,8 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.analysis_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
@@ -1444,6 +1734,8 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.diagnostic_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
@@ -1458,6 +1750,40 @@ class PlanExplorerPage(QWidget):
             or self.apply_is_running
             or self.undo_is_running
             or self.analysis_is_running
+            or self.plan_io_is_running
+            or self.simulation_is_running
+        )
+        self.import_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(self.scan_is_running)
+        self.tree.setEnabled(not busy)
+        self.plan_list.setEnabled(not busy)
+        self.update_buttons()
+
+    def _set_plan_io(self, active: bool) -> None:
+        busy = (
+            active
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+            or self.diagnostic_is_running
+            or self.simulation_is_running
+        )
+        self.import_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(self.scan_is_running)
+        self.tree.setEnabled(not busy)
+        self.plan_list.setEnabled(not busy)
+        self.update_buttons()
+
+    def _set_simulating(self, active: bool) -> None:
+        busy = (
+            active
+            or self.scan_is_running
+            or self.apply_is_running
+            or self.undo_is_running
+            or self.analysis_is_running
+            or self.diagnostic_is_running
+            or self.plan_io_is_running
         )
         self.import_button.setEnabled(not busy)
         self.cancel_button.setEnabled(self.scan_is_running)
@@ -1473,6 +1799,8 @@ class PlanExplorerPage(QWidget):
             and not self.undo_is_running
             and not self.analysis_is_running
             and not self.diagnostic_is_running
+            and not self.plan_io_is_running
+            and not self.simulation_is_running
         )
         entries = self._selected_entries() if ready else []
         self.new_file_button.setEnabled(ready)
@@ -1490,19 +1818,38 @@ class PlanExplorerPage(QWidget):
             "Cancel Problem Scan" if self.diagnostic_is_running else "Find Problems"
         )
         self.diagnostic_button.setEnabled(self.diagnostic_is_running or ready)
-        self.diff_button.setEnabled(ready and bool(len(self.plan)))
+        self.diff_button.setText(
+            "Cancel Simulation" if self.simulation_is_running else "Diff / Simulate"
+        )
+        self.diff_button.setEnabled(
+            self.simulation_is_running or (ready and bool(len(self.plan)))
+        )
         self.apply_button.setEnabled(ready and bool(len(self.plan)))
         self.cancel_apply_button.setEnabled(self.apply_is_running)
         self.undo_plan_button.setEnabled(
             ready and not len(self.plan) and self.last_application is not None
         )
-        self.remove_button.setEnabled(ready and bool(self.plan_list.selectedItems()))
+        plan_selection = self.plan_list.selectionModel()
+        has_plan_selection = bool(
+            plan_selection is not None and plan_selection.selectedRows(0)
+        )
+        self.remove_button.setEnabled(ready and has_plan_selection)
         self.clear_button.setEnabled(ready and bool(len(self.plan)))
         self.save_plan_button.setEnabled(ready and bool(len(self.plan)))
         self.load_plan_button.setEnabled(ready)
 
     def prepare_close(self) -> bool:
         self.close_cancelled = False
+        if self.simulation_is_running:
+            self.close_requested = True
+            if self.simulation_worker is not None:
+                self.simulation_worker.cancel()
+            return False
+        if self.plan_io_is_running:
+            self.close_requested = True
+            if self.plan_io_worker is not None:
+                self.plan_io_worker.cancel()
+            return False
         if self.apply_is_running:
             self.close_requested = True
             self.cancel_plan_apply()

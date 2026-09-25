@@ -38,4 +38,4 @@ jobs:
         run: python -m compileall -q main.py planning.py snapshot.py organization.py persistence.py plan_diff.py conflicts.py plan_apply.py analysis.py diagnostics.py ui real virtual
 
       - name: Check imports
-        run: python -c "import main, planning, snapshot, organization, persistence, plan_diff, conflicts, plan_apply, analysis, diagnostics, ui.analysis, ui.diagnostics, ui.batch, ui.plan_diff, ui.conflicts, ui.plan_apply, real.operations, real.preview, real.search, real.tree, ui.window, virtual.workspace"
+        run: python -c "import main, planning, snapshot, organization, persistence, plan_diff, conflicts, plan_apply, analysis, diagnostics, ui.analysis, ui.diagnostics, ui.batch, ui.plan_diff, ui.conflicts, ui.plan_apply, ui.performance, real.operations, real.preview, real.search, real.tree, ui.window, virtual.workspace"

@@ -10,8 +10,10 @@ from PySide6.QtCore import (
     QAbstractItemModel,
     QMimeData,
     QModelIndex,
+    QSettings,
     Qt,
     QThread,
+    QTimer,
     Signal,
 )
 from PySide6.QtWidgets import (
@@ -50,6 +52,7 @@ from planning import (
     normalize_plan_path,
 )
 from real.operations import validate_name
+from recovery import inspect_recovery
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
 from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
@@ -404,6 +407,8 @@ class PlanExplorerPage(QWidget):
         self.simulation_outcome: tuple[object, bool, str] | None = None
         self.simulation_purpose = ""
         self.last_application: PlanApplicationRecord | None = None
+        self.recovery_scan = None
+        self._recovery_notified_root = None
         self.close_requested = False
         self.close_cancelled = False
 
@@ -414,6 +419,24 @@ class PlanExplorerPage(QWidget):
         self._set_scanning(False)
         self._refresh_plan_list()
         self.update_buttons()
+
+        QTimer.singleShot(0, self.check_previous_recovery)
+
+    def check_previous_recovery(self) -> None:
+        root = QSettings("FileTreeViewer", "FileTreeViewer").value(
+            "recovery/last_root", ""
+        )
+        if root and Path(str(root)).is_dir():
+            self.check_recovery(Path(str(root)))
+
+    def check_recovery(self, root: Path) -> None:
+        self.recovery_scan = inspect_recovery(root)
+        if self.recovery_scan.needs_attention and self._recovery_notified_root != root:
+            self._recovery_notified_root = root
+            self.status_changed.emit("Unfinished or damaged transaction records found")
+            QMessageBox.warning(
+                self, "Filesystem recovery required", self.recovery_scan.summary()
+            )
 
     @property
     def scan_is_running(self) -> bool:
@@ -592,6 +615,9 @@ class PlanExplorerPage(QWidget):
         ):
             return
         thread = QThread(self)
+        QSettings("FileTreeViewer", "FileTreeViewer").setValue(
+            "recovery/last_root", str(root)
+        )
         worker = SnapshotWorker(root)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -669,6 +695,7 @@ class PlanExplorerPage(QWidget):
             self.snapshot_model.fetchMore(root_index)
         self.tree.expand(root_index)
         self.plan = FilePlan(snapshot.root)
+        self.check_recovery(snapshot.root)
         self.last_application = latest_completed_application(snapshot.root)
         self.location.setText(str(snapshot.root))
         self.progress_label.setText(
@@ -1824,7 +1851,12 @@ class PlanExplorerPage(QWidget):
         self.diff_button.setEnabled(
             self.simulation_is_running or (ready and bool(len(self.plan)))
         )
-        self.apply_button.setEnabled(ready and bool(len(self.plan)))
+        recovery_needed = bool(
+            self.recovery_scan and self.recovery_scan.needs_attention
+        )
+        self.apply_button.setEnabled(
+            ready and bool(len(self.plan)) and not recovery_needed
+        )
         self.cancel_apply_button.setEnabled(self.apply_is_running)
         self.undo_plan_button.setEnabled(
             ready and not len(self.plan) and self.last_application is not None

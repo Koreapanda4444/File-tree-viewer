@@ -29,13 +29,13 @@ jobs:
           python -m pip install "ruff==0.16.6"
 
       - name: Check formatting
-        run: ruff format --check main.py fs_paths.py fs_ops.py journal.py planning.py snapshot.py organization.py persistence.py plan_diff.py conflicts.py plan_apply.py analysis.py diagnostics.py ui real virtual
+        run: ruff format --check main.py fs_paths.py fs_ops.py journal.py recovery.py planning.py snapshot.py organization.py persistence.py plan_diff.py conflicts.py plan_apply.py analysis.py diagnostics.py ui real virtual
 
       - name: Check code
-        run: ruff check main.py fs_paths.py fs_ops.py journal.py planning.py snapshot.py organization.py persistence.py plan_diff.py conflicts.py plan_apply.py analysis.py diagnostics.py ui real virtual
+        run: ruff check main.py fs_paths.py fs_ops.py journal.py recovery.py planning.py snapshot.py organization.py persistence.py plan_diff.py conflicts.py plan_apply.py analysis.py diagnostics.py ui real virtual
 
       - name: Check syntax
-        run: python -m compileall -q main.py fs_paths.py fs_ops.py journal.py planning.py snapshot.py organization.py persistence.py plan_diff.py conflicts.py plan_apply.py analysis.py diagnostics.py ui real virtual
+        run: python -m compileall -q main.py fs_paths.py fs_ops.py journal.py recovery.py planning.py snapshot.py organization.py persistence.py plan_diff.py conflicts.py plan_apply.py analysis.py diagnostics.py ui real virtual
 
       - name: Check imports
-        run: python -c "import main, fs_paths, fs_ops, journal, planning, snapshot, organization, persistence, plan_diff, conflicts, plan_apply, analysis, diagnostics, ui.analysis, ui.diagnostics, ui.batch, ui.plan_diff, ui.conflicts, ui.plan_apply, ui.performance, real.operations, real.preview, real.search, real.tree, ui.window, virtual.workspace"
+        run: python -c "import main, fs_paths, fs_ops, journal, recovery, planning, snapshot, organization, persistence, plan_diff, conflicts, plan_apply, analysis, diagnostics, ui.analysis, ui.diagnostics, ui.batch, ui.plan_diff, ui.conflicts, ui.plan_apply, ui.performance, real.operations, real.preview, real.search, real.tree, ui.window, virtual.workspace"

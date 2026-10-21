@@ -133,7 +133,12 @@ def apply_plan(
     cancelled: threading.Event | None = None,
     progress: ProgressCallback | None = None,
 ) -> PlanApplicationRecord:
+    from recovery import inspect_recovery
+
     check_cancelled(cancelled)
+    recovery = inspect_recovery(snapshot.root)
+    if recovery.needs_attention:
+        raise RuntimeError(recovery.summary())
     frozen_plan = FilePlan(plan.root)
     frozen_plan.extend(plan.operations)
     if not any(
@@ -264,39 +269,12 @@ def _undo_locked(record, *, progress) -> PlanApplicationRecord:
 def latest_completed_application(
     root: Path | str,
 ) -> PlanApplicationRecord | None:
-    root_path = Path(root).expanduser().absolute()
-    transactions = root_path / INTERNAL_DIRECTORY / "transactions"
-    if not transactions.is_dir():
+    from recovery import inspect_recovery
+
+    scan = inspect_recovery(root)
+    if scan.needs_attention:
         return None
-    records: list[PlanApplicationRecord] = []
-    try:
-        directories = tuple(transactions.iterdir())
-    except OSError:
-        return None
-    for directory in directories:
-        journal_path = directory / "journal.json"
-        if not directory.is_dir() or not journal_path.is_file():
-            continue
-        try:
-            record = load_application_record(journal_path)
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-            continue
-        if normalized_path(record.root) == normalized_path(root_path):
-            records.append(record)
-    if not records:
-        return None
-    newest = max(records, key=lambda record: record.started_at)
-    if newest.status in {
-        ApplicationStatus.RUNNING,
-        ApplicationStatus.ROLLBACK_FAILED,
-        ApplicationStatus.UNDOING,
-        ApplicationStatus.UNDO_FAILED,
-    }:
-        return None
-    completed = [
-        record for record in records if record.status is ApplicationStatus.COMPLETED
-    ]
-    return max(completed, key=lambda record: record.started_at, default=None)
+    return max(scan.completed, key=lambda record: record.started_at, default=None)
 
 
 def load_application_record(journal_path: Path | str) -> PlanApplicationRecord:
@@ -329,6 +307,21 @@ def load_application_record(journal_path: Path | str) -> PlanApplicationRecord:
     )
     load_record_events(record)
     validate_application_record(record)
+    count = data.get("mutation_count")
+    if type(count) is not int or count < 0:
+        raise ValueError("Invalid recovery mutation count")
+    if (
+        record.status
+        in {
+            ApplicationStatus.COMPLETED,
+            ApplicationStatus.UNDONE,
+            ApplicationStatus.ROLLED_BACK,
+        }
+        and not record.log_truncated
+        and not record.pending_mutations
+        and count != len(record.mutations)
+    ):
+        raise ValueError("Recovery mutation count mismatch")
     return record
 
 
@@ -727,7 +720,8 @@ def validate_application_record(record: PlanApplicationRecord) -> None:
         record.transaction_directory
     ):
         raise ValueError("Recovery mutation log path mismatch")
-    for mutation in record.mutations:
+    for mutation in (*record.mutations, *record.pending_mutations):
+        validate_mutation_shape(record, mutation)
         for path in (mutation.source, mutation.target):
             if path is not None and not path_is_within(path, record.root):
                 raise ValueError("Recovery mutation points outside the Plan root")
@@ -826,3 +820,43 @@ def verify_live_source(snapshot: FileSnapshot, path) -> None:
     problem = source_live_problem(snapshot, entry)
     if problem:
         raise FileExistsError(f"{path}: {problem}")
+
+
+def validate_mutation_shape(
+    record: PlanApplicationRecord, mutation: AppliedMutation
+) -> None:
+    from fs_paths import normalize_plan_path
+
+    validate_windows_name(mutation.operation_id)
+    for signature in (mutation.before_signature, mutation.after_signature):
+        if signature is not None and set(signature) != {
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        }:
+            raise ValueError("Incomplete recovery identity")
+    directory = record.transaction_directory
+    stage = directory / "staging" / mutation.operation_id
+    backup = directory / "backup" / mutation.operation_id
+    if mutation.kind is MutationKind.STAGE_MOVE:
+        internal, expected, user_path = mutation.target, stage, mutation.source
+    elif mutation.kind is MutationKind.FINAL_MOVE:
+        internal, expected, user_path = mutation.source, stage, mutation.target
+    elif mutation.kind is MutationKind.BACKUP_DELETE:
+        internal, expected, user_path = mutation.target, backup, mutation.source
+    elif mutation.kind is MutationKind.BACKUP_TARGET:
+        internal, expected, user_path = (
+            mutation.target,
+            directory / "backup" / f"overwrite-{mutation.operation_id}",
+            mutation.source,
+        )
+    else:
+        if mutation.source is not None:
+            raise ValueError("Created-item recovery cannot have a source")
+        internal, expected, user_path = None, None, mutation.target
+    if internal != expected or user_path is None:
+        raise ValueError("Recovery mutation paths do not match their purpose")
+    normalize_plan_path(user_path.relative_to(record.root).as_posix())

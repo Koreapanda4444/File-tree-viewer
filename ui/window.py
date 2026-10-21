@@ -67,6 +67,7 @@ from ui.address import AddressBar
 from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
 from ui.file_compare import FileComparisonDialog
+from ui.file_views import FolderViews
 from ui.image_preview import ImagePreview
 from ui.locations import LocationsButton, LocationStore
 from ui.plan import PlanExplorerPage
@@ -212,7 +213,9 @@ class ExplorerPage(QWidget):
             self.folder_view.setSelectionBehavior(
                 QAbstractItemView.SelectionBehavior.SelectRows
             )
-            self.navigation_splitter.addWidget(self.folder_view)
+            self.folder_panel = FolderViews(self.folder_view)
+            self.folder_icons = self.folder_panel.icons
+            self.navigation_splitter.addWidget(self.folder_panel)
             self.navigation_splitter.setStretchFactor(0, 1)
             self.navigation_splitter.setStretchFactor(1, 3)
             splitter.addWidget(self.navigation_splitter)
@@ -397,6 +400,7 @@ class RealExplorerPage(ExplorerPage):
         self.preview.textChanged.connect(self.editor_text_changed)
         self.tree.doubleClicked.connect(self.open_folder_index)
         self.folder_view.doubleClicked.connect(self.open_folder_index)
+        self.folder_icons.doubleClicked.connect(self.open_folder_index)
         self.tree.expanded.connect(self.load_expanded_folder)
         self.tree.collapsed.connect(self.release_collapsed_folder)
         self.model.directory_error.connect(self.status_changed)
@@ -543,8 +547,8 @@ class RealExplorerPage(ExplorerPage):
     def reveal_file_index(self, index):
         self.tree.setCurrentIndex(index)
         self.tree.scrollTo(index)
-        self.folder_view.scrollTo(index)
-        self.folder_view.setFocus()
+        self.folder_panel.active_view.scrollTo(index)
+        self.folder_panel.active_view.setFocus()
         self.status_changed.emit(f"Selected: {self.model.path_from_index(index)}")
 
     def toggle_favorite(self, path):
@@ -1422,9 +1426,8 @@ class RealExplorerPage(ExplorerPage):
 
     def _set_tree_model(self, model: FileTreeModel | SearchResultsModel) -> None:
         self.tree.setModel(model)
-        self.folder_view.setModel(model)
-        self.folder_view.setVisible(model is self.model)
-        self.folder_view.setSelectionModel(self.tree.selectionModel())
+        self.folder_panel.set_model(model, self.tree.selectionModel())
+        self.folder_panel.setVisible(model is self.model)
         self.folder_view.setColumnWidth(0, 260)
         self.folder_view.setColumnWidth(1, 110)
         selection = self.tree.selectionModel()
@@ -1491,7 +1494,7 @@ class RealExplorerPage(ExplorerPage):
 
     def _set_operation_running(self, running: bool) -> None:
         self.tree.setEnabled(not running)
-        self.folder_view.setEnabled(not running)
+        self.folder_panel.setEnabled(not running)
         self.select_root_button.setEnabled(not running)
         self.refresh_button.setEnabled(not running and self.model.root_path is not None)
         self.show_hidden.setEnabled(not running)
@@ -1531,7 +1534,7 @@ class RealExplorerPage(ExplorerPage):
             self.model.fetchMore(root_index)
         self.tree.expand(root_index)
         if self.tree.model() is self.model:
-            self.folder_view.setRootIndex(root_index)
+            self.folder_panel.set_root(root_index)
 
 
 class VirtualExplorerPage(ExplorerPage):

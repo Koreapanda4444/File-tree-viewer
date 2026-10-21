@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import PurePosixPath
 
-from fs_paths import path_collision_key
+from fs_paths import checked_boundary, path_collision_key
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot, SnapshotEntry
 
@@ -429,10 +429,11 @@ def source_live_problem(
 ) -> str | None:
     path = snapshot.root.joinpath(*entry.path.parts)
     try:
+        checked_boundary(snapshot.root, path)
         details = path.stat(follow_symlinks=False)
     except FileNotFoundError:
         return "Source was removed after the Snapshot was created"
-    except OSError as error:
+    except (OSError, ValueError) as error:
         return f"Source cannot be checked against the Snapshot: {error}"
 
     is_directory = stat.S_ISDIR(details.st_mode)

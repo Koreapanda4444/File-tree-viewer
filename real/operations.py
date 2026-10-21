@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot
 from send2trash import send2trash
 
-from fs_paths import normalized_path, validate_name
+from fs_paths import checked_boundary, normalized_path, validate_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +29,7 @@ def create_item(parent: Path, name: str, *, directory: bool) -> OperationRecord:
     if not parent.is_dir():
         raise NotADirectoryError(parent)
 
+    checked_boundary(parent, parent, allow_leaf_link=False)
     target = parent / clean_name
     if target.exists() or target.is_symlink():
         raise FileExistsError(target)
@@ -50,6 +51,8 @@ def rename_item(source: Path, new_name: str) -> OperationRecord:
     if target.exists() or target.is_symlink():
         raise FileExistsError(target)
 
+    checked_boundary(source.parent, source)
+    checked_boundary(source.parent, target, allow_leaf_link=False)
     source.rename(target)
     return OperationRecord("rename", [FileChange(source, target)])
 
@@ -120,6 +123,7 @@ class FileOperationWorker(QObject):
         if self.action == "move" and isinstance(item, Path):
             return self._move(item)
         if self.action == "delete" and isinstance(item, Path):
+            checked_boundary(item.parent, item)
             send2trash(str(item))
             return FileChange(item, None)
         if self.action == "undo" and isinstance(item, FileChange):
@@ -164,12 +168,14 @@ class FileOperationWorker(QObject):
         return FileChange(source, target)
 
     def _checked_destination(self, source: Path, *, moving: bool) -> Path:
+        checked_boundary(source.parent, source)
         destination = self.destination
         if destination is None or not destination.is_dir():
             raise NotADirectoryError(destination)
         if not source.exists() and not source.is_symlink():
             raise FileNotFoundError(source)
 
+        checked_boundary(destination, destination, allow_leaf_link=False)
         source_resolved = (
             Path(os.path.abspath(source))
             if source.is_symlink()
@@ -197,6 +203,7 @@ class FileOperationWorker(QObject):
         if record.action in {"copy", "create_file", "create_folder"}:
             target = change.target
             if target is not None and (target.exists() or target.is_symlink()):
+                checked_boundary(target.parent, target)
                 send2trash(str(target))
             return
 
@@ -210,6 +217,8 @@ class FileOperationWorker(QObject):
             if not target.exists() and not target.is_symlink():
                 raise FileNotFoundError(target)
             source.parent.mkdir(parents=True, exist_ok=True)
+            checked_boundary(target.parent, target)
+            checked_boundary(source.parent, source, allow_leaf_link=False)
             shutil.move(str(target), str(source))
             return
 

@@ -12,7 +12,12 @@ from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
-from fs_paths import normalized_path, path_is_within
+from fs_paths import (
+    checked_boundary,
+    normalized_path,
+    path_is_within,
+    validate_windows_name,
+)
 from plan_diff import simulate_plan
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot
@@ -119,6 +124,7 @@ def apply_plan(
     transaction_directory = (
         snapshot.root / INTERNAL_DIRECTORY / "transactions" / transaction_id
     )
+    checked_boundary(snapshot.root, transaction_directory, allow_leaf_link=False)
     transaction_directory.mkdir(parents=True, exist_ok=False)
     hide_internal_directory(snapshot.root / INTERNAL_DIRECTORY)
     (transaction_directory / "staging").mkdir()
@@ -372,6 +378,7 @@ def perform_plan(
         check_cancelled(cancelled)
         target = absolute_operation_path(record.root, operation.target)
         emit_progress(progress, "Creating folders", record, total, target)
+        checked_boundary(record.root, target, allow_leaf_link=False)
         target.mkdir(exist_ok=False)
         add_mutation(
             record,
@@ -406,6 +413,7 @@ def perform_plan(
         check_cancelled(cancelled)
         target = absolute_operation_path(record.root, operation.target)
         emit_progress(progress, "Creating files", record, total, target)
+        checked_boundary(record.root, target, allow_leaf_link=False)
         target.touch(exist_ok=False)
         add_mutation(
             record,
@@ -430,6 +438,9 @@ def rollback_mutations(record: PlanApplicationRecord) -> list[str]:
 
 
 def reverse_mutation(mutation: AppliedMutation) -> None:
+    for path in (mutation.source, mutation.target):
+        if path is not None:
+            checked_boundary(path.parent, path)
     if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
         target = required_path(mutation.target)
         if mutation.kind is MutationKind.CREATE_FILE:
@@ -469,10 +480,12 @@ def complete_operation(
 def absolute_operation_path(root: Path, relative_path) -> Path:
     if relative_path is None:
         raise ValueError("The operation path is missing")
-    return root.joinpath(*relative_path.parts)
+    return checked_boundary(root, root.joinpath(*relative_path.parts))
 
 
 def move_without_overwrite(source: Path, target: Path) -> None:
+    checked_boundary(source.parent, source)
+    checked_boundary(target.parent, target, allow_leaf_link=False)
     if not path_exists(source):
         raise FileNotFoundError(source)
     if path_exists(target):
@@ -528,6 +541,10 @@ def now_text() -> str:
 
 
 def validate_application_record(record: PlanApplicationRecord) -> None:
+    validate_windows_name(record.transaction_id)
+    if record.transaction_id in {".", ".."}:
+        raise ValueError("Invalid transaction ID")
+    checked_boundary(record.root, record.transaction_directory, allow_leaf_link=False)
     expected_directory = (
         record.root / INTERNAL_DIRECTORY / "transactions" / record.transaction_id
     )
@@ -547,6 +564,8 @@ def validate_application_record(record: PlanApplicationRecord) -> None:
         for path in (mutation.source, mutation.target):
             if path is not None and not path_is_within(path, record.root):
                 raise ValueError("Recovery mutation points outside the Plan root")
+            if path is not None:
+                checked_boundary(record.root, path)
 
 
 def validate_undo_state(record: PlanApplicationRecord) -> None:

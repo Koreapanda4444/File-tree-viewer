@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 INTERNAL_DIRECTORY = ".file-tree-viewer"
@@ -73,3 +74,29 @@ def path_is_within(path: Path, parent: Path) -> bool:
         ) == normalized_path(parent)
     except ValueError:
         return False
+
+
+def is_link_stat(details: os.stat_result) -> bool:
+    return stat.S_ISLNK(details.st_mode) or bool(
+        getattr(details, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
+
+
+def checked_boundary(root: Path, path: Path, *, allow_leaf_link: bool = True) -> Path:
+    root = Path(os.path.abspath(root))
+    path = Path(os.path.abspath(path))
+    if not path_is_within(path, root):
+        raise ValueError(f"Path is outside the operation root: {path}")
+    for component in reversed((path, *path.parents)):
+        try:
+            details = component.lstat()
+        except FileNotFoundError:
+            continue
+        if is_link_stat(details) and (component != path or not allow_leaf_link):
+            raise ValueError(
+                f"Linked folders cannot be used for file operations: {component}"
+            )
+    if not root.is_dir():
+        raise NotADirectoryError(root)
+    return path

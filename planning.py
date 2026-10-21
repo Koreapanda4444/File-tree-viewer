@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
-from fs_paths import normalize_plan_path, normalize_root
+from fs_paths import normalize_plan_path, normalize_root, validate_windows_name
 
 
 class PlanAction(str, Enum):
@@ -38,6 +38,8 @@ class PlanOperation:
         operation_id = self.operation_id.strip()
         conflict_policy = ConflictPolicy(self.conflict_policy)
 
+        if validate_windows_name(operation_id) != operation_id:
+            raise ValueError("Invalid operation ID")
         if not operation_id:
             raise ValueError("An operation ID is required")
         validate_operation(action, source, target)

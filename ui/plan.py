@@ -54,6 +54,7 @@ from planning import (
 )
 from recovery import RecoveryResult, inspect_recovery
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry
+from snapshot_compare import SnapshotComparison
 from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
@@ -62,10 +63,12 @@ from ui.performance import (
     PlanLoadWorker,
     PlanSaveWorker,
     PlanSimulationWorker,
+    SnapshotCompareWorker,
     SnapshotFileWorker,
 )
 from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
+from ui.snapshot_compare import SnapshotComparisonDialog
 from ui.tasks import prepare_worker_thread
 from ui.workers import SnapshotWorker
 
@@ -416,7 +419,11 @@ class PlanExplorerPage(QWidget):
         self.diagnostic_outcome: tuple[object, bool, str] | None = None
         self.plan_io_thread: QThread | None = None
         self.plan_io_worker: (
-            PlanLoadWorker | PlanSaveWorker | SnapshotFileWorker | None
+            PlanLoadWorker
+            | PlanSaveWorker
+            | SnapshotFileWorker
+            | SnapshotCompareWorker
+            | None
         ) = None
         self.plan_io_outcome: tuple[object, bool, str] | None = None
         self.plan_io_kind = ""
@@ -499,6 +506,9 @@ class PlanExplorerPage(QWidget):
         self.open_snapshot_button.clicked.connect(self.open_saved_snapshot)
         row.addWidget(self.save_snapshot_button)
         row.addWidget(self.open_snapshot_button)
+        self.compare_snapshot_button = QPushButton("Compare Snapshot")
+        self.compare_snapshot_button.clicked.connect(self.compare_saved_snapshot)
+        row.addWidget(self.compare_snapshot_button)
         self.recovery_button = QPushButton("Recover Interrupted Plan")
         self.recovery_button.clicked.connect(self.recover_interrupted)
         self.cancel_button = QPushButton("Cancel")
@@ -681,7 +691,9 @@ class PlanExplorerPage(QWidget):
         self._set_scanning(False)
 
         if self.close_requested:
-            if outcome is not None and isinstance(outcome[0], FileSnapshot):
+            if outcome is not None and isinstance(
+                outcome[0], (FileSnapshot, SnapshotComparison)
+            ):
                 outcome[0].close()
             self.ready_to_close.emit()
             return
@@ -904,6 +916,20 @@ class PlanExplorerPage(QWidget):
         self._refresh_plan_list()
         self.status_changed.emit("Plan cleared")
 
+    def compare_saved_snapshot(self) -> None:
+        if self.snapshot is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Before Snapshot",
+            "",
+            "Snapshots (*.ftvsnapshot);;All Files (*)",
+        )
+        if path:
+            self.start_plan_io(
+                SnapshotCompareWorker(Path(path), self.snapshot), "snapshot_compare"
+            )
+
     def save_current_snapshot(self) -> None:
         if self.snapshot is None:
             return
@@ -990,7 +1016,10 @@ class PlanExplorerPage(QWidget):
 
     def start_plan_io(
         self,
-        worker: PlanLoadWorker | PlanSaveWorker | SnapshotFileWorker,
+        worker: PlanLoadWorker
+        | PlanSaveWorker
+        | SnapshotFileWorker
+        | SnapshotCompareWorker,
         kind: str,
     ) -> None:
         if (
@@ -1042,7 +1071,7 @@ class PlanExplorerPage(QWidget):
         self._set_plan_io(False)
 
         if self.close_requested:
-            if outcome and isinstance(outcome[0], FileSnapshot):
+            if outcome and isinstance(outcome[0], (FileSnapshot, SnapshotComparison)):
                 outcome[0].close()
             self.ready_to_close.emit()
             return
@@ -1058,6 +1087,15 @@ class PlanExplorerPage(QWidget):
         if cancelled:
             self.progress_label.setText("Plan file operation cancelled")
             self.status_changed.emit("Plan file operation cancelled")
+            return
+        if kind == "snapshot_compare" and isinstance(result, SnapshotComparison):
+            dialog = SnapshotComparisonDialog(result, self)
+            try:
+                dialog.exec()
+            finally:
+                dialog.deleteLater()
+                result.close()
+            self.progress_label.setText("Snapshot comparison complete")
             return
         if kind == "snapshot_load" and isinstance(result, FileSnapshot):
             self._replace_snapshot(result)
@@ -1930,6 +1968,7 @@ class PlanExplorerPage(QWidget):
                 )
             )
         )
+        self.compare_snapshot_button.setEnabled(ready)
         self.save_snapshot_button.setEnabled(ready)
         self.open_snapshot_button.setEnabled(
             not any(

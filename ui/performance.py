@@ -133,3 +133,47 @@ class SnapshotFileWorker(CancellableWorker):
             self.finished.emit(None, False, str(error))
         else:
             self.finished.emit(result, False, "")
+
+
+class SnapshotCompareWorker(CancellableWorker):
+    progress = Signal(str, int)
+    finished = Signal(object, bool, str)
+
+    def __init__(self, path: Path, snapshot: FileSnapshot) -> None:
+        super().__init__()
+        self.path = path
+        self.snapshot = snapshot
+
+    @Slot()
+    def run(self) -> None:
+        from snapshot import SnapshotCancelled
+        from snapshot_compare import compare_snapshots
+        from snapshot_store import load_snapshot
+
+        before = None
+        try:
+            before = load_snapshot(
+                self.path, cancelled=self._cancelled, progress=self.progress.emit
+            )
+            result = compare_snapshots(
+                before,
+                self.snapshot,
+                cancelled=self._cancelled,
+                progress=self.progress.emit,
+            )
+        except SnapshotCancelled:
+            self.finished.emit(None, True, "")
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            RuntimeError,
+            sqlite3.Error,
+        ) as error:
+            self.finished.emit(None, False, str(error))
+        else:
+            self.finished.emit(result, False, "")
+        finally:
+            if before is not None:
+                before.close()

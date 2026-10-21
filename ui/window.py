@@ -10,6 +10,7 @@ from PySide6.QtCore import (
     QItemSelectionModel,
     QModelIndex,
     QPersistentModelIndex,
+    QSettings,
     QSortFilterProxyModel,
     Qt,
     QThread,
@@ -63,6 +64,13 @@ from real.tree import FileTreeModel
 from ui.file_compare import FileComparisonDialog
 from ui.image_preview import ImagePreview
 from ui.plan import PlanExplorerPage
+from ui.preferences import (
+    Preferences,
+    PreferencesDialog,
+    application_settings,
+    restore_layout,
+    save_layout,
+)
 from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
 from ui.widgets import PlainLabel as QLabel
@@ -279,6 +287,7 @@ class RealExplorerPage(ExplorerPage):
         self.preview_loading = False
         self.selection_guard = False
         self.close_cancelled = False
+        self.preferences = Preferences()
         self.current_metadata = None
         self.metadata_button.clicked.connect(self.show_file_metadata)
 
@@ -581,7 +590,11 @@ class RealExplorerPage(ExplorerPage):
         self._start_preview_worker(path)
 
     def _start_preview_worker(self, path: Path) -> None:
-        worker = FilePreviewWorker(path)
+        worker = FilePreviewWorker(
+            path,
+            max_edit_bytes=self.preferences.edit_mib * 1024 * 1024,
+            preview_bytes=self.preferences.preview_kib * 1024,
+        )
         worker.finished.connect(self.receive_preview)
         thread = prepare_worker_thread(
             self, worker, on_finished=self.preview_thread_finished
@@ -1931,7 +1944,59 @@ class MainWindow(QMainWindow):
         workspace_menu.addAction("Import Real Root into Plan", self.import_real_root)
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
         self.tabs.setDocumentMode(True)
+        self.settings = application_settings()
+        self.preferences = Preferences.load(self.settings)
+        self.apply_preferences(self.preferences)
+        restore_layout(self, self.settings)
+        settings_menu = self.menuBar().addMenu("Settings")
+        settings_menu.addAction("Preferences...", self.edit_preferences)
         self.statusBar().showMessage("Ready")
+
+    def apply_preferences(self, preferences: Preferences) -> None:
+        self.preferences = preferences
+        self.real_page.preferences = preferences
+        self.real_page.show_hidden.setChecked(preferences.show_hidden)
+        self.plan_page.default_conflict_policy = preferences.conflict_policy
+        for page in (self.real_page, self.virtual_page):
+            font = page.preview.font()
+            font.setPointSize(preferences.preview_font_size)
+            page.preview.setFont(font)
+            page.preview.setLineWrapMode(
+                QPlainTextEdit.LineWrapMode.WidgetWidth
+                if preferences.wrap_preview
+                else QPlainTextEdit.LineWrapMode.NoWrap
+            )
+
+    def edit_preferences(self) -> None:
+        if self.real_page.operation_is_running or self.real_page.search_is_running:
+            self.statusBar().showMessage(
+                "Wait for Real operations or search to finish before changing preferences"
+            )
+            return
+        dialog = PreferencesDialog(
+            replace(
+                self.preferences, show_hidden=self.real_page.show_hidden.isChecked()
+            ),
+            self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.apply_preferences(dialog.preferences())
+            self.save_preferences()
+        dialog.deleteLater()
+
+    def save_preferences(self) -> None:
+        self.preferences = replace(
+            self.preferences, show_hidden=self.real_page.show_hidden.isChecked()
+        )
+        self.preferences.save(self.settings)
+        save_layout(self, self.settings)
+        self.settings.sync()
+        if self.settings.status() != QSettings.Status.NoError:
+            QMessageBox.warning(
+                self,
+                "Preferences could not be saved",
+                "Check permissions and free space for the application settings location.",
+            )
 
     def import_real_root(self) -> None:
         root = self.real_page.model.root_path
@@ -1982,6 +2047,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Waiting for snapshot task...")
             event.ignore()
             return
+        self.save_preferences()
         self.real_page.finalize_close()
         self.plan_page.finalize_close()
         event.accept()

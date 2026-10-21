@@ -11,7 +11,6 @@ from PySide6.QtCore import (
     QItemSelectionModel,
     QMimeData,
     QModelIndex,
-    QSettings,
     Qt,
     QThread,
     QTimer,
@@ -75,6 +74,7 @@ from ui.performance import (
 )
 from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
+from ui.preferences import application_settings
 from ui.snapshot_compare import SnapshotComparisonDialog
 from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
@@ -425,6 +425,7 @@ class PlanExplorerPage(QWidget):
         self.snapshot: FileSnapshot | None = None
         self.snapshot_model: SnapshotTreeModel | None = None
         self.plan = FilePlan()
+        self.default_conflict_policy = ConflictPolicy.ERROR
         self.scan_thread: QThread | None = None
         self.scan_worker: SnapshotWorker | None = None
         self.scan_outcome: tuple[object, bool, str] | None = None
@@ -473,9 +474,7 @@ class PlanExplorerPage(QWidget):
         QTimer.singleShot(0, self.check_previous_recovery)
 
     def check_previous_recovery(self) -> None:
-        root = QSettings("FileTreeViewer", "FileTreeViewer").value(
-            "recovery/last_root", ""
-        )
+        root = application_settings().value("recovery/last_root", "")
         if root and Path(str(root)).is_dir():
             self.check_recovery(Path(str(root)))
 
@@ -704,9 +703,7 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        QSettings("FileTreeViewer", "FileTreeViewer").setValue(
-            "recovery/last_root", str(root)
-        )
+        application_settings().setValue("recovery/last_root", str(root))
         worker = SnapshotWorker(root)
         worker.progress.connect(self.show_scan_progress)
         worker.finished.connect(self.receive_scan_result)
@@ -937,7 +934,10 @@ class PlanExplorerPage(QWidget):
                 )
                 continue
             try:
-                self.plan.add_move(source, target)
+                operation = self.plan.add_move(source, target)
+                self.plan.set_conflict_policy(
+                    [operation.operation_id], self.default_conflict_policy
+                )
             except ValueError as error:
                 self._show_plan_error(error)
                 continue
@@ -2067,6 +2067,9 @@ class PlanExplorerPage(QWidget):
         self.start_snapshot(result.root)
 
     def _finish_staging(self, operation: PlanOperation) -> None:
+        self.plan.set_conflict_policy(
+            [operation.operation_id], self.default_conflict_policy
+        )
         self._refresh_plan_list()
         self.status_changed.emit(f"Staged {operation.action.value}")
 

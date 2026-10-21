@@ -10,6 +10,7 @@ from enum import Enum
 from pathlib import PurePosixPath
 
 from fs_paths import checked_boundary, is_link_stat, path_collision_key
+from plan_dependencies import analyze_dependencies
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot, SnapshotEntry
 
@@ -34,6 +35,7 @@ class IssueKind(str, Enum):
 
 
 class IssueCode(str, Enum):
+    DEPENDENCY = "dependency"
     SOURCE_MISSING = "source_missing"
     SOURCE_INACCESSIBLE = "source_inaccessible"
     SOURCE_CHANGED = "source_changed"
@@ -473,6 +475,16 @@ def simulate_plan(
                 parent,
             )
 
+    dependencies = analyze_dependencies(plan)
+    operations_by_id = {op.operation_id: op for op in operations}
+    for problem in dependencies.problems:
+        for operation_id in problem.operation_ids:
+            report(
+                operations_by_id[operation_id],
+                IssueKind.INVALID,
+                IssueCode.DEPENDENCY,
+                problem.message,
+            )
     check_simulation_cancelled(cancelled)
     emit_simulation_progress(progress, "Simulation complete", total, total)
     return PlanSimulation(changes, tuple(issues))

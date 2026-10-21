@@ -48,6 +48,7 @@ from plan_apply import (
     PlanApplicationRecord,
     latest_completed_application,
 )
+from plan_dependencies import analyze_dependencies
 from plan_diff import PlanSimulation, simulate_plan
 from planning import (
     ConflictPolicy,
@@ -579,6 +580,9 @@ class PlanExplorerPage(QWidget):
         self.edit_operation_button = QPushButton("Edit")
         self.up_operation_button = QPushButton("Move Up")
         self.down_operation_button = QPushButton("Move Down")
+        self.dependency_button = QPushButton("Review Dependencies")
+        plan_buttons.addWidget(self.dependency_button)
+        self.dependency_button.clicked.connect(self.review_dependencies)
         self.policy_operation_button = QPushButton("Set Policy")
         for button in (
             self.edit_operation_button,
@@ -929,6 +933,47 @@ class PlanExplorerPage(QWidget):
         if added:
             self._refresh_plan_list()
             self.status_changed.emit(f"Staged {added} move operation(s)")
+
+    def review_dependencies(self) -> None:
+        report = analyze_dependencies(self.plan)
+        positions = {
+            op.operation_id: index + 1 for index, op in enumerate(self.plan.operations)
+        }
+        lines = [
+            "Move sources are staged first. Deletes, folders, moves, renames and files are then processed in execution groups.",
+            "",
+            "Execution order: "
+            + ", ".join(str(positions[key]) for key in report.execution_order[:500]),
+        ]
+        for edge in report.edges[:500]:
+            lines.append(
+                f"Step {positions[edge.operation_id]} requires step {positions[edge.requires_id]}: {edge.reason}"
+            )
+        for cycle in report.cycles[:100]:
+            lines.append(
+                (
+                    "Staged move cycle: "
+                    if cycle.staged
+                    else "Blocked dependency cycle: "
+                )
+                + ", ".join(str(positions[key]) for key in cycle.operation_ids)
+            )
+        lines.extend(problem.message for problem in report.problems[:100])
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Plan Dependencies and Execution Order")
+        dialog.resize(900, 600)
+        layout = QVBoxLayout(dialog)
+        from PySide6.QtWidgets import QPlainTextEdit
+
+        text = QPlainTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText("\n".join(lines))
+        layout.addWidget(text)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+        dialog.deleteLater()
 
     def selected_operation_ids(self) -> set[str]:
         selection = self.plan_list.selectionModel()
@@ -2220,6 +2265,7 @@ class PlanExplorerPage(QWidget):
             plan_selection is not None and plan_selection.selectedRows(0)
         )
         count = len(self.selected_operation_ids())
+        self.dependency_button.setEnabled(ready and bool(len(self.plan)))
         self.edit_operation_button.setEnabled(ready and count == 1)
         for button in (
             self.up_operation_button,

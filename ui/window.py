@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -62,11 +63,13 @@ from real.operations import (
 )
 from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
+from real.sorting import FileSortModel
 from real.tree import FileTreeModel
 from ui.address import AddressBar
 from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
 from ui.file_compare import FileComparisonDialog
+from ui.file_groups import FileGroupDelegate
 from ui.file_views import FolderViews
 from ui.image_preview import ImagePreview
 from ui.locations import LocationsButton, LocationStore
@@ -326,6 +329,7 @@ class RealExplorerPage(ExplorerPage):
         self.history = NavigationHistory()
         self.history_navigation = False
         self.model = FileTreeModel(self)
+        self.browse_model = FileSortModel(self.model, self)
         self.search_results = SearchResultsModel(self)
         self.search_thread: QThread | None = None
         self.search_worker: SearchWorker | None = None
@@ -355,6 +359,33 @@ class RealExplorerPage(ExplorerPage):
         self.compare_files_button.clicked.connect(self.compare_selected_files)
         self._set_tree_model(self.model)
         self._configure_tree_columns()
+        self.sort_field = QComboBox()
+        self.sort_field.addItems(("Name", "Type", "Size", "Modified"))
+        self.sort_order = QComboBox()
+        self.sort_order.addItems(("Ascending", "Descending"))
+        self.group_field = QComboBox()
+        self.group_field.addItems(("None", "Type", "Date", "Size"))
+        self.group_field.setToolTip(
+            "Group loaded items; scroll to load additional pages"
+        )
+        self.folders_first = QCheckBox("Folders first")
+        self.folders_first.setChecked(True)
+        for control in (
+            self.sort_field,
+            self.sort_order,
+            self.group_field,
+            self.folders_first,
+        ):
+            self.folder_panel.toolbar.insertWidget(
+                self.folder_panel.toolbar.count() - 1, control
+            )
+        for control in (self.sort_field, self.sort_order, self.group_field):
+            control.currentIndexChanged.connect(self.update_sorting)
+        self.folders_first.toggled.connect(self.update_sorting)
+        for view in (self.folder_view, self.folder_icons):
+            view.setItemDelegate(FileGroupDelegate(view))
+        self.folder_view.setUniformRowHeights(False)
+        self.folder_view.header().sectionClicked.connect(self.sort_by_header)
 
         self.select_root_button.setEnabled(True)
         self.show_hidden.setEnabled(True)
@@ -533,6 +564,30 @@ class RealExplorerPage(ExplorerPage):
         self.status_changed.emit(f"Locating {path.name}…")
         self.file_revealer.start(path)
 
+    def sort_by_header(self, column):
+        if self.sort_field.currentIndex() == column:
+            self.sort_order.setCurrentIndex(1 - self.sort_order.currentIndex())
+        else:
+            self.sort_field.setCurrentIndex(column)
+
+    def update_sorting(self):
+        self.browse_model.grouping = self.group_field.currentText()
+        self.browse_model.folders_first = self.folders_first.isChecked()
+        self.browse_model.invalidate()
+        order = (
+            Qt.SortOrder.DescendingOrder
+            if self.sort_order.currentIndex()
+            else Qt.SortOrder.AscendingOrder
+        )
+        self.browse_model.sort(self.sort_field.currentIndex(), order)
+        self.folder_view.header().setSortIndicator(
+            self.sort_field.currentIndex(), order
+        )
+        self.folder_view.header().setSortIndicatorShown(True)
+        self.folder_icons.setUniformItemSizes(self.group_field.currentText() == "None")
+        self.folder_view.viewport().update()
+        self.folder_icons.viewport().update()
+
     def open_folder_index(self, index):
         path = self._path_from_index(index)
         if path is None or not path.is_dir() or path.is_symlink():
@@ -545,11 +600,12 @@ class RealExplorerPage(ExplorerPage):
             self.set_root(path)
 
     def reveal_file_index(self, index):
+        index = self.browse_model.mapFromSource(index)
         self.tree.setCurrentIndex(index)
         self.tree.scrollTo(index)
         self.folder_panel.active_view.scrollTo(index)
         self.folder_panel.active_view.setFocus()
-        self.status_changed.emit(f"Selected: {self.model.path_from_index(index)}")
+        self.status_changed.emit(f"Selected: {self._path_from_index(index)}")
 
     def toggle_favorite(self, path):
         if path is None:
@@ -1425,8 +1481,9 @@ class RealExplorerPage(ExplorerPage):
         return [path for path in self.selected_paths() if root is None or path != root]
 
     def _set_tree_model(self, model: FileTreeModel | SearchResultsModel) -> None:
-        self.tree.setModel(model)
-        self.folder_panel.set_model(model, self.tree.selectionModel())
+        actual = self.browse_model if model is self.model else model
+        self.tree.setModel(actual)
+        self.folder_panel.set_model(actual, self.tree.selectionModel())
         self.folder_panel.setVisible(model is self.model)
         self.folder_view.setColumnWidth(0, 260)
         self.folder_view.setColumnWidth(1, 110)
@@ -1441,12 +1498,14 @@ class RealExplorerPage(ExplorerPage):
         self.status_changed.emit(str(error))
 
     def load_expanded_folder(self, index: QModelIndex) -> None:
-        if self.tree.model() is self.model and self.model.canFetchMore(index):
-            self.model.fetchMore(index)
+        if self.tree.model() is self.browse_model:
+            source = self.browse_model.mapToSource(index)
+            if self.model.canFetchMore(source):
+                self.model.fetchMore(source)
 
     def release_collapsed_folder(self, index: QModelIndex) -> None:
-        if self.tree.model() is self.model:
-            self.model.release_children(index)
+        if self.tree.model() is self.browse_model:
+            self.model.release_children(self.browse_model.mapToSource(index))
 
     def prepare_close(self) -> bool:
         self.close_cancelled = False
@@ -1532,9 +1591,10 @@ class RealExplorerPage(ExplorerPage):
             return
         if self.model.canFetchMore(root_index):
             self.model.fetchMore(root_index)
-        self.tree.expand(root_index)
-        if self.tree.model() is self.model:
-            self.folder_panel.set_root(root_index)
+        if self.tree.model() is self.browse_model:
+            visible = self.browse_model.mapFromSource(root_index)
+            self.tree.expand(visible)
+            self.folder_panel.set_root(visible)
 
 
 class VirtualExplorerPage(ExplorerPage):

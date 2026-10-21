@@ -103,6 +103,9 @@ class FileTreeModel(QAbstractItemModel):
         )
         self.endResetModel()
 
+    def close(self) -> None:
+        self._close_current_tree()
+
     def refresh(self) -> None:
         if self.root is not None:
             self.set_root(self.root.path)

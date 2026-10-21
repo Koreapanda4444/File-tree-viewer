@@ -196,7 +196,26 @@ class ExplorerPage(QWidget):
         empty_model.setHorizontalHeaderLabels(("Name", "Type", "Size", "Modified"))
         self.tree.setModel(empty_model)
         self.tree.header().resizeSection(0, 360)
-        splitter.addWidget(self.tree)
+        if self.virtual:
+            splitter.addWidget(self.tree)
+        else:
+            self.navigation_splitter = QSplitter(Qt.Orientation.Horizontal)
+            self.navigation_splitter.addWidget(self.tree)
+            self.folder_view = QTreeView()
+            self.folder_view.setRootIsDecorated(False)
+            self.folder_view.setItemsExpandable(False)
+            self.folder_view.setUniformRowHeights(True)
+            self.folder_view.setAlternatingRowColors(True)
+            self.folder_view.setSelectionMode(
+                QAbstractItemView.SelectionMode.ExtendedSelection
+            )
+            self.folder_view.setSelectionBehavior(
+                QAbstractItemView.SelectionBehavior.SelectRows
+            )
+            self.navigation_splitter.addWidget(self.folder_view)
+            self.navigation_splitter.setStretchFactor(0, 1)
+            self.navigation_splitter.setStretchFactor(1, 3)
+            splitter.addWidget(self.navigation_splitter)
 
         details = QWidget()
         details_layout = QVBoxLayout(details)
@@ -326,6 +345,7 @@ class RealExplorerPage(ExplorerPage):
         self.selection_guard = False
         self.close_cancelled = False
         self.preferences = Preferences()
+        self.pending_folder = None
         self.current_metadata = None
         self.metadata_button.clicked.connect(self.show_file_metadata)
 
@@ -375,6 +395,8 @@ class RealExplorerPage(ExplorerPage):
         self.reload_file_button.clicked.connect(self.reload_current_file)
         self.open_external_button.clicked.connect(self.open_current_external)
         self.preview.textChanged.connect(self.editor_text_changed)
+        self.tree.doubleClicked.connect(self.open_folder_index)
+        self.folder_view.doubleClicked.connect(self.open_folder_index)
         self.tree.expanded.connect(self.load_expanded_folder)
         self.tree.collapsed.connect(self.release_collapsed_folder)
         self.model.directory_error.connect(self.status_changed)
@@ -507,10 +529,22 @@ class RealExplorerPage(ExplorerPage):
         self.status_changed.emit(f"Locating {path.name}…")
         self.file_revealer.start(path)
 
+    def open_folder_index(self, index):
+        path = self._path_from_index(index)
+        if path is None or not path.is_dir() or path.is_symlink():
+            return
+        if self.preview_is_running:
+            self.pending_folder = path
+            self.pending_preview_path = None
+            self.preview_worker.cancel()
+        else:
+            self.set_root(path)
+
     def reveal_file_index(self, index):
         self.tree.setCurrentIndex(index)
         self.tree.scrollTo(index)
-        self.tree.setFocus()
+        self.folder_view.scrollTo(index)
+        self.folder_view.setFocus()
         self.status_changed.emit(f"Selected: {self.model.path_from_index(index)}")
 
     def toggle_favorite(self, path):
@@ -833,8 +867,12 @@ class RealExplorerPage(ExplorerPage):
         ):
             self._display_preview(result)
 
+        self.update_navigation_buttons()
         if self.close_requested:
             self._emit_ready_to_close()
+        elif self.pending_folder is not None:
+            target, self.pending_folder = self.pending_folder, None
+            self.set_root(target)
 
     def _display_preview(self, result: PreviewResult) -> None:
         self.image_preview.hide()
@@ -1003,7 +1041,7 @@ class RealExplorerPage(ExplorerPage):
         self.selection_guard = False
 
     def _path_from_index(self, index: QModelIndex) -> Path | None:
-        current_model = self.tree.model()
+        current_model = index.model()
         path_from_index = getattr(current_model, "path_from_index", None)
         if not index.isValid() or not callable(path_from_index):
             return None
@@ -1384,6 +1422,11 @@ class RealExplorerPage(ExplorerPage):
 
     def _set_tree_model(self, model: FileTreeModel | SearchResultsModel) -> None:
         self.tree.setModel(model)
+        self.folder_view.setModel(model)
+        self.folder_view.setVisible(model is self.model)
+        self.folder_view.setSelectionModel(self.tree.selectionModel())
+        self.folder_view.setColumnWidth(0, 260)
+        self.folder_view.setColumnWidth(1, 110)
         selection = self.tree.selectionModel()
         if selection is not None:
             selection.selectionChanged.connect(self.update_action_buttons)
@@ -1407,6 +1450,7 @@ class RealExplorerPage(ExplorerPage):
         if not self._confirm_editor_transition():
             self.close_cancelled = True
             return False
+        self.pending_folder = None
         self.file_revealer.stop()
         waiting = not self.path_completion.stop()
         waiting = not self.name_completion.stop() or waiting
@@ -1431,6 +1475,7 @@ class RealExplorerPage(ExplorerPage):
         self.name_completion.closed = False
 
     def finalize_close(self) -> None:
+        self.model.close()
         self.search_results.close()
 
     def _set_search_running(self, running: bool) -> None:
@@ -1446,6 +1491,7 @@ class RealExplorerPage(ExplorerPage):
 
     def _set_operation_running(self, running: bool) -> None:
         self.tree.setEnabled(not running)
+        self.folder_view.setEnabled(not running)
         self.select_root_button.setEnabled(not running)
         self.refresh_button.setEnabled(not running and self.model.root_path is not None)
         self.show_hidden.setEnabled(not running)
@@ -1484,6 +1530,8 @@ class RealExplorerPage(ExplorerPage):
         if self.model.canFetchMore(root_index):
             self.model.fetchMore(root_index)
         self.tree.expand(root_index)
+        if self.tree.model() is self.model:
+            self.folder_view.setRootIndex(root_index)
 
 
 class VirtualExplorerPage(ExplorerPage):

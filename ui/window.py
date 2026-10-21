@@ -62,6 +62,7 @@ from real.operations import (
 from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.tree import FileTreeModel
+from ui.address import AddressBar
 from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
 from ui.file_compare import FileComparisonDialog
@@ -111,7 +112,11 @@ class ExplorerPage(QWidget):
             self.location.setPlaceholderText(
                 "Enter a folder or drive path, then press Enter"
             )
-        row.addWidget(self.location, 1)
+        if self.virtual:
+            row.addWidget(self.location, 1)
+        else:
+            self.address_bar = AddressBar(self.location)
+            row.addWidget(self.address_bar, 1)
 
         self.location_buttons = []
         if self.virtual:
@@ -305,6 +310,13 @@ class RealExplorerPage(ExplorerPage):
         self.select_root_button.setEnabled(True)
         self.show_hidden.setEnabled(True)
 
+        self.address_bar.navigate.connect(self.set_root)
+        for shortcut in ("Alt+D", "Ctrl+L"):
+            action = QAction(self)
+            action.setShortcut(shortcut)
+            action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            action.triggered.connect(self.address_bar.edit_path)
+            self.addAction(action)
         self.location.returnPressed.connect(self.navigate_address)
         self.select_root_button.clicked.connect(self.choose_root)
         self.refresh_button.clicked.connect(self.refresh_root)
@@ -394,7 +406,9 @@ class RealExplorerPage(ExplorerPage):
         self.search_view_active = False
         self._set_tree_model(self.model)
         self._configure_tree_columns()
-        self.location.setText(str(self.model.root_path))
+        self.address_bar.set_path(self.model.root_path)
+        self.path_completion.stop()
+        self.path_completion.closed = False
         self.refresh_button.setEnabled(True)
         self.search_input.setEnabled(True)
         self.clear_search_button.setEnabled(bool(self.search_input.text()))

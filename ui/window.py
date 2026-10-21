@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QSortFilterProxyModel,
     Qt,
     QThread,
+    QTimer,
     QUrl,
     Signal,
 )
@@ -81,6 +82,7 @@ from ui.preferences import (
     restore_layout,
     save_layout,
 )
+from ui.quick_access import QuickAccess
 from ui.reveal import FileRevealer
 from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
@@ -324,6 +326,22 @@ class RealExplorerPage(ExplorerPage):
         super().__init__(virtual=False)
 
         self.locations = LocationStore()
+        self.quick_access = QuickAccess(self.locations)
+        self.quick_access.navigate.connect(self.set_root)
+        self.quick_access.status_changed.connect(self.status_changed)
+        self.quick_access.idle.connect(
+            lambda: self._emit_ready_to_close() if self.close_requested else None
+        )
+        self.location_changed.connect(self.quick_access.select_path)
+        self.locations_changed.connect(self.quick_access.refresh)
+        sidebar = QWidget()
+        side_layout = QVBoxLayout(sidebar)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.addWidget(self.quick_access)
+        self.tree.setParent(sidebar)
+        side_layout.addWidget(self.tree, 1)
+        self.navigation_splitter.insertWidget(0, sidebar)
+        QTimer.singleShot(0, self.quick_access.refresh)
         self.locations_button = LocationsButton(self)
         self.layout().itemAt(0).layout().addWidget(self.locations_button)
         self.history = NavigationHistory()
@@ -1516,6 +1534,7 @@ class RealExplorerPage(ExplorerPage):
         self.file_revealer.stop()
         waiting = not self.path_completion.stop()
         waiting = not self.name_completion.stop() or waiting
+        waiting = not self.quick_access.stop() or waiting
         self.close_requested = True
         if self.search_is_running:
             self.cancel_search()
@@ -1535,6 +1554,7 @@ class RealExplorerPage(ExplorerPage):
         self.close_requested = False
         self.path_completion.closed = False
         self.name_completion.closed = False
+        self.quick_access.closed = False
 
     def finalize_close(self) -> None:
         self.model.close()
@@ -1571,6 +1591,7 @@ class RealExplorerPage(ExplorerPage):
             and not self.preview_is_running
             and self.path_completion.thread is None
             and self.name_completion.thread is None
+            and self.quick_access.thread is None
         ):
             self.ready_to_close.emit()
 

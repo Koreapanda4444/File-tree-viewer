@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 import tempfile
+import time
 
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
@@ -37,7 +38,12 @@ def main() -> int:
             for index in range(window.tabs.count()):
                 window.tabs.setCurrentIndex(index)
                 app.processEvents()
-            if not window.close():
+            window.close()
+            deadline = time.monotonic() + 10
+            while window.isVisible() and time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(0.005)
+            if window.isVisible():
                 raise RuntimeError("Workspace shutdown did not complete")
             app.processEvents()
         return 0

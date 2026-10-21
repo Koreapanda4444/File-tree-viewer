@@ -58,7 +58,12 @@ from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
 from ui.diagnostics import DiagnosticDialog, DiagnosticWorker
-from ui.performance import PlanLoadWorker, PlanSaveWorker, PlanSimulationWorker
+from ui.performance import (
+    PlanLoadWorker,
+    PlanSaveWorker,
+    PlanSimulationWorker,
+    SnapshotFileWorker,
+)
 from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
 from ui.tasks import prepare_worker_thread
@@ -410,7 +415,9 @@ class PlanExplorerPage(QWidget):
         self.diagnostic_worker: DiagnosticWorker | None = None
         self.diagnostic_outcome: tuple[object, bool, str] | None = None
         self.plan_io_thread: QThread | None = None
-        self.plan_io_worker: PlanLoadWorker | PlanSaveWorker | None = None
+        self.plan_io_worker: (
+            PlanLoadWorker | PlanSaveWorker | SnapshotFileWorker | None
+        ) = None
         self.plan_io_outcome: tuple[object, bool, str] | None = None
         self.plan_io_kind = ""
         self.simulation_thread: QThread | None = None
@@ -486,6 +493,12 @@ class PlanExplorerPage(QWidget):
         self.location.setPlaceholderText("Import a real folder or drive")
         row.addWidget(self.location, 1)
         self.import_button = QPushButton("Import Snapshot")
+        self.save_snapshot_button = QPushButton("Save Snapshot")
+        self.open_snapshot_button = QPushButton("Open Snapshot")
+        self.save_snapshot_button.clicked.connect(self.save_current_snapshot)
+        self.open_snapshot_button.clicked.connect(self.open_saved_snapshot)
+        row.addWidget(self.save_snapshot_button)
+        row.addWidget(self.open_snapshot_button)
         self.recovery_button = QPushButton("Recover Interrupted Plan")
         self.recovery_button.clicked.connect(self.recover_interrupted)
         self.cancel_button = QPushButton("Cancel")
@@ -706,8 +719,12 @@ class PlanExplorerPage(QWidget):
             self.snapshot_model.fetchMore(root_index)
         self.tree.expand(root_index)
         self.plan = FilePlan(snapshot.root)
-        self.check_recovery(snapshot.root)
-        self.last_application = latest_completed_application(snapshot.root)
+        if snapshot.root.is_dir():
+            self.check_recovery(snapshot.root)
+            self.last_application = latest_completed_application(snapshot.root)
+        else:
+            self.recovery_scan = None
+            self.last_application = None
         self.location.setText(str(snapshot.root))
         self.progress_label.setText(
             f"{snapshot.entry_count:,} items, {snapshot.error_count:,} errors"
@@ -887,6 +904,32 @@ class PlanExplorerPage(QWidget):
         self._refresh_plan_list()
         self.status_changed.emit("Plan cleared")
 
+    def save_current_snapshot(self) -> None:
+        if self.snapshot is None:
+            return
+        name, accepted = QInputDialog.getText(
+            self, "Save Snapshot", "Snapshot name:", text=self.snapshot.name
+        )
+        if not accepted:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Snapshot", "snapshot.ftvsnapshot", "Snapshots (*.ftvsnapshot)"
+        )
+        if path:
+            self.start_plan_io(
+                SnapshotFileWorker(Path(path), snapshot=self.snapshot, name=name),
+                "snapshot_save",
+            )
+
+    def open_saved_snapshot(self) -> None:
+        if len(self.plan) and not self._confirm_plan_replacement():
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Snapshot", "", "Snapshots (*.ftvsnapshot);;All Files (*)"
+        )
+        if path:
+            self.start_plan_io(SnapshotFileWorker(Path(path)), "snapshot_load")
+
     def save_current_plan(self) -> None:
         if (
             self.snapshot is None
@@ -947,7 +990,7 @@ class PlanExplorerPage(QWidget):
 
     def start_plan_io(
         self,
-        worker: PlanLoadWorker | PlanSaveWorker,
+        worker: PlanLoadWorker | PlanSaveWorker | SnapshotFileWorker,
         kind: str,
     ) -> None:
         if (
@@ -999,6 +1042,8 @@ class PlanExplorerPage(QWidget):
         self._set_plan_io(False)
 
         if self.close_requested:
+            if outcome and isinstance(outcome[0], FileSnapshot):
+                outcome[0].close()
             self.ready_to_close.emit()
             return
         if outcome is None:
@@ -1013,6 +1058,14 @@ class PlanExplorerPage(QWidget):
         if cancelled:
             self.progress_label.setText("Plan file operation cancelled")
             self.status_changed.emit("Plan file operation cancelled")
+            return
+        if kind == "snapshot_load" and isinstance(result, FileSnapshot):
+            self._replace_snapshot(result)
+            self.status_changed.emit(f"Loaded Snapshot: {result.name}")
+            return
+        if kind == "snapshot_save":
+            self.status_changed.emit(f"Saved Snapshot: {result}")
+            self.progress_label.setText("Snapshot saved")
             return
         if kind == "save":
             self.progress_label.setText(f"Saved {len(self.plan):,} operations")
@@ -1877,6 +1930,20 @@ class PlanExplorerPage(QWidget):
                 )
             )
         )
+        self.save_snapshot_button.setEnabled(ready)
+        self.open_snapshot_button.setEnabled(
+            not any(
+                (
+                    self.scan_is_running,
+                    self.apply_is_running,
+                    self.undo_is_running,
+                    self.analysis_is_running,
+                    self.diagnostic_is_running,
+                    self.plan_io_is_running,
+                    self.simulation_is_running,
+                )
+            )
+        )
         entries = self._selected_entries() if ready else []
         self.new_file_button.setEnabled(ready)
         self.new_folder_button.setEnabled(ready)
@@ -1903,7 +1970,10 @@ class PlanExplorerPage(QWidget):
             self.recovery_scan and self.recovery_scan.needs_attention
         )
         self.apply_button.setEnabled(
-            ready and bool(len(self.plan)) and not recovery_needed
+            ready
+            and bool(len(self.plan))
+            and not recovery_needed
+            and bool(self.snapshot and self.snapshot.root.is_dir())
         )
         self.cancel_apply_button.setEnabled(self.apply_is_running)
         self.undo_plan_button.setEnabled(

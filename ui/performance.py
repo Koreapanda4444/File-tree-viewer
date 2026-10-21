@@ -88,3 +88,48 @@ class PlanSimulationWorker(CancellableWorker):
             self.finished.emit(None, False, str(error))
         else:
             self.finished.emit(result, False, "")
+
+
+class SnapshotFileWorker(CancellableWorker):
+    progress = Signal(str, int)
+    finished = Signal(object, bool, str)
+
+    def __init__(
+        self, path: Path, *, snapshot: FileSnapshot | None = None, name: str = ""
+    ) -> None:
+        super().__init__()
+        self.path = path
+        self.snapshot = snapshot
+        self.name = name
+
+    @Slot()
+    def run(self) -> None:
+        from snapshot import SnapshotCancelled
+        from snapshot_store import load_snapshot, save_snapshot
+
+        try:
+            if self.snapshot is None:
+                result = load_snapshot(
+                    self.path, cancelled=self._cancelled, progress=self.progress.emit
+                )
+            else:
+                result = save_snapshot(
+                    self.snapshot,
+                    self.path,
+                    name=self.name,
+                    cancelled=self._cancelled,
+                    progress=self.progress.emit,
+                )
+        except SnapshotCancelled:
+            self.finished.emit(None, True, "")
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            RuntimeError,
+            sqlite3.Error,
+        ) as error:
+            self.finished.emit(None, False, str(error))
+        else:
+            self.finished.emit(result, False, "")

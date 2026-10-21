@@ -6,6 +6,7 @@ import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from fs_paths import is_reparse_point
@@ -49,6 +50,9 @@ class FileSnapshot:
         entry_count: int,
         error_count: int,
     ) -> None:
+        self.name = root.name or str(root)
+        self.captured_at = datetime.now(timezone.utc).isoformat()
+        self.source_path: Path | None = None
         self.root = root
         self.database_path = database_path
         self.entry_count = entry_count

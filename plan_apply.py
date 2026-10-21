@@ -19,7 +19,7 @@ from fs_paths import (
     path_is_within,
     validate_windows_name,
 )
-from plan_diff import simulate_plan
+from plan_diff import simulate_plan, source_live_problem
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot
 
@@ -147,8 +147,16 @@ def apply_plan(
     record.save()
 
     try:
-        perform_plan(record, plan, cancelled=cancelled, progress=progress)
-    except (ApplicationCancelled, OSError, RuntimeError, shutil.Error) as error:
+        perform_plan(
+            record, plan, snapshot=snapshot, cancelled=cancelled, progress=progress
+        )
+    except (
+        ApplicationCancelled,
+        OSError,
+        RuntimeError,
+        shutil.Error,
+        ValueError,
+    ) as error:
         record.error = str(error)
         record.rollback_errors = rollback_mutations(record)
         record.status = (
@@ -298,6 +306,7 @@ def perform_plan(
     *,
     cancelled: threading.Event | None,
     progress: ProgressCallback | None,
+    snapshot: FileSnapshot,
 ) -> None:
     active = tuple(
         operation
@@ -317,6 +326,7 @@ def perform_plan(
         source = absolute_operation_path(record.root, operation.source)
         target = record.transaction_directory / "staging" / operation.operation_id
         emit_progress(progress, "Preparing moves", record, total, source)
+        verify_live_source(snapshot, operation.source)
         move_without_overwrite(source, target)
         staged[operation.operation_id] = target
         add_mutation(
@@ -334,6 +344,7 @@ def perform_plan(
         source = absolute_operation_path(record.root, operation.source)
         target = record.transaction_directory / "backup" / operation.operation_id
         emit_progress(progress, "Backing up deletions", record, total, source)
+        verify_live_source(snapshot, operation.source)
         move_without_overwrite(source, target)
         add_mutation(
             record,
@@ -360,6 +371,7 @@ def perform_plan(
             / f"overwrite-{operation.operation_id}"
         )
         emit_progress(progress, "Backing up overwritten items", record, total, target)
+        verify_live_source(snapshot, operation.target)
         move_without_overwrite(target, backup)
         add_mutation(
             record,
@@ -637,3 +649,14 @@ def optional_path(value: object) -> Path | None:
     if not isinstance(value, str) or not value:
         raise ValueError("Invalid recovery path")
     return Path(value).absolute()
+
+
+def verify_live_source(snapshot: FileSnapshot, path) -> None:
+    if path is None:
+        raise ValueError("Missing source path")
+    entry = snapshot.entry(path)
+    if entry is None:
+        raise FileExistsError(f"Item was added after the Snapshot: {path}")
+    problem = source_live_problem(snapshot, entry)
+    if problem:
+        raise FileExistsError(f"{path}: {problem}")

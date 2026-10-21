@@ -27,13 +27,17 @@ def create_exclusive(target: Path, *, directory: bool) -> None:
 def copy_exclusive(source: Path, target: Path) -> None:
     checked_boundary(source.parent, source)
     checked_boundary(target.parent, target, allow_leaf_link=False)
+    expected = file_signature(source)
     details = source.lstat()
     if stat.S_ISLNK(details.st_mode):
-        os.symlink(os.readlink(source), target, target_is_directory=source.is_dir())
+        link = os.readlink(source)
+        require_unchanged(source, expected)
+        os.symlink(link, target, target_is_directory=source.is_dir())
     elif stat.S_ISDIR(details.st_mode):
         target.mkdir()
         try:
             shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+            require_unchanged(source, expected)
         except BaseException:
             shutil.rmtree(target, ignore_errors=True)
             raise
@@ -42,7 +46,14 @@ def copy_exclusive(source: Path, target: Path) -> None:
         try:
             with source.open("rb") as reader, target.open("xb") as writer:
                 created = True
+                opened = os.fstat(reader.fileno())
+                if (opened.st_dev, opened.st_ino) != (
+                    expected["st_dev"],
+                    expected["st_ino"],
+                ):
+                    raise FileExistsError("Source replaced while opening")
                 shutil.copyfileobj(reader, writer, length=1_024 * 1_024)
+            require_unchanged(source, expected)
             shutil.copystat(source, target, follow_symlinks=False)
         except BaseException:
             if created:
@@ -57,8 +68,10 @@ def move_no_replace(
 ) -> None:
     checked_boundary(source.parent, source)
     checked_boundary(target.parent, target, allow_leaf_link=False)
+    expected = file_signature(source)
     if path_exists(target):
         raise FileExistsError(target)
+    require_unchanged(source, expected)
     try:
         if os.name == "nt":
             os.rename(source, target)
@@ -92,6 +105,7 @@ def move_no_replace(
         if error.errno != errno.EXDEV or not allow_cross_device:
             raise
         copy_exclusive(source, target)
+        require_unchanged(source, expected)
         try:
             if source.is_dir() and not source.is_symlink():
                 shutil.rmtree(source)
@@ -101,3 +115,39 @@ def move_no_replace(
             raise OSError(
                 f"Copy preserved at {target}; source removal failed: {removal_error}"
             ) from removal_error
+
+
+def file_signature(path: Path) -> dict[str, int]:
+    details = path.lstat()
+    return {
+        key: int(getattr(details, key))
+        for key in (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+    }
+
+
+def require_unchanged(path: Path, expected: dict[str, int]) -> None:
+    if file_signature(path) != expected:
+        raise FileExistsError(
+            f"Item changed externally; refresh before retrying: {path}"
+        )
+
+
+def operation_error(error: BaseException) -> str:
+    if isinstance(error, PermissionError) or getattr(error, "winerror", None) in {
+        5,
+        32,
+        33,
+    }:
+        return f"Access denied or file in use. Close applications using it and check permissions. {error}"
+    if isinstance(error, FileNotFoundError):
+        return f"Item is missing. Refresh the folder before retrying. {error}"
+    if isinstance(error, FileExistsError):
+        return f"A conflicting or changed item was preserved. Refresh before retrying. {error}"
+    return str(error)

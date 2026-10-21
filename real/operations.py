@@ -8,7 +8,14 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot
 from send2trash import send2trash
 
-from fs_ops import copy_exclusive, create_exclusive, move_no_replace
+from fs_ops import (
+    copy_exclusive,
+    create_exclusive,
+    file_signature,
+    move_no_replace,
+    operation_error,
+    require_unchanged,
+)
 from fs_paths import checked_boundary, normalized_path, validate_name
 
 
@@ -93,6 +100,12 @@ class FileOperationWorker(QObject):
         self.sources = normalize_sources(sources or [])
         self.destination = destination
         self.record = record
+        self._expected_sources: dict[Path, dict[str, int] | OSError] = {}
+        for source in self.sources:
+            try:
+                self._expected_sources[source] = file_signature(source)
+            except OSError as error:
+                self._expected_sources[source] = error
 
     @Slot()
     def run(self) -> None:
@@ -111,13 +124,18 @@ class FileOperationWorker(QObject):
             try:
                 change = self._perform(item)
             except (OSError, RuntimeError, shutil.Error, ValueError) as error:
-                errors.append(f"{name}: {error}")
+                errors.append(f"{name}: {operation_error(error)}")
             else:
                 changes.append(change)
 
         self.finished.emit(self.action, changes, errors)
 
     def _perform(self, item: Path | FileChange) -> FileChange:
+        if isinstance(item, Path) and item in self._expected_sources:
+            expected = self._expected_sources[item]
+            if isinstance(expected, OSError):
+                raise expected
+            require_unchanged(item, expected)
         if self.action == "copy" and isinstance(item, Path):
             return self._copy(item)
         if self.action == "move" and isinstance(item, Path):

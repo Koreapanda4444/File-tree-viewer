@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from snapshot import FileSnapshot
+from snapshot import FileSnapshot, open_snapshot_database
 
 HASH_CHUNK_SIZE = 1024 * 1024
 LONG_PATH_THRESHOLD = 260
@@ -82,9 +82,8 @@ def scan_snapshot_problems(
     if long_path_threshold <= 0:
         raise ValueError("The long path threshold must be positive")
 
-    database = sqlite3.connect(snapshot.database_path)
+    database = open_snapshot_database(snapshot.database_path)
     database.execute("PRAGMA query_only=ON")
-    database.execute("PRAGMA cache_size=-8192")
 
     def interrupt_if_cancelled() -> int:
         return int(cancelled is not None and cancelled.is_set())

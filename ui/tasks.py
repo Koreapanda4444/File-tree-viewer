@@ -31,7 +31,13 @@ class TaskRunner(QObject):
             logging.getLogger(__name__).exception("Background task failed")
             self.failed.emit(f"{type(error).__name__}: {error}")
         finally:
-            self.finished.emit()
+            snapshot = getattr(self.worker, "snapshot", None)
+            release = getattr(snapshot, "release_thread_connection", None)
+            try:
+                if callable(release):
+                    release()
+            finally:
+                self.finished.emit()
 
 
 def prepare_worker_thread(owner: QObject, worker: QObject, *, on_finished) -> QThread:

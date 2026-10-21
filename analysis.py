@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from snapshot import FileSnapshot
+from snapshot import FileSnapshot, open_snapshot_database
 
 EXTENSION_LIMIT = 200
 RANKING_LIMIT = 20
@@ -50,9 +50,8 @@ def analyze_snapshot(
     cancelled: threading.Event | None = None,
     progress: ProgressCallback | None = None,
 ) -> StructureAnalysis:
-    database = sqlite3.connect(snapshot.database_path)
+    database = open_snapshot_database(snapshot.database_path)
     database.execute("PRAGMA query_only=ON")
-    database.execute("PRAGMA cache_size=-8192")
     database.execute("PRAGMA temp_store=FILE")
     database.create_function("file_extension", 1, file_extension, deterministic=True)
 

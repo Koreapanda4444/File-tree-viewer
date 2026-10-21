@@ -54,7 +54,8 @@ class FileSnapshot:
         self.entry_count = entry_count
         self.error_count = error_count
         self._temporary_directory = temporary_directory
-        self._database: sqlite3.Connection | None = None
+        self._connections: dict[int, sqlite3.Connection] = {}
+        self._connection_lock = threading.RLock()
         self._closed = False
 
     def child_count(self, parent: PurePosixPath | str | None = None) -> int:
@@ -108,25 +109,33 @@ class FileSnapshot:
         self,
         paths,
     ) -> dict[PurePosixPath, SnapshotEntry | None]:
-        normalized = tuple(
-            dict.fromkeys(
-                normalize_plan_path(path) for path in paths if path is not None
-            )
-        )
-        results: dict[PurePosixPath, SnapshotEntry | None] = {
-            path: None for path in normalized
-        }
+        results: dict[PurePosixPath, SnapshotEntry | None] = {}
         database = self._connection()
-        for offset in range(0, len(normalized), LOOKUP_BATCH_SIZE):
-            batch = normalized[offset : offset + LOOKUP_BATCH_SIZE]
+        batch = []
+
+        def load_batch():
+            if not batch:
+                return
             placeholders = ",".join("?" for _ in batch)
-            rows = database.execute(
+            for row in database.execute(
                 entry_select() + f" WHERE entries.path IN ({placeholders})",
                 tuple(path.as_posix() for path in batch),
-            )
-            for row in rows:
+            ):
                 entry = snapshot_entry_from_row(row)
                 results[entry.path] = entry
+            batch.clear()
+
+        for path in paths:
+            if path is None:
+                continue
+            normalized = normalize_plan_path(path)
+            if normalized in results:
+                continue
+            results[normalized] = None
+            batch.append(normalized)
+            if len(batch) >= LOOKUP_BATCH_SIZE:
+                load_batch()
+        load_batch()
         return results
 
     def iter_entries(
@@ -160,26 +169,62 @@ class FileSnapshot:
             for path, message in rows
         )
 
+    def children_after(
+        self,
+        parent=None,
+        *,
+        after: SnapshotEntry | None = None,
+        limit: int = QUERY_PAGE_SIZE,
+    ) -> tuple[SnapshotEntry, ...]:
+        if limit <= 0:
+            raise ValueError("Snapshot page size must be positive")
+        if after is None:
+            return self.children(parent, limit=limit)
+        parent_key = snapshot_path_key(parent)
+        if snapshot_path_key(after.parent) != parent_key:
+            raise ValueError("Snapshot cursor belongs to a different folder")
+        database = self._connection()
+        rows = database.execute(
+            entry_select()
+            + " WHERE entries.parent = ? AND entries.is_directory = ? AND (entries.name COLLATE NOCASE, entries.name) > (?, ?) ORDER BY entries.name COLLATE NOCASE, entries.name LIMIT ?",
+            (parent_key, int(after.is_directory), after.name, after.name, limit),
+        ).fetchall()
+        if after.is_directory and len(rows) < limit:
+            rows.extend(
+                database.execute(
+                    entry_select()
+                    + " WHERE entries.parent = ? AND entries.is_directory = 0 ORDER BY entries.name COLLATE NOCASE, entries.name LIMIT ?",
+                    (parent_key, limit - len(rows)),
+                ).fetchall()
+            )
+        return tuple(snapshot_entry_from_row(row) for row in rows)
+
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        if self._database is not None:
-            self._database.close()
-            self._database = None
-        self._temporary_directory.cleanup()
+        with self._connection_lock:
+            if self._closed:
+                return
+            self._closed = True
+            for database in self._connections.values():
+                database.close()
+            self._connections.clear()
+            self._temporary_directory.cleanup()
+
+    def release_thread_connection(self) -> None:
+        with self._connection_lock:
+            database = self._connections.pop(threading.get_ident(), None)
+            if database is not None:
+                database.close()
 
     def _connection(self) -> sqlite3.Connection:
-        if self._closed:
-            raise RuntimeError("The snapshot is closed")
-        if self._database is None:
-            self._database = sqlite3.connect(
-                self.database_path,
-                check_same_thread=False,
-            )
-            self._database.execute("PRAGMA query_only=ON")
-            self._database.execute("PRAGMA cache_size=-8192")
-        return self._database
+        with self._connection_lock:
+            if self._closed:
+                raise RuntimeError("The snapshot is closed")
+            identity = threading.get_ident()
+            database = self._connections.get(identity)
+            if database is None:
+                database = open_snapshot_database(self.database_path)
+                self._connections[identity] = database
+            return database
 
 
 def build_snapshot(
@@ -316,6 +361,7 @@ def build_snapshot(
 
         flush()
         error_count = count_errors(database)
+        finalize_database(database)
         if progress is not None:
             progress(scanned, error_count)
         database.close()
@@ -352,17 +398,6 @@ def initialize_database(database: sqlite3.Connection) -> None:
         "size INTEGER NOT NULL, "
         "modified_ns INTEGER NOT NULL, "
         "identity TEXT) WITHOUT ROWID"
-    )
-    database.execute(
-        "CREATE INDEX entries_parent ON entries("
-        "parent, is_directory DESC, name COLLATE NOCASE, name)"
-    )
-    database.execute(
-        "CREATE INDEX entries_largest ON entries(is_directory, size DESC, path)"
-    )
-    database.execute(
-        "CREATE INDEX entries_duplicates ON entries("
-        "is_directory, is_symlink, size, path)"
     )
     database.execute(
         "CREATE TABLE errors ("
@@ -407,3 +442,31 @@ def snapshot_entry_from_row(row: tuple[object, ...]) -> SnapshotEntry:
         identity=str(identity) if identity is not None else None,
         error=str(error) if error is not None else None,
     )
+
+
+def finalize_database(database: sqlite3.Connection) -> None:
+    database.execute(
+        "CREATE INDEX entries_parent ON entries("
+        "parent, is_directory DESC, name COLLATE NOCASE, name)"
+    )
+    database.execute(
+        "CREATE INDEX entries_largest ON entries(is_directory, size DESC, path)"
+    )
+    database.execute(
+        "CREATE INDEX entries_duplicates ON entries("
+        "is_directory, is_symlink, size, path)"
+    )
+    database.execute("ANALYZE")
+    database.commit()
+
+
+def open_snapshot_database(path: Path) -> sqlite3.Connection:
+    database = sqlite3.connect(
+        path.resolve().as_uri() + "?mode=ro&immutable=1",
+        uri=True,
+        check_same_thread=False,
+    )
+    database.execute("PRAGMA query_only=ON")
+    database.execute("PRAGMA cache_size=-2048")
+    database.execute("PRAGMA temp_store=FILE")
+    return database

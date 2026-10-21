@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from plan_apply import PlanApplicationRecord, apply_plan, undo_application
 from planning import FilePlan
 from snapshot import FileSnapshot
+from ui.tasks import CancellableWorker
 
 
-class PlanApplyWorker(QObject):
+class PlanApplyWorker(CancellableWorker):
     progress = Signal(str, int, int, str)
     finished = Signal(object, str)
 
@@ -18,10 +18,6 @@ class PlanApplyWorker(QObject):
         super().__init__()
         self.snapshot = snapshot
         self.plan = plan
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancelled.set()
 
     @Slot()
     def run(self) -> None:

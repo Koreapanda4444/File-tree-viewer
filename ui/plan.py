@@ -61,6 +61,7 @@ from ui.diagnostics import DiagnosticDialog, DiagnosticWorker
 from ui.performance import PlanLoadWorker, PlanSaveWorker, PlanSimulationWorker
 from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
+from ui.tasks import prepare_worker_thread
 from ui.workers import SnapshotWorker
 
 INVALID_INDEX = QModelIndex()
@@ -619,19 +620,15 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        thread = QThread(self)
         QSettings("FileTreeViewer", "FileTreeViewer").setValue(
             "recovery/last_root", str(root)
         )
         worker = SnapshotWorker(root)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.progress.connect(self.show_scan_progress)
         worker.finished.connect(self.receive_scan_result)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.scan_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.scan_thread_finished
+        )
         self.scan_thread = thread
         self.scan_worker = worker
         self.scan_outcome = None
@@ -954,15 +951,11 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        thread = QThread(self)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.progress.connect(self.show_plan_io_progress)
         worker.finished.connect(self.receive_plan_io_result)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.plan_io_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.plan_io_thread_finished
+        )
         self.plan_io_thread = thread
         self.plan_io_worker = worker
         self.plan_io_outcome = None
@@ -1054,16 +1047,12 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        thread = QThread(self)
         worker = StructureAnalysisWorker(self.snapshot)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.progress.connect(self.show_analysis_progress)
         worker.finished.connect(self.receive_analysis_result)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.analysis_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.analysis_thread_finished
+        )
         self.analysis_thread = thread
         self.analysis_worker = worker
         self.analysis_outcome = None
@@ -1137,16 +1126,12 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        thread = QThread(self)
         worker = DiagnosticWorker(self.snapshot)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.progress.connect(self.show_diagnostic_progress)
         worker.finished.connect(self.receive_diagnostic_result)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.diagnostic_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.diagnostic_thread_finished
+        )
         self.diagnostic_thread = thread
         self.diagnostic_worker = worker
         self.diagnostic_outcome = None
@@ -1252,16 +1237,12 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        thread = QThread(self)
         worker = PlanSimulationWorker(self.snapshot, self.plan)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.progress.connect(self.show_simulation_progress)
         worker.finished.connect(self.receive_simulation_result)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.simulation_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.simulation_thread_finished
+        )
         self.simulation_thread = thread
         self.simulation_worker = worker
         self.simulation_outcome = None
@@ -1442,16 +1423,12 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        thread = QThread(self)
         worker = PlanApplyWorker(self.snapshot, self.plan)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.progress.connect(self.show_apply_progress)
         worker.finished.connect(self.receive_apply_result)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.apply_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.apply_thread_finished
+        )
         self.apply_thread = thread
         self.apply_worker = worker
         self.apply_outcome = None
@@ -1624,7 +1601,6 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        thread = QThread(self)
         if recovery_root is None and record is None:
             return
         worker = (
@@ -1632,14 +1608,11 @@ class PlanExplorerPage(QWidget):
             if recovery_root is not None
             else PlanUndoWorker(record)
         )
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.progress.connect(self.show_apply_progress)
         worker.finished.connect(self.receive_undo_result)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.undo_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.undo_thread_finished
+        )
         self.undo_thread = thread
         self.undo_worker = worker
         self.undo_outcome = None

@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import Signal, Slot
 
 from persistence import PersistenceCancelled, load_plan, save_plan
 from plan_diff import SimulationCancelled, simulate_plan
 from planning import FilePlan
 from snapshot import FileSnapshot
+from ui.tasks import CancellableWorker
 
 
-class PlanLoadWorker(QObject):
+class PlanLoadWorker(CancellableWorker):
     progress = Signal(str, int)
     finished = Signal(object, bool, str)
 
@@ -20,10 +20,6 @@ class PlanLoadWorker(QObject):
         super().__init__()
         self.path = path
         self.root = root
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancelled.set()
 
     @Slot()
     def run(self) -> None:
@@ -42,7 +38,7 @@ class PlanLoadWorker(QObject):
             self.finished.emit(result, False, "")
 
 
-class PlanSaveWorker(QObject):
+class PlanSaveWorker(CancellableWorker):
     progress = Signal(str, int)
     finished = Signal(object, bool, str)
 
@@ -50,10 +46,6 @@ class PlanSaveWorker(QObject):
         super().__init__()
         self.path = path
         self.plan = plan
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancelled.set()
 
     @Slot()
     def run(self) -> None:
@@ -72,7 +64,7 @@ class PlanSaveWorker(QObject):
             self.finished.emit(self.path, False, "")
 
 
-class PlanSimulationWorker(QObject):
+class PlanSimulationWorker(CancellableWorker):
     progress = Signal(str, int, int)
     finished = Signal(object, bool, str)
 
@@ -80,10 +72,6 @@ class PlanSimulationWorker(QObject):
         super().__init__()
         self.snapshot = snapshot
         self.plan = plan
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancelled.set()
 
     @Slot()
     def run(self) -> None:

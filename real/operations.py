@@ -23,6 +23,9 @@ class FileOperationWorker(QObject):
         super().__init__()
         self.task = FileOperationTask(action, **kwargs)
 
+    def cancel(self) -> None:
+        self.task.cancel()
+
     @Slot()
     def run(self) -> None:
         changes, errors = self.task.run(progress=self.progress.emit)

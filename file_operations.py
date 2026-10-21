@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,6 +94,7 @@ class FileOperationTask:
         destination: Path | None = None,
         record: OperationRecord | None = None,
     ) -> None:
+        self._cancelled = threading.Event()
         self.action = action
         self.sources = normalize_sources(sources or [])
         self.destination = destination
@@ -103,6 +105,9 @@ class FileOperationTask:
                 self._expected_sources[source] = file_signature(source)
             except OSError as error:
                 self._expected_sources[source] = error
+
+    def cancel(self) -> None:
+        self._cancelled.set()
 
     def run(self, *, progress=None) -> tuple[list[FileChange], list[str]]:
         changes: list[FileChange] = []
@@ -115,6 +120,9 @@ class FileOperationTask:
 
         total = len(items)
         for position, item in enumerate(items, start=1):
+            if self._cancelled.is_set():
+                errors.append("Operation cancelled; completed changes can be undone")
+                break
             name = self._item_name(item)
             if progress is not None:
                 progress(self.action, position, total, name)

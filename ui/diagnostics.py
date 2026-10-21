@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 
-from PySide6.QtCore import QObject, Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -26,19 +25,16 @@ from diagnostics import (
 )
 from snapshot import FileSnapshot
 from ui.analysis import format_size
+from ui.tasks import CancellableWorker
 
 
-class DiagnosticWorker(QObject):
+class DiagnosticWorker(CancellableWorker):
     progress = Signal(str)
     finished = Signal(object, bool, str)
 
     def __init__(self, snapshot: FileSnapshot) -> None:
         super().__init__()
         self.snapshot = snapshot
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancelled.set()
 
     @Slot()
     def run(self) -> None:

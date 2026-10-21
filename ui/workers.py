@@ -1,25 +1,21 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import Signal, Slot
 
 from snapshot import SnapshotCancelled, build_snapshot
+from ui.tasks import CancellableWorker
 
 
-class SnapshotWorker(QObject):
+class SnapshotWorker(CancellableWorker):
     progress = Signal(int, int)
     finished = Signal(object, bool, str)
 
     def __init__(self, root: Path) -> None:
         super().__init__()
         self.root = root
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancelled.set()
 
     @Slot()
     def run(self) -> None:

@@ -48,6 +48,7 @@ from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.tree import FileTreeModel
 from ui.plan import PlanExplorerPage
+from ui.tasks import prepare_worker_thread
 from virtual.workspace import (
     VirtualNode,
     VirtualTaskWorker,
@@ -388,18 +389,14 @@ class RealExplorerPage(ExplorerPage):
         self.tree.expand(self.search_results.index(0, 0))
         self.tree.expand(self.search_results.index(1, 0))
 
-        thread = QThread(self)
         worker = SearchWorker(root, query, self.show_hidden.isChecked())
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.batch_found.connect(self.receive_search_batch)
         worker.progress.connect(self.show_search_progress)
         worker.failed.connect(self.show_search_error)
         worker.finished.connect(self.finish_search)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.search_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.search_thread_finished
+        )
 
         self.search_thread = thread
         self.search_worker = worker
@@ -545,15 +542,11 @@ class RealExplorerPage(ExplorerPage):
         self._start_preview_worker(path)
 
     def _start_preview_worker(self, path: Path) -> None:
-        thread = QThread(self)
         worker = FilePreviewWorker(path)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.finished.connect(self.receive_preview)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.preview_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.preview_thread_finished
+        )
 
         self.preview_thread = thread
         self.preview_worker = worker
@@ -940,21 +933,17 @@ class RealExplorerPage(ExplorerPage):
         destination: Path | None = None,
         record: OperationRecord | None = None,
     ) -> None:
-        thread = QThread(self)
         worker = FileOperationWorker(
             action,
             sources=sources,
             destination=destination,
             record=record,
         )
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.progress.connect(self.show_operation_progress)
         worker.finished.connect(self.finish_file_operation)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.operation_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.operation_thread_finished
+        )
 
         self.operation_thread = thread
         self.operation_worker = worker
@@ -1097,6 +1086,8 @@ class RealExplorerPage(ExplorerPage):
             self.cancel_search()
             waiting = True
         if self.operation_is_running:
+            if self.operation_worker is not None:
+                self.operation_worker.cancel()
             waiting = True
         if self.preview_is_running:
             self.pending_preview_path = None
@@ -1658,15 +1649,11 @@ class VirtualExplorerPage(ExplorerPage):
         path: Path,
         data: dict | VirtualNode | None = None,
     ) -> None:
-        thread = QThread(self)
         worker = VirtualTaskWorker(action, path, data)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.finished.connect(self.receive_task_result)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self.task_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = prepare_worker_thread(
+            self, worker, on_finished=self.task_thread_finished
+        )
         self.task_thread = thread
         self.task_worker = worker
         self.task_outcome = None

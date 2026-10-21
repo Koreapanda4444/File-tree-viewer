@@ -21,6 +21,7 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import QFileIconProvider
 
 from fs_paths import is_hidden, is_reparse_point
+from ui.tasks import CancellableWorker
 
 RESULT_BATCH_SIZE = 1_024
 PROGRESS_INTERVAL = 2_048
@@ -39,7 +40,7 @@ class SearchResult:
     is_directory: bool
 
 
-class SearchWorker(QObject):
+class SearchWorker(CancellableWorker):
     batch_found = Signal(object)
     progress = Signal(int, int)
     failed = Signal(str)
@@ -50,11 +51,7 @@ class SearchWorker(QObject):
         self.root = root
         self.query = query.casefold()
         self.show_hidden = show_hidden
-        self._cancelled = threading.Event()
         self._pending_batches = threading.Semaphore(MAX_PENDING_BATCHES)
-
-    def cancel(self) -> None:
-        self._cancelled.set()
 
     def batch_processed(self) -> None:
         self._pending_batches.release()

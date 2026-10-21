@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from dataclasses import replace
@@ -18,7 +19,10 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -31,12 +35,15 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
+from file_metadata import format_timestamp, inspect_file_metadata
 from fs_ops import file_signature
 from real.operations import (
     FileChange,
@@ -154,12 +161,24 @@ class ExplorerPage(QWidget):
         details_group = QGroupBox("Details")
         details_form = QFormLayout(details_group)
         self.detail_values = {}
-        for label in ("Name", "Path", "Type", "Size", "Modified"):
+        for label in (
+            "Name",
+            "Path",
+            "Type",
+            "Size",
+            "Modified",
+            "Permissions",
+            "Link target",
+        ):
             value = QLabel("-")
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             value.setWordWrap(label == "Path")
             self.detail_values[label.lower()] = value
             details_form.addRow(f"{label}:", value)
+        self.metadata_button = QPushButton("Inspect Metadata")
+        self.metadata_button.setEnabled(False)
+        self.metadata_button.setVisible(not self.virtual)
+        details_form.addRow(self.metadata_button)
         details_layout.addWidget(details_group)
 
         preview_group = QGroupBox("Preview")
@@ -251,6 +270,8 @@ class RealExplorerPage(ExplorerPage):
         self.preview_loading = False
         self.selection_guard = False
         self.close_cancelled = False
+        self.current_metadata = None
+        self.metadata_button.clicked.connect(self.show_file_metadata)
 
         self.compare_files_button = QPushButton("Compare Files")
         self.compare_files_button.clicked.connect(self.compare_selected_files)
@@ -766,37 +787,63 @@ class RealExplorerPage(ExplorerPage):
 
     def _update_details(self, path: Path) -> None:
         try:
-            details = path.stat(follow_symlinks=False)
+            metadata = inspect_file_metadata(path)
         except OSError:
-            size = "-"
-            modified = "-"
-        else:
-            size = "-" if path.is_dir() else self._format_size(details.st_size)
-            modified = time.strftime(
-                "%Y-%m-%d %H:%M:%S",
-                time.localtime(details.st_mtime),
-            )
-
-        if path.is_symlink():
-            file_type = "Symbolic Link"
-        elif path.is_dir():
-            file_type = "Folder"
-        elif path.suffix:
-            file_type = f"{path.suffix[1:].upper()} File"
-        else:
-            file_type = "File"
-
+            self._clear_details()
+            return
+        self.current_metadata = metadata
+        self.metadata_button.setEnabled(True)
         values = {
-            "name": path.name or str(path),
-            "path": str(path),
-            "type": file_type,
-            "size": size,
-            "modified": modified,
+            "name": metadata.name,
+            "path": metadata.path,
+            "type": metadata.kind,
+            "size": "—"
+            if metadata.kind == "Folder"
+            else self._format_size(metadata.size),
+            "modified": format_timestamp(metadata.modified_ns),
+            "permissions": metadata.permissions,
+            "link target": metadata.link_target or "—",
         }
         for name, value in values.items():
             self.detail_values[name].setText(value)
 
+    def show_file_metadata(self) -> None:
+        if self.current_metadata is None:
+            return
+        try:
+            metadata = inspect_file_metadata(self.current_metadata.path)
+        except OSError as error:
+            self._show_operation_error("Cannot inspect metadata", error)
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("File Metadata")
+        dialog.resize(900, 650)
+        layout = QVBoxLayout(dialog)
+        values = metadata.display_values()
+        table = QTableWidget(len(values), 2)
+        table.setHorizontalHeaderLabels(("Property", "Value"))
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setColumnWidth(0, 250)
+        table.horizontalHeader().setStretchLastSection(True)
+        for row, (key, value) in enumerate(values.items()):
+            table.setItem(row, 0, QTableWidgetItem(key))
+            table.setItem(row, 1, QTableWidgetItem(value))
+        layout.addWidget(table)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        copy = buttons.addButton("Copy JSON", QDialogButtonBox.ButtonRole.ActionRole)
+        copy.clicked.connect(
+            lambda: QApplication.clipboard().setText(
+                json.dumps(metadata.as_dict(), ensure_ascii=False, indent=2)
+            )
+        )
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+        dialog.deleteLater()
+
     def _clear_details(self) -> None:
+        self.current_metadata = None
+        self.metadata_button.setEnabled(False)
         for value in self.detail_values.values():
             value.setText("-")
 

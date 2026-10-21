@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 )
 
 from fs_paths import is_hidden, is_reparse_point
+from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
 from ui.tasks import CancellableWorker
 
@@ -175,6 +176,7 @@ class SearchWorker(CancellableWorker):
 
 
 class SearchResultsModel(QAbstractItemModel):
+    drag_error = Signal(str)
     headers = ("Name", "Path", "Type")
     category_names = ("Folders", "Files")
 
@@ -342,7 +344,20 @@ class SearchResultsModel(QAbstractItemModel):
             return Qt.ItemFlag.NoItemFlags
         if index.internalId() < RESULT_INDEX_BASE:
             return Qt.ItemFlag.ItemIsEnabled
-        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        return (
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsDragEnabled
+        )
+
+    def mimeTypes(self):
+        return ["text/uri-list"]
+
+    def supportedDragActions(self):
+        return Qt.DropAction.CopyAction | Qt.DropAction.MoveAction
+
+    def mimeData(self, indexes):
+        return model_file_mime(self, indexes, on_error=self.drag_error.emit)
 
     def path_from_index(self, index: QModelIndex) -> Path | None:
         if not index.isValid() or index.internalId() < RESULT_INDEX_BASE:

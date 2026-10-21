@@ -79,3 +79,21 @@ def read_file_mime(data):
         )
     )
     return paths, cut, payload
+
+
+def model_file_mime(model, indexes, *, excluded=None, on_error=None):
+    paths = []
+    seen = set()
+    for index in indexes:
+        if index.column() != 0:
+            continue
+        path = model.path_from_index(index)
+        if path is not None and path != excluded and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    try:
+        return file_mime(paths)
+    except (OSError, ValueError) as error:
+        if on_error is not None:
+            on_error(str(error))
+        return QMimeData()

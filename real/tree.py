@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 )
 
 from fs_paths import is_hidden, is_reparse_point
+from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
 
 PAGE_SIZE = 256
@@ -349,7 +350,21 @@ class FileTreeModel(QAbstractItemModel):
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
-        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        if self.node_from_index(index) is not self.root:
+            flags |= Qt.ItemFlag.ItemIsDragEnabled
+        return flags
+
+    def mimeTypes(self):
+        return ["text/uri-list"]
+
+    def supportedDragActions(self):
+        return Qt.DropAction.CopyAction | Qt.DropAction.MoveAction
+
+    def mimeData(self, indexes):
+        return model_file_mime(
+            self, indexes, excluded=self.root_path, on_error=self.directory_error.emit
+        )
 
     def _close_current_tree(self) -> None:
         if self.root is not None:

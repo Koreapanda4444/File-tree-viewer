@@ -71,6 +71,7 @@ from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
 from ui.file_commands import FileCommands
 from ui.file_compare import FileComparisonDialog
+from ui.file_drop import FileDropController
 from ui.file_groups import FileGroupDelegate
 from ui.file_views import FolderViews
 from ui.image_preview import ImagePreview
@@ -456,6 +457,7 @@ class RealExplorerPage(ExplorerPage):
         self.tree.expanded.connect(self.load_expanded_folder)
         self.tree.collapsed.connect(self.release_collapsed_folder)
         self.model.directory_error.connect(self.status_changed)
+        self.search_results.drag_error.connect(self.status_changed)
         self.path_completion = PathCompletion(
             self.location,
             lambda: self.model.root_path or Path.home(),
@@ -487,6 +489,7 @@ class RealExplorerPage(ExplorerPage):
         self.navigation_tabs = FolderTabs(self)
         self.layout().insertWidget(0, self.navigation_tabs)
         self.file_commands = FileCommands(self)
+        self.file_drop = FileDropController(self, self.file_commands)
 
     @property
     def search_is_running(self) -> bool:

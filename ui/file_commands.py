@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QModelIndex, QObject, Qt
+from PySide6.QtCore import QModelIndex, QObject, Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu
 
@@ -15,12 +15,31 @@ class FileCommands(QObject):
         self.page = page
         self.pending_cut_token = None
         self.actions = {}
+        self.has_files = False
+        self.selection_timer = QTimer(self)
+        self.selection_timer.setInterval(5)
+        self.selection_timer.timeout.connect(self.continue_select_all)
+        page.model.modelAboutToBeReset.connect(self.stop)
         for name, shortcut, callback in (
             ("Copy", "Ctrl+C", lambda: self.copy(False)),
             ("Cut", "Ctrl+X", lambda: self.copy(True)),
             ("Paste", "Ctrl+V", self.paste),
         ):
             self.bind(name, shortcut, callback)
+        for name, shortcut, callback in (
+            ("Rename", "F2", lambda: page.rename_selected()),
+            ("Delete", "Delete", lambda: page.delete_selected()),
+            ("Select All", "Ctrl+A", self.select_all),
+            ("Search", "Ctrl+F", self.focus_search),
+            ("Refresh", "F5", lambda: page.refresh_root()),
+            ("Undo", "Ctrl+Z", lambda: page.undo_last_operation()),
+            ("Open", "Return", self.open_selected),
+        ):
+            self.bind(
+                name,
+                shortcut,
+                lambda checked=False, command=callback: self.dispatch(command),
+            )
         QApplication.clipboard().dataChanged.connect(self.clipboard_changed)
         page.transfer_completed.connect(self.completed)
         self.clipboard_changed()
@@ -127,7 +146,8 @@ class FileCommands(QObject):
         )
         for view in self.views:
             view.viewport().update()
-        self.actions["Paste"].setEnabled(bool(paths))
+        self.has_files = bool(paths)
+        self.update_actions()
 
     def open_selected(self):
         paths = self.page.selected_paths()
@@ -212,3 +232,69 @@ class FileCommands(QObject):
         add("New Folder", page.create_new_folder, ready)
         add("Refresh", page.refresh_root, ready)
         return menu
+
+    def dispatch(self, callback):
+        if (
+            not self.page.operation_is_running
+            and not self.page.search_is_running
+            and not self.page.close_requested
+        ):
+            callback()
+
+    def update_actions(self):
+        page = self.page
+        ready = (
+            not page.operation_is_running
+            and not page.search_is_running
+            and not page.close_requested
+        )
+        selected = page._operable_selected_paths()
+        states = {
+            "Copy": ready and bool(selected),
+            "Cut": ready and bool(selected),
+            "Paste": ready and page.model.root_path is not None and self.has_files,
+            "Rename": ready and len(selected) == 1,
+            "Delete": ready and bool(selected),
+            "Select All": ready and page.model.root_path is not None,
+            "Search": ready and page.model.root_path is not None,
+            "Refresh": ready and page.model.root_path is not None,
+            "Undo": ready and bool(page.undo_stack),
+            "Open": ready and len(page.selected_paths()) == 1,
+        }
+        for name, enabled in states.items():
+            self.actions[name].setEnabled(enabled)
+
+    def focus_search(self):
+        self.page.search_input.setFocus()
+        self.page.search_input.selectAll()
+
+    def select_all(self):
+        if not self.page._confirm_editor_transition():
+            return
+        if self.page.search_view_active:
+            self.page.tree.selectAll()
+            return
+        if self.page.model.root_path is not None:
+            self.page.status_changed.emit(
+                "Loading the current folder before selecting all items…"
+            )
+            self.selection_timer.start()
+
+    def continue_select_all(self):
+        page = self.page
+        if page.close_requested or page.operation_is_running or page.search_view_active:
+            self.stop()
+            return
+        root = page.model.index(0, 0)
+        node = page.model.node_from_index(root)
+        if node is None:
+            self.stop()
+        elif page.model.canFetchMore(root):
+            page.model.fetchMore(root)
+        elif not node.fetch_pending:
+            self.stop()
+            page.folder_panel.active_view.selectAll()
+            page.status_changed.emit(f"Selected {len(page.selected_paths()):,} item(s)")
+
+    def stop(self):
+        self.selection_timer.stop()

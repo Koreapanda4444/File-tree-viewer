@@ -1254,6 +1254,8 @@ class RealExplorerPage(ExplorerPage):
         self.move_button.setEnabled(bool(selected) and not blocked)
         self.delete_button.setEnabled(bool(selected) and not blocked)
         self.undo_button.setEnabled(bool(self.undo_stack) and not blocked)
+        if hasattr(self, "file_commands"):
+            self.file_commands.update_actions()
 
     def compare_selected_files(self) -> None:
         if not self._confirm_editor_transition():
@@ -1546,6 +1548,7 @@ class RealExplorerPage(ExplorerPage):
             self.close_cancelled = True
             return False
         self.pending_folder = None
+        self.file_commands.stop()
         self.file_revealer.stop()
         waiting = not self.path_completion.stop()
         waiting = not self.name_completion.stop() or waiting

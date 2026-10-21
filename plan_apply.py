@@ -6,19 +6,26 @@ import os
 import shutil
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
-from fs_ops import create_exclusive, move_no_replace, path_exists, transaction_lock
+from fs_ops import (
+    create_exclusive,
+    file_signature,
+    move_no_replace,
+    path_exists,
+    transaction_lock,
+)
 from fs_paths import (
     checked_boundary,
     normalized_path,
     path_is_within,
     validate_windows_name,
 )
+from journal import append_event, atomic_json, read_events
 from plan_diff import SimulationCancelled, simulate_plan, source_live_problem
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot
@@ -56,9 +63,17 @@ class AppliedMutation:
     operation_id: str
     source: Path | None = None
     target: Path | None = None
+    before_signature: dict[str, int] | None = None
+    after_signature: dict[str, int] | None = None
 
-    def as_dict(self) -> dict[str, str | None]:
+    @property
+    def key(self) -> str:
+        return f"{self.operation_id}:{self.kind.value}"
+
+    def as_dict(self) -> dict[str, object]:
         return {
+            "before_signature": self.before_signature,
+            "after_signature": self.after_signature,
             "kind": self.kind.value,
             "operation_id": self.operation_id,
             "source": str(self.source) if self.source is not None else None,
@@ -80,12 +95,17 @@ class PlanApplicationRecord:
     completed_operation_ids: list[str] = field(default_factory=list)
     skipped_operation_ids: list[str] = field(default_factory=list)
     mutations: list[AppliedMutation] = field(default_factory=list)
+    pending_mutations: list[AppliedMutation] = field(default_factory=list)
+    reversed_mutation_ids: set[str] = field(default_factory=set)
+    log_sequence: int = 0
+    log_valid_bytes: int = 0
+    log_truncated: bool = False
     error: str = ""
     rollback_errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "version": 2,
+            "version": 3,
             "transaction_id": self.transaction_id,
             "root": str(self.root),
             "transaction_directory": str(self.transaction_directory),
@@ -102,12 +122,8 @@ class PlanApplicationRecord:
         }
 
     def save(self) -> None:
-        temporary = self.journal_path.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(self.as_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        os.replace(temporary, self.journal_path)
+        checked_boundary(self.root, self.journal_path, allow_leaf_link=False)
+        atomic_json(self.journal_path, self.as_dict())
 
 
 def apply_plan(
@@ -177,6 +193,10 @@ def _apply_locked(snapshot, plan, *, cancelled, progress) -> PlanApplicationReco
     ) as error:
         record.error = str(error)
         record.rollback_errors = rollback_mutations(record)
+        if record.pending_mutations:
+            record.rollback_errors.append(
+                "An unconfirmed filesystem change requires recovery review"
+            )
         record.status = (
             ApplicationStatus.ROLLBACK_FAILED
             if record.rollback_errors
@@ -226,7 +246,7 @@ def _undo_locked(record, *, progress) -> PlanApplicationRecord:
         if progress is not None:
             progress("Undoing Plan", completed, total, path.name)
         try:
-            reverse_mutation(mutation)
+            reverse_recorded_mutation(record, mutation)
         except (OSError, RuntimeError, shutil.Error, ValueError) as error:
             errors.append(f"{mutation.operation_id}: {error}")
 
@@ -282,7 +302,7 @@ def latest_completed_application(
 def load_application_record(journal_path: Path | str) -> PlanApplicationRecord:
     path = Path(journal_path).expanduser().absolute()
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("version") not in {1, 2}:
+    if not isinstance(data, dict) or data.get("version") not in {1, 2, 3}:
         raise ValueError("Unsupported recovery record version")
     transaction_id = required_text(data, "transaction_id")
     transaction_directory = Path(
@@ -307,32 +327,95 @@ def load_application_record(journal_path: Path | str) -> PlanApplicationRecord:
         error=optional_text(data.get("error")) or "",
         rollback_errors=text_list(data, "rollback_errors"),
     )
-    record.mutations = load_mutations(mutation_log_path)
+    load_record_events(record)
     validate_application_record(record)
     return record
 
 
+def mutation_from_dict(data: dict) -> AppliedMutation:
+    if not isinstance(data, dict):
+        raise TypeError("Invalid recovery mutation")
+
+    def signature(key):
+        value = data.get(key)
+        if value is not None and (
+            not isinstance(value, dict)
+            or not all(isinstance(k, str) and type(v) is int for k, v in value.items())
+        ):
+            raise ValueError("Invalid recovery signature")
+        return value
+
+    return AppliedMutation(
+        MutationKind(required_text(data, "kind")),
+        required_text(data, "operation_id"),
+        optional_path(data.get("source")),
+        optional_path(data.get("target")),
+        signature("before_signature"),
+        signature("after_signature"),
+    )
+
+
+def load_record_events(record: PlanApplicationRecord) -> None:
+    events, record.log_valid_bytes, record.log_truncated = read_events(
+        record.mutation_log_path
+    )
+    record.log_sequence = len(events)
+    pending = {}
+    applied = {}
+    for data in events:
+        if "event" not in data:
+            mutation = mutation_from_dict(data)
+            if mutation.key in applied:
+                raise ValueError("Duplicate legacy mutation")
+            applied[mutation.key] = mutation
+            continue
+        record.log_sequence = data["sequence"]
+        mutation = mutation_from_dict(data["mutation"])
+        event = data["event"]
+        if event == "intent":
+            if mutation.key in pending or mutation.key in applied:
+                raise ValueError("Duplicate recovery intent")
+            pending[mutation.key] = mutation
+        elif event == "applied":
+            intent = pending.pop(mutation.key, None)
+            if intent is None or (
+                intent.kind,
+                intent.source,
+                intent.target,
+                intent.before_signature,
+            ) != (
+                mutation.kind,
+                mutation.source,
+                mutation.target,
+                mutation.before_signature,
+            ):
+                raise ValueError("Recovery completion has no matching intent")
+            applied[mutation.key] = mutation
+        elif event == "aborted":
+            if pending.pop(mutation.key, None) is None:
+                raise ValueError("Recovery abort has no matching intent")
+        elif event == "reversed":
+            if (
+                mutation.key not in applied
+                or mutation.key in record.reversed_mutation_ids
+            ):
+                raise ValueError("Invalid recovery reversal")
+            record.reversed_mutation_ids.add(mutation.key)
+        else:
+            raise ValueError("Unknown recovery event")
+    record.mutations = list(applied.values())
+    record.pending_mutations = list(pending.values())
+
+
 def load_mutations(path: Path) -> list[AppliedMutation]:
-    mutations: list[AppliedMutation] = []
-    with path.open("r", encoding="utf-8") as stream:
-        for line_number, line in enumerate(stream, 1):
-            if not line.strip():
-                continue
-            try:
-                data = json.loads(line)
-                operation_id = required_text(data, "operation_id")
-                mutation = AppliedMutation(
-                    MutationKind(required_text(data, "kind")),
-                    operation_id,
-                    optional_path(data.get("source")),
-                    optional_path(data.get("target")),
-                )
-            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
-                raise ValueError(
-                    f"Invalid recovery mutation on line {line_number}"
-                ) from error
-            mutations.append(mutation)
-    return mutations
+    events, _, truncated = read_events(path)
+    if truncated:
+        raise ValueError("Incomplete mutation log")
+    return [
+        mutation_from_dict(data.get("mutation", data))
+        for data in events
+        if data.get("event") in {None, "applied"}
+    ]
 
 
 def perform_plan(
@@ -362,9 +445,8 @@ def perform_plan(
         target = record.transaction_directory / "staging" / operation.operation_id
         emit_progress(progress, "Preparing moves", record, total, source)
         verify_live_source(snapshot, operation.source)
-        move_without_overwrite(source, target)
         staged[operation.operation_id] = target
-        add_mutation(
+        execute_mutation(
             record,
             AppliedMutation(
                 MutationKind.STAGE_MOVE,
@@ -380,8 +462,7 @@ def perform_plan(
         target = record.transaction_directory / "backup" / operation.operation_id
         emit_progress(progress, "Backing up deletions", record, total, source)
         verify_live_source(snapshot, operation.source)
-        move_without_overwrite(source, target)
-        add_mutation(
+        execute_mutation(
             record,
             AppliedMutation(
                 MutationKind.BACKUP_DELETE,
@@ -407,8 +488,7 @@ def perform_plan(
         )
         emit_progress(progress, "Backing up overwritten items", record, total, target)
         verify_live_source(snapshot, operation.target)
-        move_without_overwrite(target, backup)
-        add_mutation(
+        execute_mutation(
             record,
             AppliedMutation(
                 MutationKind.BACKUP_TARGET,
@@ -427,8 +507,7 @@ def perform_plan(
         target = absolute_operation_path(record.root, operation.target)
         emit_progress(progress, "Creating folders", record, total, target)
         checked_boundary(record.root, target, allow_leaf_link=False)
-        create_exclusive(target, directory=True)
-        add_mutation(
+        execute_mutation(
             record,
             AppliedMutation(
                 MutationKind.CREATE_FOLDER,
@@ -444,8 +523,7 @@ def perform_plan(
         source = staged[operation.operation_id]
         target = absolute_operation_path(record.root, operation.target)
         emit_progress(progress, "Moving items", record, total, target)
-        move_without_overwrite(source, target)
-        add_mutation(
+        execute_mutation(
             record,
             AppliedMutation(
                 MutationKind.FINAL_MOVE,
@@ -462,8 +540,7 @@ def perform_plan(
         target = absolute_operation_path(record.root, operation.target)
         emit_progress(progress, "Creating files", record, total, target)
         checked_boundary(record.root, target, allow_leaf_link=False)
-        create_exclusive(target, directory=False)
-        add_mutation(
+        execute_mutation(
             record,
             AppliedMutation(
                 MutationKind.CREATE_FILE,
@@ -479,7 +556,7 @@ def rollback_mutations(record: PlanApplicationRecord) -> list[str]:
     errors: list[str] = []
     for mutation in reversed(record.mutations):
         try:
-            reverse_mutation(mutation)
+            reverse_recorded_mutation(record, mutation)
         except (OSError, RuntimeError, shutil.Error) as error:
             errors.append(f"{mutation.operation_id}: {error}")
     return errors
@@ -511,11 +588,62 @@ def reverse_mutation(mutation: AppliedMutation) -> None:
     raise ValueError(f"Unknown mutation: {mutation.kind}")
 
 
-def add_mutation(record: PlanApplicationRecord, mutation: AppliedMutation) -> None:
-    record.mutations.append(mutation)
-    with record.mutation_log_path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(mutation.as_dict(), ensure_ascii=False) + "\n")
-        stream.flush()
+def log_event(
+    record: PlanApplicationRecord, event: str, mutation: AppliedMutation
+) -> None:
+    append_event(
+        record.mutation_log_path, record.log_sequence + 1, event, mutation.as_dict()
+    )
+    record.log_sequence += 1
+
+
+def execute_mutation(record: PlanApplicationRecord, mutation: AppliedMutation) -> None:
+    for path in (mutation.source, mutation.target):
+        if path is not None:
+            checked_boundary(record.root, path)
+    if path_exists(required_path(mutation.target)):
+        raise FileExistsError(mutation.target)
+    mutation = replace(
+        mutation,
+        before_signature=file_signature(mutation.source) if mutation.source else None,
+    )
+    log_event(record, "intent", mutation)
+    record.pending_mutations.append(mutation)
+    try:
+        if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
+            create_exclusive(
+                required_path(mutation.target),
+                directory=mutation.kind is MutationKind.CREATE_FOLDER,
+            )
+        else:
+            move_without_overwrite(
+                required_path(mutation.source), required_path(mutation.target)
+            )
+    except Exception:
+        unchanged = not path_exists(required_path(mutation.target)) and (
+            mutation.source is None
+            or file_signature(mutation.source) == mutation.before_signature
+        )
+        if unchanged:
+            log_event(record, "aborted", mutation)
+            record.pending_mutations.remove(mutation)
+        raise
+    applied = replace(
+        mutation, after_signature=file_signature(required_path(mutation.target))
+    )
+    record.mutations.append(applied)
+    log_event(record, "applied", applied)
+    record.pending_mutations.remove(mutation)
+
+
+def reverse_recorded_mutation(
+    record: PlanApplicationRecord, mutation: AppliedMutation
+) -> None:
+    if mutation.key in record.reversed_mutation_ids:
+        return
+    reverse_mutation(mutation)
+    log_event(record, "reversed", mutation)
+    record.reversed_mutation_ids.add(mutation.key)
 
 
 def complete_operation(

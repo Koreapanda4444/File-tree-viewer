@@ -206,3 +206,38 @@ class PlanPreviewWorker(CancellableWorker):
             self.finished.emit(None, False, str(error))
         else:
             self.finished.emit(result, False, "")
+
+
+class AnalysisReportWorker(CancellableWorker):
+    progress = Signal(str, int)
+    finished = Signal(object, bool, str)
+
+    def __init__(
+        self, snapshot, path, format, *, structure=None, diagnostics=None
+    ) -> None:
+        super().__init__()
+        self.snapshot, self.path, self.format = snapshot, path, format
+        self.structure, self.diagnostics = structure, diagnostics
+
+    @Slot()
+    def run(self) -> None:
+        from analysis import AnalysisCancelled
+        from reports import export_analysis_report
+        from snapshot import SnapshotCancelled
+
+        try:
+            result = export_analysis_report(
+                self.snapshot,
+                self.path,
+                format=self.format,
+                structure=self.structure,
+                diagnostics=self.diagnostics,
+                cancelled=self._cancelled,
+                progress=self.progress.emit,
+            )
+        except (SnapshotCancelled, AnalysisCancelled):
+            self.finished.emit(None, True, "")
+        except (OSError, ValueError, TypeError, RuntimeError, sqlite3.Error) as error:
+            self.finished.emit(None, False, str(error))
+        else:
+            self.finished.emit(result, False, "")

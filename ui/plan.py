@@ -66,6 +66,7 @@ from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
 from ui.diagnostics import DiagnosticDialog, DiagnosticWorker, DuplicateReviewWorker
 from ui.performance import (
+    AnalysisReportWorker,
     PlanLoadWorker,
     PlanPreviewWorker,
     PlanSaveWorker,
@@ -452,6 +453,7 @@ class PlanExplorerPage(QWidget):
         self.simulation_worker: PlanSimulationWorker | None = None
         self.simulation_outcome: tuple[object, bool, str] | None = None
         self.simulation_purpose = ""
+        self.structure_analysis = None
         self.diagnostic_report = None
         self.last_application: PlanApplicationRecord | None = None
         self.recovery_scan = None
@@ -531,6 +533,9 @@ class PlanExplorerPage(QWidget):
         self.compare_snapshot_button = QPushButton("Compare Snapshot")
         self.compare_snapshot_button.clicked.connect(self.compare_saved_snapshot)
         row.addWidget(self.compare_snapshot_button)
+        self.export_report_button = QPushButton("Export Report")
+        self.export_report_button.clicked.connect(self.export_current_report)
+        row.addWidget(self.export_report_button)
         self.recovery_button = QPushButton("Recover Interrupted Plan")
         self.recovery_button.clicked.connect(self.recover_interrupted)
         self.cancel_button = QPushButton("Cancel")
@@ -759,6 +764,7 @@ class PlanExplorerPage(QWidget):
         old_snapshot = self.snapshot
         old_model = self.snapshot_model
         self.snapshot = snapshot
+        self.structure_analysis = None
         self.diagnostic_report = None
         self.snapshot_model = SnapshotTreeModel(snapshot, self)
         self.snapshot_model.move_requested.connect(self.stage_moves)
@@ -1110,6 +1116,36 @@ class PlanExplorerPage(QWidget):
         self._refresh_plan_list()
         self.status_changed.emit("Plan cleared")
 
+    def export_current_report(self) -> None:
+        if self.snapshot is None:
+            return
+        path, selected = QFileDialog.getSaveFileName(
+            self,
+            "Export File System Analysis",
+            "analysis.json",
+            "JSON (*.json);;CSV (*.csv);;HTML (*.html)",
+        )
+        if not path:
+            return
+        format = (
+            "csv"
+            if selected.startswith("CSV")
+            else "html"
+            if selected.startswith("HTML")
+            else "json"
+        )
+        target = Path(path).with_suffix("." + format)
+        self.start_plan_io(
+            AnalysisReportWorker(
+                self.snapshot,
+                target,
+                format,
+                structure=self.structure_analysis,
+                diagnostics=self.diagnostic_report,
+            ),
+            "analysis_export",
+        )
+
     def preview_plan_structure(self) -> None:
         if self.snapshot is not None:
             self.start_plan_io(
@@ -1327,6 +1363,10 @@ class PlanExplorerPage(QWidget):
             self.progress_label.setText("Plan file operation cancelled")
             self.status_changed.emit("Plan file operation cancelled")
             return
+        if kind == "analysis_export":
+            self.progress_label.setText("Analysis report exported")
+            self.status_changed.emit(f"Exported analysis report: {result}")
+            return
         if kind == "duplicate_review" and isinstance(result, tuple):
             self.plan.extend(result)
             self._refresh_plan_list()
@@ -1456,6 +1496,7 @@ class PlanExplorerPage(QWidget):
             f"Analyzed {result.file_count + result.folder_count:,} items"
         )
         self.status_changed.emit("Folder structure analysis complete")
+        self.structure_analysis = result
         dialog = StructureAnalysisDialog(result, self)
         dialog.exec()
         dialog.deleteLater()
@@ -2218,6 +2259,7 @@ class PlanExplorerPage(QWidget):
                 )
             )
         )
+        self.export_report_button.setEnabled(ready)
         self.compare_snapshot_button.setEnabled(ready)
         self.save_snapshot_button.setEnabled(ready)
         self.open_snapshot_button.setEnabled(

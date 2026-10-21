@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import json
 import os
 import shutil
 import stat
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from uuid import uuid4
 
 from fs_paths import checked_boundary
 
@@ -151,3 +154,30 @@ def operation_error(error: BaseException) -> str:
     if isinstance(error, FileExistsError):
         return f"A conflicting or changed item was preserved. Refresh before retrying. {error}"
     return str(error)
+
+
+@contextmanager
+def transaction_lock(root: Path):
+    directory = root / ".file-tree-viewer"
+    checked_boundary(root, directory, allow_leaf_link=False)
+    directory.mkdir(exist_ok=True)
+    path = directory / "transaction.lock"
+    token = uuid4().hex
+    payload = json.dumps({"pid": os.getpid(), "token": token})
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except FileExistsError as error:
+        raise RuntimeError(
+            "Another transaction or interrupted session owns this folder. Check recovery before retrying."
+        ) from error
+    try:
+        yield
+    finally:
+        try:
+            if path.read_text(encoding="utf-8") == payload:
+                path.unlink()
+        except FileNotFoundError:
+            pass

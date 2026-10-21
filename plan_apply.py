@@ -12,14 +12,14 @@ from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
-from fs_ops import create_exclusive, move_no_replace, path_exists
+from fs_ops import create_exclusive, move_no_replace, path_exists, transaction_lock
 from fs_paths import (
     checked_boundary,
     normalized_path,
     path_is_within,
     validate_windows_name,
 )
-from plan_diff import simulate_plan, source_live_problem
+from plan_diff import SimulationCancelled, simulate_plan, source_live_problem
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot
 
@@ -117,7 +117,25 @@ def apply_plan(
     cancelled: threading.Event | None = None,
     progress: ProgressCallback | None = None,
 ) -> PlanApplicationRecord:
-    simulation = simulate_plan(snapshot, plan)
+    check_cancelled(cancelled)
+    frozen_plan = FilePlan(plan.root)
+    frozen_plan.extend(plan.operations)
+    if not any(
+        op.conflict_policy is not ConflictPolicy.SKIP for op in frozen_plan.operations
+    ):
+        raise ValueError("The Plan has no active operations")
+    with transaction_lock(snapshot.root):
+        return _apply_locked(
+            snapshot, frozen_plan, cancelled=cancelled, progress=progress
+        )
+
+
+def _apply_locked(snapshot, plan, *, cancelled, progress) -> PlanApplicationRecord:
+    try:
+        simulation = simulate_plan(snapshot, plan, cancelled=cancelled)
+    except SimulationCancelled as error:
+        raise ApplicationCancelled("Application cancelled before execution") from error
+    check_cancelled(cancelled)
     if not simulation.can_apply:
         raise ValueError("Resolve all Plan problems before applying it")
 
@@ -168,6 +186,15 @@ def apply_plan(
         record.status = ApplicationStatus.COMPLETED
     record.finished_at = now_text()
     record.save()
+    if progress is not None:
+        progress(
+            "Application complete"
+            if record.status is ApplicationStatus.COMPLETED
+            else "Application stopped",
+            len(record.completed_operation_ids),
+            len(plan.operations),
+            record.root.name,
+        )
     return record
 
 
@@ -176,6 +203,14 @@ def undo_application(
     *,
     progress: ProgressCallback | None = None,
 ) -> PlanApplicationRecord:
+    with transaction_lock(record.root):
+        current = load_application_record(record.journal_path)
+        if current.status is not record.status:
+            raise ValueError("Transaction state changed; reload recovery records")
+        return _undo_locked(record, progress=progress)
+
+
+def _undo_locked(record, *, progress) -> PlanApplicationRecord:
     if record.status is not ApplicationStatus.COMPLETED:
         raise ValueError("Only a completed Plan can be undone")
     validate_application_record(record)
@@ -487,7 +522,10 @@ def complete_operation(
     record: PlanApplicationRecord,
     operation: PlanOperation,
 ) -> None:
+    if operation.operation_id in record.completed_operation_ids:
+        raise ValueError("Operation was completed more than once")
     record.completed_operation_ids.append(operation.operation_id)
+    record.save()
 
 
 def absolute_operation_path(root: Path, relative_path) -> Path:

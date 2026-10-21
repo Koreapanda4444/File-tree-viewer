@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import os
 import shutil
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Slot
 from send2trash import send2trash
 
+from fs_ops import copy_exclusive, create_exclusive, move_no_replace
 from fs_paths import checked_boundary, normalized_path, validate_name
 
 
@@ -35,10 +35,10 @@ def create_item(parent: Path, name: str, *, directory: bool) -> OperationRecord:
         raise FileExistsError(target)
 
     if directory:
-        target.mkdir()
+        create_exclusive(target, directory=True)
         action = "create_folder"
     else:
-        target.touch(exist_ok=False)
+        create_exclusive(target, directory=False)
         action = "create_file"
     return OperationRecord(action, [FileChange(None, target)])
 
@@ -53,7 +53,7 @@ def rename_item(source: Path, new_name: str) -> OperationRecord:
 
     checked_boundary(source.parent, source)
     checked_boundary(source.parent, target, allow_leaf_link=False)
-    source.rename(target)
+    move_no_replace(source, target)
     return OperationRecord("rename", [FileChange(source, target)])
 
 
@@ -134,29 +134,7 @@ class FileOperationWorker(QObject):
     def _copy(self, source: Path) -> FileChange:
         destination = self._checked_destination(source, moving=False)
         target = unique_destination(destination, source)
-        if source.is_dir() and not source.is_symlink():
-            target.mkdir()
-            try:
-                shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
-            except (OSError, shutil.Error):
-                shutil.rmtree(target, ignore_errors=True)
-                raise
-        elif source.is_symlink():
-            os.symlink(
-                os.readlink(source),
-                target,
-                target_is_directory=source.is_dir(),
-            )
-        else:
-            if not stat.S_ISREG(source.stat(follow_symlinks=False).st_mode):
-                raise ValueError("This file type cannot be copied")
-            try:
-                with source.open("rb") as source_file, target.open("xb") as target_file:
-                    shutil.copyfileobj(source_file, target_file, length=1_024 * 1_024)
-                shutil.copystat(source, target, follow_symlinks=False)
-            except (OSError, shutil.Error):
-                target.unlink(missing_ok=True)
-                raise
+        copy_exclusive(source, target)
         return FileChange(source, target)
 
     def _move(self, source: Path) -> FileChange:
@@ -164,7 +142,7 @@ class FileOperationWorker(QObject):
         target = unique_destination(destination, source)
         if target.exists() or target.is_symlink():
             raise FileExistsError(target)
-        shutil.move(str(source), str(target))
+        move_no_replace(source, target)
         return FileChange(source, target)
 
     def _checked_destination(self, source: Path, *, moving: bool) -> Path:
@@ -219,7 +197,7 @@ class FileOperationWorker(QObject):
             source.parent.mkdir(parents=True, exist_ok=True)
             checked_boundary(target.parent, target)
             checked_boundary(source.parent, source, allow_leaf_link=False)
-            shutil.move(str(target), str(source))
+            move_no_replace(target, source)
             return
 
         raise ValueError(f"The {record.action} operation cannot be undone")

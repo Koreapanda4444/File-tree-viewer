@@ -12,6 +12,7 @@ from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
+from fs_ops import create_exclusive, move_no_replace, path_exists
 from fs_paths import (
     checked_boundary,
     normalized_path,
@@ -379,7 +380,7 @@ def perform_plan(
         target = absolute_operation_path(record.root, operation.target)
         emit_progress(progress, "Creating folders", record, total, target)
         checked_boundary(record.root, target, allow_leaf_link=False)
-        target.mkdir(exist_ok=False)
+        create_exclusive(target, directory=True)
         add_mutation(
             record,
             AppliedMutation(
@@ -414,7 +415,7 @@ def perform_plan(
         target = absolute_operation_path(record.root, operation.target)
         emit_progress(progress, "Creating files", record, total, target)
         checked_boundary(record.root, target, allow_leaf_link=False)
-        target.touch(exist_ok=False)
+        create_exclusive(target, directory=False)
         add_mutation(
             record,
             AppliedMutation(
@@ -484,19 +485,7 @@ def absolute_operation_path(root: Path, relative_path) -> Path:
 
 
 def move_without_overwrite(source: Path, target: Path) -> None:
-    checked_boundary(source.parent, source)
-    checked_boundary(target.parent, target, allow_leaf_link=False)
-    if not path_exists(source):
-        raise FileNotFoundError(source)
-    if path_exists(target):
-        raise FileExistsError(target)
-    if not target.parent.is_dir():
-        raise NotADirectoryError(target.parent)
-    shutil.move(str(source), str(target))
-
-
-def path_exists(path: Path) -> bool:
-    return os.path.lexists(path)
+    move_no_replace(source, target, allow_cross_device=False)
 
 
 def hide_internal_directory(path: Path) -> None:

@@ -20,6 +20,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import QApplication, QStyle
 
+from fs_ops import create_exclusive, move_no_replace
+from fs_paths import checked_boundary
 from fs_paths import validate_windows_name as validate_name
 
 INVALID_INDEX = QModelIndex()
@@ -618,10 +620,11 @@ def load_workspace_data(path: Path) -> dict[str, Any]:
 
 
 def export_workspace(destination: Path, root_data: dict[str, Any]) -> Path:
+    checked_boundary(destination, destination, allow_leaf_link=False)
     if not destination.is_dir():
         raise NotADirectoryError(destination)
     output = destination / "Virtual Workspace"
-    if output.exists():
+    if os.path.lexists(output):
         raise FileExistsError(output)
     temporary = destination / f".file-tree-viewer-export-{uuid.uuid4().hex}"
     temporary.mkdir()
@@ -631,13 +634,13 @@ def export_workspace(destination: Path, root_data: dict[str, Any]) -> Path:
             parent_path, entry = stack.pop()
             children = entry.get("children", [])
             for child in children:
-                target = parent_path / child["name"]
+                target = parent_path / validate_name(child["name"])
                 if child["directory"]:
-                    target.mkdir()
+                    create_exclusive(target, directory=True)
                     stack.append((target, child))
                 else:
                     target.write_text(child["content"], encoding="utf-8", newline="")
-        os.replace(temporary, output)
+        move_no_replace(temporary, output, allow_cross_device=False)
     except (OSError, TypeError, ValueError, KeyError):
         shutil.rmtree(temporary, ignore_errors=True)
         raise
@@ -645,10 +648,11 @@ def export_workspace(destination: Path, root_data: dict[str, Any]) -> Path:
 
 
 def export_workspace_root(destination: Path, root: VirtualNode) -> Path:
+    checked_boundary(destination, destination, allow_leaf_link=False)
     if not destination.is_dir():
         raise NotADirectoryError(destination)
     output = destination / "Virtual Workspace"
-    if output.exists():
+    if os.path.lexists(output):
         raise FileExistsError(output)
     temporary = destination / f".file-tree-viewer-export-{uuid.uuid4().hex}"
     temporary.mkdir()
@@ -657,13 +661,13 @@ def export_workspace_root(destination: Path, root: VirtualNode) -> Path:
         while stack:
             parent_path, node = stack.pop()
             for child in node.children:
-                target = parent_path / child.name
+                target = parent_path / validate_name(child.name)
                 if child.is_directory:
-                    target.mkdir()
+                    create_exclusive(target, directory=True)
                     stack.append((target, child))
                 else:
                     target.write_text(child.content, encoding="utf-8", newline="")
-        os.replace(temporary, output)
+        move_no_replace(temporary, output, allow_cross_device=False)
     except (OSError, TypeError, ValueError):
         shutil.rmtree(temporary, ignore_errors=True)
         raise

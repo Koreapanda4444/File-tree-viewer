@@ -245,6 +245,9 @@ class RealExplorerPage(ExplorerPage):
         self.selection_guard = False
         self.close_cancelled = False
 
+        self.compare_files_button = QPushButton("Compare Files")
+        self.compare_files_button.clicked.connect(self.compare_selected_files)
+        self.layout().addWidget(self.compare_files_button)
         self._set_tree_model(self.model)
         self._configure_tree_columns()
 
@@ -258,9 +261,6 @@ class RealExplorerPage(ExplorerPage):
         self.search_input.returnPressed.connect(self.start_search)
         self.search_button.clicked.connect(self.start_search)
         self.clear_search_button.clicked.connect(self.clear_search)
-        self.compare_files_button = QPushButton("Compare Files")
-        self.compare_files_button.clicked.connect(self.compare_selected_files)
-        self.layout().addWidget(self.compare_files_button)
         self.new_file_button.clicked.connect(self.create_new_file)
         self.new_folder_button.clicked.connect(self.create_new_folder)
         self.rename_button.clicked.connect(self.rename_selected)

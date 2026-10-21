@@ -347,6 +347,15 @@ class RealExplorerPage(ExplorerPage):
             self.set_root(Path(selected))
 
     def set_root(self, path: Path) -> None:
+        if (
+            self.operation_is_running
+            or self.search_is_running
+            or self.preview_is_running
+        ):
+            self.status_changed.emit(
+                "Wait for Real tasks to finish before changing the root"
+            )
+            return
         if self.model.root_path is not None and not self._confirm_editor_transition():
             return
         try:
@@ -2040,9 +2049,6 @@ class MainWindow(QMainWindow):
         snapshot = self.plan_page.snapshot
         if snapshot is None:
             self.statusBar().showMessage("Load a snapshot first")
-            return
-        if self.real_page.operation_thread is not None:
-            self.statusBar().showMessage("Wait for the Real file operation to finish")
             return
         self.tabs.setCurrentWidget(self.real_page)
         self.real_page.set_root(snapshot.root)

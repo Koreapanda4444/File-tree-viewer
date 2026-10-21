@@ -62,6 +62,7 @@ from real.operations import (
 from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.tree import FileTreeModel
+from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
 from ui.file_compare import FileComparisonDialog
 from ui.image_preview import ImagePreview
@@ -326,6 +327,15 @@ class RealExplorerPage(ExplorerPage):
         self.tree.expanded.connect(self.load_expanded_folder)
         self.tree.collapsed.connect(self.release_collapsed_folder)
         self.model.directory_error.connect(self.status_changed)
+        self.path_completion = PathCompletion(
+            self.location,
+            lambda: self.model.root_path or Path.home(),
+            self.show_hidden.isChecked,
+        )
+        self.path_completion.chosen.connect(lambda value: self.navigate_address())
+        self.path_completion.idle.connect(
+            lambda: self._emit_ready_to_close() if self.close_requested else None
+        )
 
     @property
     def search_is_running(self) -> bool:
@@ -1228,7 +1238,7 @@ class RealExplorerPage(ExplorerPage):
         if not self._confirm_editor_transition():
             self.close_cancelled = True
             return False
-        waiting = False
+        waiting = not self.path_completion.stop()
         self.close_requested = True
         if self.search_is_running:
             self.cancel_search()
@@ -1246,6 +1256,7 @@ class RealExplorerPage(ExplorerPage):
 
     def cancel_close_request(self) -> None:
         self.close_requested = False
+        self.path_completion.closed = False
 
     def finalize_close(self) -> None:
         self.search_results.close()
@@ -1278,6 +1289,7 @@ class RealExplorerPage(ExplorerPage):
             not self.search_is_running
             and not self.operation_is_running
             and not self.preview_is_running
+            and self.path_completion.thread is None
         ):
             self.ready_to_close.emit()
 

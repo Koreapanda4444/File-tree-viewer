@@ -3,6 +3,7 @@ name: Build Windows
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags:
       - "v*"
 
@@ -30,6 +31,9 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install "pyinstaller>=6.14,<7"
 
+      - name: Check application startup
+        run: python main.py --smoke-test
+
       - name: Build executable
         run: >-
           python -m PyInstaller
@@ -41,10 +45,24 @@ jobs:
           --collect-submodules send2trash
           main.py
 
+      - name: Verify executable startup and checksum
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath '.\dist\FileTreeViewer.exe' -ArgumentList '--smoke-test' -PassThru
+          if (-not $process.WaitForExit(60000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'Executable startup verification timed out'
+          }
+          if ($process.ExitCode -ne 0) { throw "Executable exited with $($process.ExitCode)" }
+          $hash = (Get-FileHash 'dist/FileTreeViewer.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  FileTreeViewer.exe" | Set-Content 'dist/SHA256.txt' -Encoding ascii
+
       - name: Upload executable
         uses: actions/upload-artifact@v7
         with:
           name: FileTreeViewer-windows-x64
-          path: dist/FileTreeViewer.exe
+          path: |
+            dist/FileTreeViewer.exe
+            dist/SHA256.txt
           if-no-files-found: error
           retention-days: 14

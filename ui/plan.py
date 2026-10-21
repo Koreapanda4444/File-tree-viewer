@@ -450,6 +450,9 @@ class PlanExplorerPage(QWidget):
             | PlanSaveWorker
             | SnapshotFileWorker
             | SnapshotCompareWorker
+            | PlanPreviewWorker
+            | AnalysisReportWorker
+            | DuplicateReviewWorker
             | None
         ) = None
         self.plan_io_outcome: tuple[object, bool, str] | None = None

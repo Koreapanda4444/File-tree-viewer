@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.venv/
+build/
+dist/
+release/
+*.spec
+.file-tree-viewer/

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
@@ -133,6 +133,46 @@ class FilePlan:
         self.revision += 1
         return len(additions)
 
+    def update_operation(self, operation_id: str, **changes) -> PlanOperation:
+        if "operation_id" in changes:
+            raise ValueError("An operation ID cannot be changed")
+        for position, operation in enumerate(self._operations):
+            if operation.operation_id == operation_id:
+                updated = replace(operation, **changes)
+                if updated != operation:
+                    self._operations[position] = updated
+                    self._operations_cache = None
+                    self.revision += 1
+                return updated
+        raise KeyError(operation_id)
+
+    def set_conflict_policy(self, operation_ids, policy: ConflictPolicy | str) -> int:
+        selected = set(operation_ids)
+        if not selected <= self._operation_ids:
+            raise KeyError("Unknown operation selected")
+        policy = ConflictPolicy(policy)
+        updated = [
+            replace(op, conflict_policy=policy) if op.operation_id in selected else op
+            for op in self._operations
+        ]
+        count = sum(before != after for before, after in zip(self._operations, updated))
+        if count:
+            self._operations = updated
+            self._operations_cache = None
+            self.revision += 1
+        return count
+
+    def reorder(self, operation_ids) -> None:
+        order = tuple(operation_ids)
+        if len(order) != len(self._operations) or set(order) != self._operation_ids:
+            raise ValueError("The new order must contain every operation exactly once")
+        if order == tuple(op.operation_id for op in self._operations):
+            return
+        by_id = {op.operation_id: op for op in self._operations}
+        self._operations = [by_id[key] for key in order]
+        self._operations_cache = None
+        self.revision += 1
+
     def remove(self, operation_id: str) -> PlanOperation:
         for position, operation in enumerate(self._operations):
             if operation.operation_id == operation_id:
@@ -205,3 +245,28 @@ def validate_operation(
 
     if source is not None or target is None:
         raise ValueError(f"{action.value} requires only a target path")
+
+
+def basic_dependencies(plan: FilePlan) -> dict[str, tuple[str, ...]]:
+    sources = {}
+    folders = {}
+    for operation in plan.operations:
+        if operation.conflict_policy is ConflictPolicy.SKIP:
+            continue
+        if operation.source is not None:
+            sources.setdefault(operation.source, []).append(operation.operation_id)
+        if operation.action is PlanAction.CREATE_FOLDER:
+            folders.setdefault(operation.target, []).append(operation.operation_id)
+    result = {}
+    for operation in plan.operations:
+        dependencies = set()
+        if (
+            operation.target is not None
+            and operation.conflict_policy is not ConflictPolicy.SKIP
+        ):
+            dependencies.update(sources.get(operation.target, ()))
+            for parent in operation.target.parents:
+                dependencies.update(folders.get(parent, ()))
+        dependencies.discard(operation.operation_id)
+        result[operation.operation_id] = tuple(sorted(dependencies))
+    return result

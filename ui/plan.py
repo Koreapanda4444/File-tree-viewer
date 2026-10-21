@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import (
     QAbstractItemModel,
+    QItemSelectionModel,
     QMimeData,
     QModelIndex,
     QSettings,
@@ -19,8 +20,11 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -50,6 +54,7 @@ from planning import (
     FilePlan,
     PlanAction,
     PlanOperation,
+    basic_dependencies,
     normalize_plan_path,
 )
 from recovery import RecoveryResult, inspect_recovery
@@ -318,15 +323,17 @@ class SnapshotTreeModel(QAbstractItemModel):
 
 
 class PlanListModel(QAbstractItemModel):
-    headers = ("Action", "Source", "Target", "Policy")
+    headers = ("Action", "Source", "Target", "Policy", "Step", "Dependencies")
 
     def __init__(self, plan: FilePlan, parent=None) -> None:
         super().__init__(parent)
         self.plan = plan
+        self.dependencies = basic_dependencies(plan)
 
     def set_plan(self, plan: FilePlan) -> None:
         self.beginResetModel()
         self.plan = plan
+        self.dependencies = basic_dependencies(plan)
         self.endResetModel()
 
     def rowCount(self, parent=INVALID_INDEX) -> int:
@@ -366,8 +373,20 @@ class PlanListModel(QAbstractItemModel):
                 operation.conflict_policy.value.replace("_", " ").upper()
                 if operation.conflict_policy is not ConflictPolicy.ERROR
                 else "-",
+                str(index.row() + 1),
+                str(len(self.dependencies.get(operation.operation_id, ()))),
             )[index.column()]
         if role == Qt.ItemDataRole.ToolTipRole:
+            if index.column() == 5:
+                dependencies = set(self.dependencies.get(operation.operation_id, ()))
+                steps = [
+                    str(row + 1)
+                    for row, item in enumerate(self.plan.operations)
+                    if item.operation_id in dependencies
+                ]
+                return "Path dependencies on steps: " + (
+                    ", ".join(steps[:50]) if steps else "none"
+                )
             value = self.data(index, Qt.ItemDataRole.DisplayRole)
             return value if value != "-" else None
         if role == Qt.ItemDataRole.UserRole:
@@ -557,6 +576,21 @@ class PlanExplorerPage(QWidget):
         self.plan_list.horizontalHeader().setStretchLastSection(True)
         right_layout.addWidget(self.plan_list, 1)
         plan_buttons = QHBoxLayout()
+        self.edit_operation_button = QPushButton("Edit")
+        self.up_operation_button = QPushButton("Move Up")
+        self.down_operation_button = QPushButton("Move Down")
+        self.policy_operation_button = QPushButton("Set Policy")
+        for button in (
+            self.edit_operation_button,
+            self.up_operation_button,
+            self.down_operation_button,
+            self.policy_operation_button,
+        ):
+            plan_buttons.addWidget(button)
+        self.edit_operation_button.clicked.connect(self.edit_selected_operation)
+        self.up_operation_button.clicked.connect(lambda: self.reorder_selected(-1))
+        self.down_operation_button.clicked.connect(lambda: self.reorder_selected(1))
+        self.policy_operation_button.clicked.connect(self.change_selected_policy)
         self.remove_button = QPushButton("Remove Selected")
         self.clear_button = QPushButton("Clear Plan")
         self.save_plan_button = QPushButton("Save Plan")
@@ -895,6 +929,115 @@ class PlanExplorerPage(QWidget):
         if added:
             self._refresh_plan_list()
             self.status_changed.emit(f"Staged {added} move operation(s)")
+
+    def selected_operation_ids(self) -> set[str]:
+        selection = self.plan_list.selectionModel()
+        return (
+            {
+                self.plan.operations[index.row()].operation_id
+                for index in selection.selectedRows(0)
+            }
+            if selection
+            else set()
+        )
+
+    def restore_operation_selection(self, selected) -> None:
+        selection = self.plan_list.selectionModel()
+        for row, operation in enumerate(self.plan.operations):
+            if operation.operation_id in selected:
+                selection.select(
+                    self.plan_model.index(row, 0),
+                    QItemSelectionModel.SelectionFlag.Select
+                    | QItemSelectionModel.SelectionFlag.Rows,
+                )
+
+    def edit_selected_operation(self) -> None:
+        selected = self.selected_operation_ids()
+        if len(selected) != 1:
+            return
+        operation = next(
+            op for op in self.plan.operations if op.operation_id in selected
+        )
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Planned Operation")
+        layout = QFormLayout(dialog)
+        action = QComboBox()
+        for item in PlanAction:
+            action.addItem(item.value.replace("_", " ").title(), item)
+        action.setCurrentIndex(action.findData(operation.action))
+        source = QLineEdit(str(operation.source) if operation.source else "")
+        target = QLineEdit(str(operation.target) if operation.target else "")
+        layout.addRow("Action", action)
+        layout.addRow("Source relative path", source)
+        layout.addRow("Target relative path", target)
+
+        def update_fields():
+            source.setEnabled(
+                action.currentData()
+                in {PlanAction.MOVE, PlanAction.RENAME, PlanAction.DELETE}
+            )
+            target.setEnabled(action.currentData() is not PlanAction.DELETE)
+
+        action.currentIndexChanged.connect(update_fields)
+        update_fields()
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+
+        def save():
+            try:
+                self.plan.update_operation(
+                    operation.operation_id,
+                    action=action.currentData(),
+                    source=source.text() if source.isEnabled() else None,
+                    target=target.text() if target.isEnabled() else None,
+                )
+            except (ValueError, KeyError, TypeError) as error:
+                QMessageBox.warning(dialog, "Invalid operation", str(error))
+            else:
+                dialog.accept()
+
+        buttons.accepted.connect(save)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_plan_list()
+            self.restore_operation_selection(selected)
+        dialog.deleteLater()
+
+    def reorder_selected(self, direction: int) -> None:
+        selected = self.selected_operation_ids()
+        order = [op.operation_id for op in self.plan.operations]
+        indices = range(len(order)) if direction < 0 else range(len(order) - 1, -1, -1)
+        for index in indices:
+            adjacent = index + direction
+            if (
+                order[index] in selected
+                and 0 <= adjacent < len(order)
+                and order[adjacent] not in selected
+            ):
+                order[index], order[adjacent] = order[adjacent], order[index]
+        self.plan.reorder(order)
+        self._refresh_plan_list()
+        self.restore_operation_selection(selected)
+
+    def change_selected_policy(self) -> None:
+        selected = self.selected_operation_ids()
+        if not selected:
+            return
+        policies = (ConflictPolicy.ERROR, ConflictPolicy.OVERWRITE, ConflictPolicy.SKIP)
+        label, accepted = QInputDialog.getItem(
+            self,
+            "Set Conflict Policy",
+            "Policy for selected operations (Auto Rename is available in Diff / Simulate):",
+            [policy.value for policy in policies],
+            editable=False,
+        )
+        if accepted:
+            self.plan.set_conflict_policy(selected, label)
+            self._refresh_plan_list()
+            self.restore_operation_selection(selected)
 
     def remove_selected_operations(self) -> None:
         selection = self.plan_list.selectionModel()
@@ -2076,6 +2219,14 @@ class PlanExplorerPage(QWidget):
         has_plan_selection = bool(
             plan_selection is not None and plan_selection.selectedRows(0)
         )
+        count = len(self.selected_operation_ids())
+        self.edit_operation_button.setEnabled(ready and count == 1)
+        for button in (
+            self.up_operation_button,
+            self.down_operation_button,
+            self.policy_operation_button,
+        ):
+            button.setEnabled(ready and has_plan_selection)
         self.remove_button.setEnabled(ready and has_plan_selection)
         self.clear_button.setEnabled(ready and bool(len(self.plan)))
         self.save_plan_button.setEnabled(ready and bool(len(self.plan)))

@@ -52,14 +52,14 @@ from planning import (
     normalize_plan_path,
 )
 from real.operations import validate_name
-from recovery import inspect_recovery
+from recovery import RecoveryResult, inspect_recovery
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
 from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
 from ui.diagnostics import DiagnosticDialog, DiagnosticWorker
 from ui.performance import PlanLoadWorker, PlanSaveWorker, PlanSimulationWorker
-from ui.plan_apply import PlanApplyWorker, PlanUndoWorker
+from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
 
 INVALID_INDEX = QModelIndex()
@@ -390,7 +390,7 @@ class PlanExplorerPage(QWidget):
         self.apply_worker: PlanApplyWorker | None = None
         self.apply_outcome: tuple[object, str] | None = None
         self.undo_thread: QThread | None = None
-        self.undo_worker: PlanUndoWorker | None = None
+        self.undo_worker: PlanUndoWorker | PlanRecoveryWorker | None = None
         self.undo_outcome: tuple[object, str] | None = None
         self.analysis_thread: QThread | None = None
         self.analysis_worker: StructureAnalysisWorker | None = None
@@ -431,6 +431,7 @@ class PlanExplorerPage(QWidget):
 
     def check_recovery(self, root: Path) -> None:
         self.recovery_scan = inspect_recovery(root)
+        self.update_buttons()
         if self.recovery_scan.needs_attention and self._recovery_notified_root != root:
             self._recovery_notified_root = root
             self.status_changed.emit("Unfinished or damaged transaction records found")
@@ -474,9 +475,12 @@ class PlanExplorerPage(QWidget):
         self.location.setPlaceholderText("Import a real folder or drive")
         row.addWidget(self.location, 1)
         self.import_button = QPushButton("Import Snapshot")
+        self.recovery_button = QPushButton("Recover Interrupted Plan")
+        self.recovery_button.clicked.connect(self.recover_interrupted)
         self.cancel_button = QPushButton("Cancel")
         self.progress_label = QLabel("No snapshot loaded")
         row.addWidget(self.import_button)
+        row.addWidget(self.recovery_button)
         row.addWidget(self.cancel_button)
         row.addWidget(self.progress_label)
         self.import_button.clicked.connect(self.select_snapshot_root)
@@ -1489,6 +1493,20 @@ class PlanExplorerPage(QWidget):
             self.progress_label.setText("Apply failed")
             return
         result, error = outcome
+        if isinstance(result, RecoveryResult):
+            if result.errors:
+                QMessageBox.warning(
+                    self, "Recovery needs review", "\n".join(result.errors)
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Recovery complete",
+                    f"Recovered {len(result.recovered):,} interrupted transaction(s).",
+                )
+            self._recovery_notified_root = None
+            self.start_snapshot(result.root)
+            return
         if error or not isinstance(result, PlanApplicationRecord):
             message = error or "The Plan worker returned no application record"
             self.progress_label.setText("Apply failed before changes")
@@ -1567,7 +1585,34 @@ class PlanExplorerPage(QWidget):
             return
         self.start_plan_undo(record)
 
-    def start_plan_undo(self, record: PlanApplicationRecord) -> None:
+    def recover_interrupted(self) -> None:
+        if self.recovery_scan is None:
+            return
+        root = self.recovery_scan.root
+        scan = inspect_recovery(root)
+        if not scan.needs_attention:
+            self.recovery_scan = scan
+            self.update_buttons()
+            return
+        if len(self.plan) and not self._confirm_plan_replacement():
+            return
+        answer = QMessageBox.warning(
+            self,
+            "Recover interrupted Plan",
+            scan.summary()
+            + "\n\nRoll back interrupted changes? Conflicting files will be preserved.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.start_plan_undo(recovery_root=root)
+
+    def start_plan_undo(
+        self,
+        record: PlanApplicationRecord | None = None,
+        *,
+        recovery_root: Path | None = None,
+    ) -> None:
         if (
             self.scan_is_running
             or self.apply_is_running
@@ -1579,7 +1624,13 @@ class PlanExplorerPage(QWidget):
         ):
             return
         thread = QThread(self)
-        worker = PlanUndoWorker(record)
+        if recovery_root is None and record is None:
+            return
+        worker = (
+            PlanRecoveryWorker(recovery_root)
+            if recovery_root is not None
+            else PlanUndoWorker(record)
+        )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self.show_apply_progress)
@@ -1828,6 +1879,20 @@ class PlanExplorerPage(QWidget):
             and not self.diagnostic_is_running
             and not self.plan_io_is_running
             and not self.simulation_is_running
+        )
+        self.recovery_button.setEnabled(
+            bool(self.recovery_scan and self.recovery_scan.needs_attention)
+            and not any(
+                (
+                    self.scan_is_running,
+                    self.apply_is_running,
+                    self.undo_is_running,
+                    self.analysis_is_running,
+                    self.diagnostic_is_running,
+                    self.plan_io_is_running,
+                    self.simulation_is_running,
+                )
+            )
         )
         entries = self._selected_entries() if ready else []
         self.new_file_button.setEnabled(ready)

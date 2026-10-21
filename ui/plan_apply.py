@@ -54,3 +54,23 @@ class PlanUndoWorker(QObject):
             self.finished.emit(None, str(error))
         else:
             self.finished.emit(record, "")
+
+
+class PlanRecoveryWorker(QObject):
+    progress = Signal(str, int, int, str)
+    finished = Signal(object, str)
+
+    def __init__(self, root) -> None:
+        super().__init__()
+        self.root = root
+
+    @Slot()
+    def run(self) -> None:
+        from recovery import recover_root
+
+        try:
+            result = recover_root(self.root, progress=self.progress.emit)
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+            self.finished.emit(None, str(error))
+        else:
+            self.finished.emit(result, "")

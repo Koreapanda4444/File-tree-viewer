@@ -4,6 +4,7 @@ import ctypes
 import json
 import os
 import shutil
+import stat
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -96,6 +97,7 @@ class PlanApplicationRecord:
     skipped_operation_ids: list[str] = field(default_factory=list)
     mutations: list[AppliedMutation] = field(default_factory=list)
     pending_mutations: list[AppliedMutation] = field(default_factory=list)
+    reversing_mutation_ids: set[str] = field(default_factory=set)
     reversed_mutation_ids: set[str] = field(default_factory=set)
     log_sequence: int = 0
     log_valid_bytes: int = 0
@@ -387,6 +389,18 @@ def load_record_events(record: PlanApplicationRecord) -> None:
         elif event == "aborted":
             if pending.pop(mutation.key, None) is None:
                 raise ValueError("Recovery abort has no matching intent")
+        elif event == "reverse_intent":
+            if (
+                mutation.key not in applied
+                or mutation.key in record.reversing_mutation_ids
+                or mutation.key in record.reversed_mutation_ids
+            ):
+                raise ValueError("Invalid reverse intent")
+            record.reversing_mutation_ids.add(mutation.key)
+        elif event == "reverse_aborted":
+            if mutation.key not in record.reversing_mutation_ids:
+                raise ValueError("Invalid aborted reversal")
+            record.reversing_mutation_ids.remove(mutation.key)
         elif event == "reversed":
             if (
                 mutation.key not in applied
@@ -394,6 +408,7 @@ def load_record_events(record: PlanApplicationRecord) -> None:
             ):
                 raise ValueError("Invalid recovery reversal")
             record.reversed_mutation_ids.add(mutation.key)
+            record.reversing_mutation_ids.discard(mutation.key)
         else:
             raise ValueError("Unknown recovery event")
     record.mutations = list(applied.values())
@@ -505,7 +520,18 @@ def perform_plan(
             AppliedMutation(
                 MutationKind.CREATE_FOLDER,
                 operation.operation_id,
-                target=target,
+                target=record.transaction_directory
+                / "staging"
+                / operation.operation_id,
+            ),
+        )
+        execute_mutation(
+            record,
+            AppliedMutation(
+                MutationKind.FINAL_MOVE,
+                operation.operation_id,
+                record.transaction_directory / "staging" / operation.operation_id,
+                target,
             ),
         )
         check_cancelled(cancelled)
@@ -538,7 +564,18 @@ def perform_plan(
             AppliedMutation(
                 MutationKind.CREATE_FILE,
                 operation.operation_id,
-                target=target,
+                target=record.transaction_directory
+                / "staging"
+                / operation.operation_id,
+            ),
+        )
+        execute_mutation(
+            record,
+            AppliedMutation(
+                MutationKind.FINAL_MOVE,
+                operation.operation_id,
+                record.transaction_directory / "staging" / operation.operation_id,
+                target,
             ),
         )
         check_cancelled(cancelled)
@@ -550,8 +587,9 @@ def rollback_mutations(record: PlanApplicationRecord) -> list[str]:
     for mutation in reversed(record.mutations):
         try:
             reverse_recorded_mutation(record, mutation)
-        except (OSError, RuntimeError, shutil.Error) as error:
+        except (OSError, RuntimeError, shutil.Error, ValueError) as error:
             errors.append(f"{mutation.operation_id}: {error}")
+            break
     return errors
 
 
@@ -634,9 +672,23 @@ def reverse_recorded_mutation(
 ) -> None:
     if mutation.key in record.reversed_mutation_ids:
         return
+    target = required_path(mutation.target)
+    if mutation.after_signature is not None and path_exists(target):
+        expected = mutation.after_signature
+        current = file_signature(target)
+        keys = (
+            ("st_dev", "st_ino", "st_mode")
+            if stat.S_ISDIR(current["st_mode"])
+            else tuple(key for key in expected if key != "st_ctime_ns")
+        )
+        if any(current.get(key) != expected.get(key) for key in keys):
+            raise FileExistsError(f"Recovery source changed externally: {target}")
+    log_event(record, "reverse_intent", mutation)
+    record.reversing_mutation_ids.add(mutation.key)
     reverse_mutation(mutation)
     log_event(record, "reversed", mutation)
     record.reversed_mutation_ids.add(mutation.key)
+    record.reversing_mutation_ids.discard(mutation.key)
 
 
 def complete_operation(
@@ -856,6 +908,8 @@ def validate_mutation_shape(
     else:
         if mutation.source is not None:
             raise ValueError("Created-item recovery cannot have a source")
+        if mutation.target == stage:
+            return
         internal, expected, user_path = None, None, mutation.target
     if internal != expected or user_path is None:
         raise ValueError("Recovery mutation paths do not match their purpose")

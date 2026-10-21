@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import os
+import stat
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from fs_ops import file_signature, path_exists, transaction_lock
 from fs_paths import checked_boundary, normalize_root, normalized_path
-from plan_apply import ApplicationStatus, PlanApplicationRecord, load_application_record
+from plan_apply import (
+    ApplicationStatus,
+    MutationKind,
+    PlanApplicationRecord,
+    load_application_record,
+    log_event,
+    now_text,
+    required_path,
+    reverse_recorded_mutation,
+    validate_application_record,
+)
 
 UNFINISHED_STATUSES = {
     ApplicationStatus.RUNNING,
@@ -91,6 +104,7 @@ def inspect_recovery(root: Path | str) -> RecoveryScan:
                 record.status in UNFINISHED_STATUSES
                 or record.pending_mutations
                 or record.log_truncated
+                or record.reversing_mutation_ids
             ):
                 details = record.status.value
                 if record.pending_mutations:
@@ -109,3 +123,206 @@ def inspect_recovery(root: Path | str) -> RecoveryScan:
             )
         )
     return RecoveryScan(root_path, tuple(candidates), tuple(completed), lock_path)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryResult:
+    root: Path
+    recovered: tuple[str, ...]
+    errors: tuple[str, ...]
+
+
+def signature_matches(path: Path, expected: dict[str, int] | None) -> bool:
+    if expected is None or not path_exists(path):
+        return False
+    current = file_signature(path)
+    return all(
+        current.get(key) == value
+        for key, value in expected.items()
+        if key != "st_ctime_ns"
+    )
+
+
+def process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        raise ValueError("Invalid lock process ID")
+    if os.name == "nt":
+        import ctypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if handle:
+            kernel.CloseHandle(handle)
+            return True
+        return ctypes.get_last_error() != 87
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def clear_abandoned_lock(root: Path) -> None:
+    path = root / ".file-tree-viewer" / "transaction.lock"
+    if not path_exists(path):
+        return
+    checked_boundary(root, path, allow_leaf_link=False)
+    expected = file_signature(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(payload, dict)
+        or type(payload.get("pid")) is not int
+        or not isinstance(payload.get("token"), str)
+    ):
+        raise ValueError("Damaged transaction lock requires manual review")
+    if process_is_running(payload["pid"]):
+        raise RuntimeError(
+            "The transaction owner is still running; close it before recovery"
+        )
+    if file_signature(path) != expected:
+        raise RuntimeError("The transaction lock changed during recovery")
+    path.unlink()
+
+
+def reconcile_pending(record: PlanApplicationRecord) -> None:
+    for mutation in tuple(record.pending_mutations):
+        target = required_path(mutation.target)
+        if not path_exists(target) and (
+            mutation.source is None
+            or signature_matches(mutation.source, mutation.before_signature)
+        ):
+            log_event(record, "aborted", mutation)
+        elif (
+            mutation.source is not None
+            and not path_exists(mutation.source)
+            and signature_matches(target, mutation.before_signature)
+        ):
+            applied = replace(mutation, after_signature=file_signature(target))
+            log_event(record, "applied", applied)
+            record.mutations.append(applied)
+        elif (
+            mutation.source is None
+            and target
+            == record.transaction_directory / "staging" / mutation.operation_id
+            and path_exists(target)
+        ):
+            details = target.lstat()
+            safe = (
+                mutation.kind is MutationKind.CREATE_FILE
+                and stat.S_ISREG(details.st_mode)
+                and details.st_size == 0
+            ) or (
+                mutation.kind is MutationKind.CREATE_FOLDER
+                and stat.S_ISDIR(details.st_mode)
+                and not any(target.iterdir())
+            )
+            if not safe:
+                raise FileExistsError(f"Unconfirmed created item was changed: {target}")
+            applied = replace(mutation, after_signature=file_signature(target))
+            log_event(record, "applied", applied)
+            record.mutations.append(applied)
+        else:
+            raise FileExistsError(
+                f"Unconfirmed change conflicts with current files: {target}"
+            )
+        record.pending_mutations.remove(mutation)
+
+    for mutation in reversed(record.mutations):
+        if mutation.key not in record.reversing_mutation_ids:
+            continue
+        target = required_path(mutation.target)
+        if mutation.source is None:
+            finished = not path_exists(target)
+            untouched = signature_matches(target, mutation.after_signature)
+        else:
+            finished = not path_exists(target) and signature_matches(
+                mutation.source, mutation.after_signature
+            )
+            untouched = not path_exists(mutation.source) and signature_matches(
+                target, mutation.after_signature
+            )
+        if not finished and not untouched:
+            raise FileExistsError(
+                f"Interrupted reversal conflicts with current files: {target}"
+            )
+        log_event(record, "reversed" if finished else "reverse_aborted", mutation)
+        if finished:
+            record.reversed_mutation_ids.add(mutation.key)
+        record.reversing_mutation_ids.remove(mutation.key)
+
+
+def recover_root(root: Path | str, *, progress=None) -> RecoveryResult:
+    root_path = normalize_root(root)
+    if root_path is None:
+        raise ValueError("A recovery root is required")
+    clear_abandoned_lock(root_path)
+    recovered = []
+    errors = []
+    with transaction_lock(root_path):
+        scan = inspect_recovery(root_path)
+        invalid = [item for item in scan.candidates if item.record is None]
+        if invalid:
+            return RecoveryResult(
+                root_path, (), tuple(item.problem for item in invalid)
+            )
+        candidates = sorted(
+            scan.candidates, key=lambda item: item.record.started_at, reverse=True
+        )
+        for candidate in candidates:
+            record = load_application_record(candidate.journal_path)
+            undoing = record.status in {
+                ApplicationStatus.UNDOING,
+                ApplicationStatus.UNDO_FAILED,
+            }
+            try:
+                validate_application_record(record)
+                if record.log_truncated:
+                    with record.mutation_log_path.open("r+b") as stream:
+                        stream.truncate(record.log_valid_bytes)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    record.log_truncated = False
+                reconcile_pending(record)
+                record.status = (
+                    ApplicationStatus.UNDOING if undoing else ApplicationStatus.RUNNING
+                )
+                record.save()
+                total = len(record.mutations)
+                for position, mutation in enumerate(reversed(record.mutations)):
+                    if mutation.key in record.reversed_mutation_ids:
+                        continue
+                    if progress:
+                        progress(
+                            "Recovering interrupted Plan",
+                            position,
+                            total,
+                            required_path(mutation.target).name,
+                        )
+                    validate_application_record(record)
+                    reverse_recorded_mutation(record, mutation)
+                record.status = (
+                    ApplicationStatus.UNDONE
+                    if undoing
+                    else ApplicationStatus.ROLLED_BACK
+                )
+                record.rollback_errors.clear()
+                record.finished_at = now_text()
+                if undoing:
+                    record.undone_at = now_text()
+                record.save()
+                recovered.append(record.transaction_id)
+            except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+                record.status = (
+                    ApplicationStatus.UNDO_FAILED
+                    if undoing
+                    else ApplicationStatus.ROLLBACK_FAILED
+                )
+                record.rollback_errors = [str(error)]
+                record.save()
+                errors.append(f"{record.transaction_id}: {error}")
+                break
+    return RecoveryResult(root_path, tuple(recovered), tuple(errors))

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QModelIndex, QObject, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMenu
 
 from fs_ops import require_unchanged
 from fs_paths import normalized_path
@@ -24,6 +24,11 @@ class FileCommands(QObject):
         QApplication.clipboard().dataChanged.connect(self.clipboard_changed)
         page.transfer_completed.connect(self.completed)
         self.clipboard_changed()
+        for view in self.views:
+            view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            view.customContextMenuRequested.connect(
+                lambda point, target=view: self.show_context(target, point)
+            )
 
     @property
     def views(self):
@@ -123,3 +128,87 @@ class FileCommands(QObject):
         for view in self.views:
             view.viewport().update()
         self.actions["Paste"].setEnabled(bool(paths))
+
+    def open_selected(self):
+        paths = self.page.selected_paths()
+        if (
+            len(paths) != 1
+            or self.page.operation_is_running
+            or self.page.search_is_running
+        ):
+            return
+        path = paths[0]
+        if path.is_dir() and not path.is_symlink():
+            self.page.open_folder_index(self.page.tree.currentIndex())
+        elif self.page._confirm_editor_transition():
+            if path != self.page.current_preview_path:
+                self.page._show_path(path)
+            self.page.open_current_external()
+
+    def copy_paths(self):
+        paths = self.page.selected_paths()
+        if paths:
+            QApplication.clipboard().setText("\n".join(str(path) for path in paths))
+            self.page.status_changed.emit(f"Copied {len(paths):,} path(s)")
+
+    def inspect_selected(self):
+        paths = self.page.selected_paths()
+        if len(paths) == 1:
+            self.page._update_details(paths[0])
+            self.page.show_file_metadata()
+
+    def show_context(self, view, point):
+        index = view.indexAt(point)
+        if index.isValid():
+            if not view.selectionModel().isSelected(index):
+                view.setCurrentIndex(index)
+        else:
+            view.selectionModel().clearSelection()
+            view.setCurrentIndex(QModelIndex())
+        if index.isValid() and not view.selectionModel().isSelected(index):
+            return
+        if not index.isValid() and view.currentIndex().isValid():
+            return
+        menu = self.build_menu()
+        menu.exec(view.viewport().mapToGlobal(point))
+        menu.deleteLater()
+
+    def build_menu(self):
+        page = self.page
+        paths = page.selected_paths()
+        mutable = page._operable_selected_paths()
+        busy = page.operation_is_running or page.search_is_running
+        ready = not busy and page.model.root_path is not None
+        menu = QMenu(page)
+
+        def add(name, callback, enabled):
+            action = menu.addAction(name)
+            action.setEnabled(enabled)
+            action.triggered.connect(callback)
+            return action
+
+        add("Open", self.open_selected, ready and len(paths) == 1)
+        add("Inspect Metadata", self.inspect_selected, not busy and len(paths) == 1)
+        add("Copy Path", self.copy_paths, bool(paths))
+        menu.addSeparator()
+        add("Copy", lambda: self.copy(False), ready and bool(mutable))
+        add("Cut", lambda: self.copy(True), ready and bool(mutable))
+        target = (
+            paths[0]
+            if len(paths) == 1 and paths[0].is_dir() and not paths[0].is_symlink()
+            else page.model.root_path
+        )
+        add(
+            "Paste Into Folder" if target != page.model.root_path else "Paste",
+            lambda: self.paste(target),
+            ready and self.actions["Paste"].isEnabled(),
+        )
+        add("Copy To…", lambda: page.transfer_selected("copy"), ready and bool(mutable))
+        add("Move To…", lambda: page.transfer_selected("move"), ready and bool(mutable))
+        add("Rename", page.rename_selected, ready and len(mutable) == 1)
+        add("Delete", page.delete_selected, ready and bool(mutable))
+        menu.addSeparator()
+        add("New File", page.create_new_file, ready)
+        add("New Folder", page.create_new_folder, ready)
+        add("Refresh", page.refresh_root, ready)
+        return menu

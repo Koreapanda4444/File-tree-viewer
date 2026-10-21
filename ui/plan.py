@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -78,6 +77,8 @@ from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
 from ui.snapshot_compare import SnapshotComparisonDialog
 from ui.tasks import prepare_worker_thread
+from ui.widgets import FlowLayout
+from ui.widgets import PlainLabel as QLabel
 from ui.workers import SnapshotWorker
 
 INVALID_INDEX = QModelIndex()
@@ -516,13 +517,17 @@ class PlanExplorerPage(QWidget):
     def simulation_is_running(self) -> bool:
         return self.simulation_thread is not None
 
-    def _create_root_row(self) -> QHBoxLayout:
+    def _create_root_row(self) -> QVBoxLayout:
+        layout = QVBoxLayout()
         row = QHBoxLayout()
+        layout.addLayout(row)
         row.addWidget(QLabel("Plan Root"))
         self.location = QLineEdit()
         self.location.setReadOnly(True)
         self.location.setPlaceholderText("Import a real folder or drive")
         row.addWidget(self.location, 1)
+        row = FlowLayout()
+        layout.addLayout(row)
         self.import_button = QPushButton("Import Snapshot")
         self.save_snapshot_button = QPushButton("Save Snapshot")
         self.open_snapshot_button = QPushButton("Open Snapshot")
@@ -543,13 +548,14 @@ class PlanExplorerPage(QWidget):
         row.addWidget(self.import_button)
         row.addWidget(self.recovery_button)
         row.addWidget(self.cancel_button)
-        row.addWidget(self.progress_label)
+        self.progress_label.setWordWrap(True)
+        layout.addWidget(self.progress_label)
         self.import_button.clicked.connect(self.select_snapshot_root)
         self.cancel_button.clicked.connect(self.cancel_snapshot)
-        return row
+        return layout
 
     def _create_content(self) -> QSplitter:
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter = self.workspace_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.tree = QTreeView()
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -582,7 +588,7 @@ class PlanExplorerPage(QWidget):
         self.plan_list.setColumnWidth(2, 260)
         self.plan_list.horizontalHeader().setStretchLastSection(True)
         right_layout.addWidget(self.plan_list, 1)
-        plan_buttons = QHBoxLayout()
+        plan_buttons = FlowLayout()
         self.edit_operation_button = QPushButton("Edit")
         self.up_operation_button = QPushButton("Move Up")
         self.down_operation_button = QPushButton("Move Down")
@@ -609,7 +615,6 @@ class PlanExplorerPage(QWidget):
         plan_buttons.addWidget(self.clear_button)
         plan_buttons.addWidget(self.save_plan_button)
         plan_buttons.addWidget(self.load_plan_button)
-        plan_buttons.addStretch(1)
         right_layout.addLayout(plan_buttons)
         self.remove_button.clicked.connect(self.remove_selected_operations)
         self.clear_button.clicked.connect(self.clear_plan)
@@ -621,8 +626,8 @@ class PlanExplorerPage(QWidget):
         splitter.setStretchFactor(1, 2)
         return splitter
 
-    def _create_action_row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
+    def _create_action_row(self) -> FlowLayout:
+        row = FlowLayout()
         self.new_file_button = QPushButton("New File")
         self.new_folder_button = QPushButton("New Folder")
         self.rename_button = QPushButton("Rename")
@@ -655,7 +660,6 @@ class PlanExplorerPage(QWidget):
             self.undo_plan_button,
         ):
             row.addWidget(button)
-        row.addStretch(1)
         self.new_file_button.clicked.connect(lambda: self.stage_create(False))
         self.new_folder_button.clicked.connect(lambda: self.stage_create(True))
         self.rename_button.clicked.connect(self.stage_rename)

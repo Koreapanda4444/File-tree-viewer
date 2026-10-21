@@ -16,7 +16,13 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QStandardItemModel
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QDesktopServices,
+    QStandardItemModel,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -28,7 +34,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -59,6 +64,8 @@ from ui.file_compare import FileComparisonDialog
 from ui.image_preview import ImagePreview
 from ui.plan import PlanExplorerPage
 from ui.tasks import prepare_worker_thread
+from ui.widgets import FlowLayout
+from ui.widgets import PlainLabel as QLabel
 from virtual.workspace import (
     VirtualNode,
     VirtualTaskWorker,
@@ -140,7 +147,7 @@ class ExplorerPage(QWidget):
         return row
 
     def _create_content(self) -> QSplitter:
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter = self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self.tree = QTreeView()
         self.tree.setAlternatingRowColors(True)
@@ -172,7 +179,7 @@ class ExplorerPage(QWidget):
         ):
             value = QLabel("-")
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            value.setWordWrap(label == "Path")
+            value.setWordWrap(label in ("Path", "Link target"))
             self.detail_values[label.lower()] = value
             details_form.addRow(f"{label}:", value)
         self.metadata_button = QPushButton("Inspect Metadata")
@@ -217,8 +224,8 @@ class ExplorerPage(QWidget):
         splitter.setStretchFactor(1, 2)
         return splitter
 
-    def _create_action_row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
+    def _create_action_row(self) -> FlowLayout:
+        row = FlowLayout()
         actions = (
             ("new_file_button", "New File"),
             ("new_folder_button", "New Folder"),
@@ -237,7 +244,9 @@ class ExplorerPage(QWidget):
             self.action_buttons.append(button)
             row.addWidget(button)
 
-        row.addStretch(1)
+        if not self.virtual:
+            self.compare_files_button = QPushButton("Compare Files")
+            row.addWidget(self.compare_files_button)
         return row
 
 
@@ -273,9 +282,7 @@ class RealExplorerPage(ExplorerPage):
         self.current_metadata = None
         self.metadata_button.clicked.connect(self.show_file_metadata)
 
-        self.compare_files_button = QPushButton("Compare Files")
         self.compare_files_button.clicked.connect(self.compare_selected_files)
-        self.layout().addWidget(self.compare_files_button)
         self._set_tree_model(self.model)
         self._configure_tree_columns()
 
@@ -1904,7 +1911,48 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.plan_page, "Plan")
 
         self.setCentralWidget(self.tabs)
+        workspace_menu = self.menuBar().addMenu("Workspace")
+        self.workspace_actions = QActionGroup(self)
+        for index, title in enumerate(
+            ("Real File System", "Virtual File System", "Plan")
+        ):
+            action = QAction(title, self, checkable=True)
+            action.setShortcut(f"Ctrl+{index + 1}")
+            action.triggered.connect(
+                lambda checked=False, i=index: self.tabs.setCurrentIndex(i)
+            )
+            self.workspace_actions.addAction(action)
+            workspace_menu.addAction(action)
+        self.workspace_actions.actions()[0].setChecked(True)
+        self.tabs.currentChanged.connect(
+            lambda i: self.workspace_actions.actions()[i].setChecked(True)
+        )
+        workspace_menu.addSeparator()
+        workspace_menu.addAction("Import Real Root into Plan", self.import_real_root)
+        workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
+        self.tabs.setDocumentMode(True)
         self.statusBar().showMessage("Ready")
+
+    def import_real_root(self) -> None:
+        root = self.real_page.model.root_path
+        if root is None:
+            self.statusBar().showMessage("Select a Real root first")
+            return
+        if len(self.plan_page.plan) and not self.plan_page._confirm_plan_replacement():
+            return
+        self.tabs.setCurrentWidget(self.plan_page)
+        self.plan_page.start_snapshot(root)
+
+    def open_snapshot_root(self) -> None:
+        snapshot = self.plan_page.snapshot
+        if snapshot is None:
+            self.statusBar().showMessage("Load a snapshot first")
+            return
+        if self.real_page.operation_thread is not None:
+            self.statusBar().showMessage("Wait for the Real file operation to finish")
+            return
+        self.tabs.setCurrentWidget(self.real_page)
+        self.real_page.set_root(snapshot.root)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if not self.real_page.prepare_close():

@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 
 from file_metadata import format_timestamp, inspect_file_metadata
 from fs_ops import file_signature
+from real.navigation import NavigationHistory
 from real.operations import (
     FileChange,
     FileOperationWorker,
@@ -102,6 +103,13 @@ class ExplorerPage(QWidget):
 
     def _create_location_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
+        if not self.virtual:
+            self.back_button = QPushButton("Back")
+            self.forward_button = QPushButton("Forward")
+            self.up_button = QPushButton("Up")
+            for button in (self.back_button, self.forward_button, self.up_button):
+                button.setEnabled(False)
+                row.addWidget(button)
         row.addWidget(QLabel("Workspace" if self.virtual else "Root"))
 
         self.location = QLineEdit()
@@ -277,6 +285,8 @@ class RealExplorerPage(ExplorerPage):
     def __init__(self) -> None:
         super().__init__(virtual=False)
 
+        self.history = NavigationHistory()
+        self.history_navigation = False
         self.model = FileTreeModel(self)
         self.search_results = SearchResultsModel(self)
         self.search_thread: QThread | None = None
@@ -310,6 +320,19 @@ class RealExplorerPage(ExplorerPage):
         self.select_root_button.setEnabled(True)
         self.show_hidden.setEnabled(True)
 
+        self.back_button.clicked.connect(lambda: self.navigate_history(-1))
+        self.forward_button.clicked.connect(lambda: self.navigate_history(1))
+        self.up_button.clicked.connect(self.navigate_up)
+        for shortcut, callback in (
+            ("Alt+Left", lambda: self.navigate_history(-1)),
+            ("Alt+Right", lambda: self.navigate_history(1)),
+            ("Alt+Up", self.navigate_up),
+        ):
+            action = QAction(self)
+            action.setShortcut(shortcut)
+            action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            action.triggered.connect(callback)
+            self.addAction(action)
         self.address_bar.navigate.connect(self.set_root)
         for shortcut in ("Alt+D", "Ctrl+L"):
             action = QAction(self)
@@ -383,7 +406,7 @@ class RealExplorerPage(ExplorerPage):
         self.set_root(path)
         self.location.setText(str(self.model.root_path or ""))
 
-    def set_root(self, path: Path) -> None:
+    def set_root(self, path: Path) -> bool:
         if (
             self.operation_is_running
             or self.search_is_running
@@ -392,14 +415,14 @@ class RealExplorerPage(ExplorerPage):
             self.status_changed.emit(
                 "Wait for Real tasks to finish before changing the root"
             )
-            return
+            return False
         if self.model.root_path is not None and not self._confirm_editor_transition():
-            return
+            return False
         try:
             self.model.set_root(path)
         except (OSError, ValueError) as error:
             QMessageBox.critical(self, "Cannot open root", str(error))
-            return
+            return False
 
         self._show_path(None)
         self.search_results.clear()
@@ -414,7 +437,53 @@ class RealExplorerPage(ExplorerPage):
         self.clear_search_button.setEnabled(bool(self.search_input.text()))
         self.update_search_button()
         self._expand_root()
+        if not self.history_navigation:
+            self.history.visit(self.model.root_path)
+        self.update_navigation_buttons()
         self.status_changed.emit(f"Root: {self.model.root_path}")
+        return True
+
+    def update_navigation_buttons(self):
+        busy = (
+            self.operation_is_running
+            or self.search_is_running
+            or self.preview_is_running
+        )
+        self.back_button.setEnabled(not busy and self.history.candidate(-1) is not None)
+        self.forward_button.setEnabled(
+            not busy and self.history.candidate(1) is not None
+        )
+        root = self.model.root_path
+        self.up_button.setEnabled(not busy and root is not None and root.parent != root)
+
+    def navigate_up(self):
+        root = self.model.root_path
+        if root is not None and root.parent != root:
+            self.set_root(root.parent)
+
+    def navigate_history(self, direction):
+        if (
+            self.operation_is_running
+            or self.search_is_running
+            or self.preview_is_running
+        ):
+            return
+        candidate = self.history.candidate(direction)
+        while candidate is not None:
+            index, path = candidate
+            if not path.is_dir():
+                self.history.discard(index)
+                self.status_changed.emit(f"Skipped unavailable location: {path}")
+                candidate = self.history.candidate(direction)
+                continue
+            self.history_navigation = True
+            try:
+                if self.set_root(path):
+                    self.history.position = index
+            finally:
+                self.history_navigation = False
+            break
+        self.update_navigation_buttons()
 
     def refresh_root(self) -> None:
         if self.model.root_path is None:
@@ -957,6 +1026,7 @@ class RealExplorerPage(ExplorerPage):
         return paths
 
     def update_action_buttons(self, *args: object) -> None:
+        self.update_navigation_buttons()
         blocked = self.search_is_running or self.operation_is_running
         self.compare_files_button.setEnabled(not blocked)
         has_root = self.model.root_path is not None

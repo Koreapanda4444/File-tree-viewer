@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import stat
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -19,6 +18,8 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtWidgets import QFileIconProvider
+
+from fs_paths import is_hidden, is_reparse_point
 
 PAGE_SIZE = 256
 SCAN_BATCH_SIZE = 1_024
@@ -325,35 +326,6 @@ class FileTreeModel(QAbstractItemModel):
             node = stack.pop()
             node.close_iterator()
             stack.extend(node.children)
-
-
-def is_hidden(entry: os.DirEntry[str]) -> bool:
-    if entry.name.startswith("."):
-        return True
-    if os.name != "nt":
-        return False
-
-    try:
-        attributes = entry.stat(follow_symlinks=False).st_file_attributes
-    except (AttributeError, OSError):
-        return False
-    return bool(attributes & stat.FILE_ATTRIBUTE_HIDDEN)
-
-
-def is_reparse_point(entry: os.DirEntry[str]) -> bool:
-    try:
-        if entry.is_symlink():
-            return True
-    except OSError:
-        return False
-    if os.name != "nt":
-        return False
-
-    try:
-        attributes = entry.stat(follow_symlinks=False).st_file_attributes
-    except (AttributeError, OSError):
-        return False
-    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def _file_type(node: FileNode) -> str:

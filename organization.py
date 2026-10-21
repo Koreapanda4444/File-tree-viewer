@@ -6,8 +6,8 @@ from datetime import date, datetime, timezone
 from fnmatch import fnmatchcase
 from pathlib import PurePosixPath
 
+from fs_paths import validate_name
 from planning import FilePlan, PlanAction, PlanOperation, normalize_plan_path
-from real.operations import validate_name
 from snapshot import FileSnapshot, SnapshotEntry
 
 

@@ -20,7 +20,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import QFileIconProvider
 
-from real.tree import is_hidden, is_reparse_point
+from fs_paths import is_hidden, is_reparse_point
 
 RESULT_BATCH_SIZE = 1_024
 PROGRESS_INTERVAL = 2_048

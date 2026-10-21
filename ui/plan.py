@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from analysis import StructureAnalysis
 from conflicts import resolve_plan_conflicts
 from diagnostics import DiagnosticReport
+from fs_paths import validate_name
 from plan_apply import (
     ApplicationStatus,
     PlanApplicationRecord,
@@ -51,9 +52,8 @@ from planning import (
     PlanOperation,
     normalize_plan_path,
 )
-from real.operations import validate_name
 from recovery import RecoveryResult, inspect_recovery
-from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry, SnapshotWorker
+from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry
 from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
@@ -61,6 +61,7 @@ from ui.diagnostics import DiagnosticDialog, DiagnosticWorker
 from ui.performance import PlanLoadWorker, PlanSaveWorker, PlanSimulationWorker
 from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
+from ui.workers import SnapshotWorker
 
 INVALID_INDEX = QModelIndex()
 PLAN_MIME_TYPE = "application/x-file-tree-viewer-plan-paths"

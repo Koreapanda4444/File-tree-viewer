@@ -8,10 +8,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import QObject, Signal, Slot
-
+from fs_paths import is_reparse_point
 from planning import normalize_plan_path, normalize_root
-from real.tree import is_reparse_point
 
 SNAPSHOT_BATCH_SIZE = 1_024
 PROGRESS_INTERVAL = 2_048
@@ -182,40 +180,6 @@ class FileSnapshot:
             self._database.execute("PRAGMA query_only=ON")
             self._database.execute("PRAGMA cache_size=-8192")
         return self._database
-
-
-class SnapshotWorker(QObject):
-    progress = Signal(int, int)
-    finished = Signal(object, bool, str)
-
-    def __init__(self, root: Path) -> None:
-        super().__init__()
-        self.root = root
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancelled.set()
-
-    @Slot()
-    def run(self) -> None:
-        try:
-            snapshot = build_snapshot(
-                self.root,
-                cancelled=self._cancelled,
-                progress=self.progress.emit,
-            )
-        except SnapshotCancelled:
-            self.finished.emit(None, True, "")
-        except (
-            OSError,
-            RuntimeError,
-            UnicodeError,
-            ValueError,
-            sqlite3.Error,
-        ) as error:
-            self.finished.emit(None, False, str(error))
-        else:
-            self.finished.emit(snapshot, False, "")
 
 
 def build_snapshot(

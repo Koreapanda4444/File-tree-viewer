@@ -100,3 +100,32 @@ def checked_boundary(root: Path, path: Path, *, allow_leaf_link: bool = True) ->
     if not root.is_dir():
         raise NotADirectoryError(root)
     return path
+
+
+def is_hidden(entry: os.DirEntry[str]) -> bool:
+    if entry.name.startswith("."):
+        return True
+    if os.name != "nt":
+        return False
+
+    try:
+        attributes = entry.stat(follow_symlinks=False).st_file_attributes
+    except (AttributeError, OSError):
+        return False
+    return bool(attributes & stat.FILE_ATTRIBUTE_HIDDEN)
+
+
+def is_reparse_point(entry: os.DirEntry[str]) -> bool:
+    try:
+        if entry.is_symlink():
+            return True
+    except OSError:
+        return False
+    if os.name != "nt":
+        return False
+
+    try:
+        attributes = entry.stat(follow_symlinks=False).st_file_attributes
+    except (AttributeError, OSError):
+        return False
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import hashlib
 import json
 import os
 import shutil
@@ -11,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from fs_paths import checked_boundary
+from fs_paths import checked_boundary, is_link_stat
 
 
 def path_exists(path: Path) -> bool:
@@ -32,6 +33,8 @@ def copy_exclusive(source: Path, target: Path) -> None:
     checked_boundary(target.parent, target, allow_leaf_link=False)
     expected = file_signature(source)
     details = source.lstat()
+    if is_link_stat(details) and not stat.S_ISLNK(details.st_mode):
+        raise ValueError("This reparse point cannot be copied safely")
     if stat.S_ISLNK(details.st_mode):
         link = os.readlink(source)
         require_unchanged(source, expected)
@@ -39,11 +42,22 @@ def copy_exclusive(source: Path, target: Path) -> None:
     elif stat.S_ISDIR(details.st_mode):
         target.mkdir()
         try:
-            shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+
+            def check_entries(directory, names):
+                for name in names:
+                    entry = (Path(directory) / name).lstat()
+                    if is_link_stat(entry) and not stat.S_ISLNK(entry.st_mode):
+                        raise ValueError(
+                            f"Cannot copy reparse point: {Path(directory) / name}"
+                        )
+                return ()
+
+            shutil.copytree(
+                source, target, symlinks=True, dirs_exist_ok=True, ignore=check_entries
+            )
             require_unchanged(source, expected)
-        except BaseException:
-            shutil.rmtree(target, ignore_errors=True)
-            raise
+        except (OSError, ValueError, shutil.Error) as error:
+            raise OSError(f"Incomplete copy preserved at {target}: {error}") from error
     elif stat.S_ISREG(details.st_mode):
         created = False
         try:
@@ -58,9 +72,11 @@ def copy_exclusive(source: Path, target: Path) -> None:
                 shutil.copyfileobj(reader, writer, length=1_024 * 1_024)
             require_unchanged(source, expected)
             shutil.copystat(source, target, follow_symlinks=False)
-        except BaseException:
+        except (OSError, ValueError, shutil.Error) as error:
             if created:
-                target.unlink(missing_ok=True)
+                raise OSError(
+                    f"Incomplete copy preserved at {target}: {error}"
+                ) from error
             raise
     else:
         raise ValueError("This file type cannot be copied")
@@ -181,3 +197,35 @@ def transaction_lock(root: Path):
                 path.unlink()
         except FileNotFoundError:
             pass
+
+
+def tree_fingerprint(path: Path) -> str:
+    digest = hashlib.sha256()
+    stack = [(path, "")]
+    while stack:
+        item, relative = stack.pop()
+        checked_boundary(path.parent, item)
+        details = item.lstat()
+        metadata = [relative, details.st_dev, details.st_ino, details.st_mode]
+        if not stat.S_ISDIR(details.st_mode):
+            metadata.extend((details.st_size, details.st_mtime_ns))
+            if relative:
+                metadata.append(details.st_ctime_ns)
+        digest.update(json.dumps(metadata, ensure_ascii=True).encode("utf-8"))
+        if is_link_stat(details):
+            digest.update(os.fsencode(os.readlink(item)))
+        elif stat.S_ISDIR(details.st_mode):
+            with os.scandir(item) as iterator:
+                children = sorted(iterator, key=lambda entry: entry.name, reverse=True)
+            for child in children:
+                stack.append((Path(child.path), f"{relative}/{child.name}"))
+        elif not relative and stat.S_ISREG(details.st_mode):
+            before = file_signature(item)
+            with item.open("rb") as stream:
+                opened = os.fstat(stream.fileno())
+                if (opened.st_dev, opened.st_ino) != (details.st_dev, details.st_ino):
+                    raise FileExistsError(f"Item changed during verification: {item}")
+                while block := stream.read(1_048_576):
+                    digest.update(block)
+            require_unchanged(item, before)
+    return digest.hexdigest()

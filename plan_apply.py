@@ -19,6 +19,7 @@ from fs_ops import (
     move_no_replace,
     path_exists,
     transaction_lock,
+    tree_fingerprint,
 )
 from fs_paths import (
     checked_boundary,
@@ -96,6 +97,8 @@ class PlanApplicationRecord:
     completed_operation_ids: list[str] = field(default_factory=list)
     skipped_operation_ids: list[str] = field(default_factory=list)
     mutations: list[AppliedMutation] = field(default_factory=list)
+    undo_state: dict[str, str] = field(default_factory=dict)
+    root_identity: dict[str, int] = field(default_factory=dict)
     pending_mutations: list[AppliedMutation] = field(default_factory=list)
     reversing_mutation_ids: set[str] = field(default_factory=set)
     reversed_mutation_ids: set[str] = field(default_factory=set)
@@ -108,6 +111,8 @@ class PlanApplicationRecord:
     def as_dict(self) -> dict[str, object]:
         return {
             "version": 3,
+            "undo_state": self.undo_state,
+            "root_identity": self.root_identity,
             "transaction_id": self.transaction_id,
             "root": str(self.root),
             "transaction_directory": str(self.transaction_directory),
@@ -174,6 +179,10 @@ def _apply_locked(snapshot, plan, *, cancelled, progress) -> PlanApplicationReco
     record = PlanApplicationRecord(
         transaction_id=transaction_id,
         root=snapshot.root,
+        root_identity={
+            key: file_signature(snapshot.root)[key]
+            for key in ("st_dev", "st_ino", "st_mode")
+        },
         transaction_directory=transaction_directory,
         journal_path=transaction_directory / "journal.json",
         mutation_log_path=transaction_directory / "mutations.jsonl",
@@ -191,12 +200,15 @@ def _apply_locked(snapshot, plan, *, cancelled, progress) -> PlanApplicationReco
         perform_plan(
             record, plan, snapshot=snapshot, cancelled=cancelled, progress=progress
         )
+        record.undo_state = capture_undo_state(record)
     except (
         ApplicationCancelled,
         OSError,
         RuntimeError,
         shutil.Error,
         ValueError,
+        TypeError,
+        KeyError,
     ) as error:
         record.error = str(error)
         record.rollback_errors = rollback_mutations(record)
@@ -231,6 +243,14 @@ def undo_application(
     progress: ProgressCallback | None = None,
 ) -> PlanApplicationRecord:
     with transaction_lock(record.root):
+        from recovery import inspect_recovery
+
+        scan = inspect_recovery(record.root)
+        if scan.candidates:
+            raise ValueError("Resolve interrupted transactions before Undo")
+        newest = max(scan.completed, key=lambda item: item.started_at, default=None)
+        if newest is None or newest.transaction_id != record.transaction_id:
+            raise ValueError("Undo the most recent completed transaction first")
         current = load_application_record(record.journal_path)
         if current.status is not record.status:
             raise ValueError("Transaction state changed; reload recovery records")
@@ -256,6 +276,7 @@ def _undo_locked(record, *, progress) -> PlanApplicationRecord:
             reverse_recorded_mutation(record, mutation)
         except (OSError, RuntimeError, shutil.Error, ValueError) as error:
             errors.append(f"{mutation.operation_id}: {error}")
+            break
 
     record.rollback_errors = errors
     record.status = (
@@ -307,6 +328,23 @@ def load_application_record(journal_path: Path | str) -> PlanApplicationRecord:
         error=optional_text(data.get("error")) or "",
         rollback_errors=text_list(data, "rollback_errors"),
     )
+    undo_state = data.get("undo_state", {})
+    root_identity = data.get("root_identity", {})
+    if not isinstance(undo_state, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) and len(v) == 64
+        for k, v in undo_state.items()
+    ):
+        raise ValueError("Invalid Undo fingerprints")
+    if not isinstance(root_identity, dict) or (
+        root_identity
+        and (
+            set(root_identity) != {"st_dev", "st_ino", "st_mode"}
+            or not all(type(value) is int for value in root_identity.values())
+        )
+    ):
+        raise ValueError("Invalid root identity")
+    record.undo_state = undo_state
+    record.root_identity = root_identity
     load_record_events(record)
     validate_application_record(record)
     count = data.get("mutation_count")
@@ -629,6 +667,7 @@ def log_event(
 
 
 def execute_mutation(record: PlanApplicationRecord, mutation: AppliedMutation) -> None:
+    validate_root_identity(record)
     for path in (mutation.source, mutation.target):
         if path is not None:
             checked_boundary(record.root, path)
@@ -672,6 +711,7 @@ def reverse_recorded_mutation(
 ) -> None:
     if mutation.key in record.reversed_mutation_ids:
         return
+    validate_root_identity(record)
     target = required_path(mutation.target)
     if mutation.after_signature is not None and path_exists(target):
         expected = mutation.after_signature
@@ -753,6 +793,9 @@ def now_text() -> str:
 
 
 def validate_application_record(record: PlanApplicationRecord) -> None:
+    validate_root_identity(record)
+    for path in record.undo_state:
+        checked_boundary(record.root, Path(path))
     validate_windows_name(record.transaction_id)
     if record.transaction_id in {".", ".."}:
         raise ValueError("Invalid transaction ID")
@@ -782,11 +825,14 @@ def validate_application_record(record: PlanApplicationRecord) -> None:
 
 
 def validate_undo_state(record: PlanApplicationRecord) -> None:
-    state: dict[str, bool] = {}
+    for path, expected in record.undo_state.items():
+        if tree_fingerprint(Path(path)) != expected:
+            raise FileExistsError(f"Undo item changed externally: {path}")
+    state: dict[str, Path | None] = {}
     owned_targets = {
-        normalized_path(required_path(mutation.target))
-        for mutation in record.mutations
-        if mutation.kind
+        normalized_path(required_path(m.target))
+        for m in record.mutations
+        if m.kind
         in {
             MutationKind.FINAL_MOVE,
             MutationKind.CREATE_FILE,
@@ -794,43 +840,44 @@ def validate_undo_state(record: PlanApplicationRecord) -> None:
         }
     }
 
-    def exists(path: Path) -> bool:
+    def origin(path: Path) -> Path | None:
         key = normalized_path(path)
         if key not in state:
-            state[key] = path_exists(path)
+            state[key] = path if path_exists(path) else None
         return state[key]
 
-    def set_exists(path: Path, value: bool) -> None:
-        state[normalized_path(path)] = value
-
     for mutation in reversed(record.mutations):
-        if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
-            target = required_path(mutation.target)
-            if exists(target):
-                if mutation.kind is MutationKind.CREATE_FILE:
-                    if target.is_symlink() or not target.is_file():
-                        raise ValueError(f"Undo target changed type: {target}")
-                    if target.stat().st_size:
-                        raise ValueError(f"Created file is no longer empty: {target}")
-                elif target.is_symlink() or not target.is_dir():
-                    raise ValueError(f"Undo target changed type: {target}")
-                else:
-                    for child in target.iterdir():
-                        if normalized_path(child) not in owned_targets:
-                            raise ValueError(
-                                f"Created folder contains a new item: {child}"
-                            )
-                set_exists(target, False)
+        if mutation.key in record.reversed_mutation_ids:
             continue
-
-        source = required_path(mutation.source)
         target = required_path(mutation.target)
-        if not exists(target):
+        actual = origin(target)
+        if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
+            if actual is not None:
+                if mutation.kind is MutationKind.CREATE_FILE:
+                    if (
+                        actual.is_symlink()
+                        or not actual.is_file()
+                        or actual.stat().st_size
+                    ):
+                        raise ValueError(f"Created file changed: {actual}")
+                elif actual.is_symlink() or not actual.is_dir():
+                    raise ValueError(f"Created folder changed type: {actual}")
+                elif any(
+                    normalized_path(child) not in owned_targets
+                    for child in actual.iterdir()
+                ):
+                    raise ValueError(
+                        f"Created folder contains an external item: {actual}"
+                    )
+            state[normalized_path(target)] = None
+            continue
+        source = required_path(mutation.source)
+        if actual is None:
             raise FileNotFoundError(f"Undo source is missing: {target}")
-        if exists(source):
+        if origin(source) is not None:
             raise FileExistsError(f"Undo destination already exists: {source}")
-        set_exists(target, False)
-        set_exists(source, True)
+        state[normalized_path(target)] = None
+        state[normalized_path(source)] = actual
 
 
 def required_text(data: dict[str, object], key: str) -> str:
@@ -914,3 +961,26 @@ def validate_mutation_shape(
     if internal != expected or user_path is None:
         raise ValueError("Recovery mutation paths do not match their purpose")
     normalize_plan_path(user_path.relative_to(record.root).as_posix())
+
+
+def validate_root_identity(record: PlanApplicationRecord) -> None:
+    if record.root_identity:
+        current = file_signature(record.root)
+        if any(
+            current.get(key) != value for key, value in record.root_identity.items()
+        ):
+            raise FileExistsError(
+                "The transaction root was replaced; recovery needs manual review"
+            )
+
+
+def capture_undo_state(record: PlanApplicationRecord) -> dict[str, str]:
+    paths = {
+        mutation.target
+        for mutation in record.mutations
+        if mutation.target is not None and path_exists(mutation.target)
+    }
+    roots = [
+        path for path in paths if not any(parent in paths for parent in path.parents)
+    ]
+    return {str(path): tree_fingerprint(path) for path in roots}

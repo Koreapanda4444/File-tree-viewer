@@ -15,6 +15,7 @@ from fs_ops import (
     move_no_replace,
     operation_error,
     require_unchanged,
+    tree_fingerprint,
 )
 from fs_paths import checked_boundary, normalized_path, validate_name
 
@@ -23,6 +24,7 @@ from fs_paths import checked_boundary, normalized_path, validate_name
 class FileChange:
     source: Path | None
     target: Path | None
+    fingerprint: str | None = None
 
 
 @dataclass(slots=True)
@@ -47,7 +49,7 @@ def create_item(parent: Path, name: str, *, directory: bool) -> OperationRecord:
     else:
         create_exclusive(target, directory=False)
         action = "create_file"
-    return OperationRecord(action, [FileChange(None, target)])
+    return OperationRecord(action, [record_change(None, target)])
 
 
 def rename_item(source: Path, new_name: str) -> OperationRecord:
@@ -61,7 +63,7 @@ def rename_item(source: Path, new_name: str) -> OperationRecord:
     checked_boundary(source.parent, source)
     checked_boundary(source.parent, target, allow_leaf_link=False)
     move_no_replace(source, target)
-    return OperationRecord("rename", [FileChange(source, target)])
+    return OperationRecord("rename", [record_change(source, target)])
 
 
 def normalize_sources(paths: list[Path]) -> list[Path]:
@@ -153,7 +155,7 @@ class FileOperationWorker(QObject):
         destination = self._checked_destination(source, moving=False)
         target = unique_destination(destination, source)
         copy_exclusive(source, target)
-        return FileChange(source, target)
+        return record_change(source, target)
 
     def _move(self, source: Path) -> FileChange:
         destination = self._checked_destination(source, moving=True)
@@ -161,7 +163,7 @@ class FileOperationWorker(QObject):
         if target.exists() or target.is_symlink():
             raise FileExistsError(target)
         move_no_replace(source, target)
-        return FileChange(source, target)
+        return record_change(source, target)
 
     def _checked_destination(self, source: Path, *, moving: bool) -> Path:
         checked_boundary(source.parent, source)
@@ -193,6 +195,13 @@ class FileOperationWorker(QObject):
 
     def _undo(self, change: FileChange) -> None:
         record = self.record
+        if change.target is not None and change.fingerprint is not None:
+            if not change.target.exists() and not change.target.is_symlink():
+                raise FileNotFoundError(change.target)
+            if tree_fingerprint(change.target) != change.fingerprint:
+                raise FileExistsError(
+                    f"Undo target changed externally: {change.target}"
+                )
         if record is None:
             raise ValueError("There is no operation to undo")
 
@@ -212,7 +221,6 @@ class FileOperationWorker(QObject):
                 raise FileExistsError(source)
             if not target.exists() and not target.is_symlink():
                 raise FileNotFoundError(target)
-            source.parent.mkdir(parents=True, exist_ok=True)
             checked_boundary(target.parent, target)
             checked_boundary(source.parent, source, allow_leaf_link=False)
             move_no_replace(target, source)
@@ -241,3 +249,9 @@ def unique_destination(destination: Path, source: Path) -> Path:
         if not target.exists() and not target.is_symlink():
             return target
         number += 1
+
+
+def record_change(source: Path | None, target: Path | None) -> FileChange:
+    return FileChange(
+        source, target, tree_fingerprint(target) if target is not None else None
+    )

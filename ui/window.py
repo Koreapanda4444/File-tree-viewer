@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fs_ops import file_signature
 from real.operations import (
     FileChange,
     FileOperationWorker,
@@ -48,6 +49,7 @@ from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.tree import FileTreeModel
 from ui.file_compare import FileComparisonDialog
+from ui.image_preview import ImagePreview
 from ui.plan import PlanExplorerPage
 from ui.tasks import prepare_worker_thread
 from virtual.workspace import (
@@ -184,6 +186,11 @@ class ExplorerPage(QWidget):
         self.preview.setReadOnly(True)
         self.preview.setPlaceholderText("Select a file to preview it")
         preview_layout.addWidget(self.preview)
+        self.image_preview = ImagePreview()
+        self.image_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_preview.setMinimumSize(1, 1)
+        self.image_preview.hide()
+        preview_layout.addWidget(self.image_preview)
         details_layout.addWidget(preview_group, 1)
 
         splitter.addWidget(details)
@@ -585,7 +592,11 @@ class RealExplorerPage(ExplorerPage):
             self._emit_ready_to_close()
 
     def _display_preview(self, result: PreviewResult) -> None:
+        self.image_preview.hide()
+        self.image_preview.clear()
+        self.preview.show()
         self.current_preview_result = result
+        self.save_file_button.setEnabled(False)
         self.reload_file_button.setEnabled(True)
         self.open_external_button.setEnabled(True)
 
@@ -594,10 +605,21 @@ class RealExplorerPage(ExplorerPage):
             self.preview.setReadOnly(True)
             self.preview_status.setText(f"Cannot preview file: {result.error}")
             return
+        if result.image is not None:
+            self._set_preview_text("")
+            self.preview.hide()
+            self.image_preview.set_image(result.image)
+            self.image_preview.show()
+            self.preview_status.setText(
+                f"Read-only image · {result.image.width()} × {result.image.height()} preview"
+            )
+            return
         if result.binary:
-            self._set_preview_text("Binary file preview is unavailable.")
+            self._set_preview_text(result.text)
             self.preview.setReadOnly(True)
-            self.preview_status.setText("Binary file - open externally to view or edit")
+            self.preview_status.setText(
+                "Read-only binary preview · first 4 KB in hexadecimal"
+            )
             return
 
         self._set_preview_text(result.text)
@@ -642,7 +664,12 @@ class RealExplorerPage(ExplorerPage):
             self._show_operation_error("Cannot save file", error)
             return False
 
-        if current.st_size != result.size or current.st_mtime_ns != result.modified_ns:
+        expected_signature = file_signature(path)
+        if (
+            current.st_size != result.size
+            or current.st_mtime_ns != result.modified_ns
+            or (result.signature is not None and expected_signature != result.signature)
+        ):
             answer = QMessageBox.warning(
                 self,
                 "File changed",
@@ -659,8 +686,9 @@ class RealExplorerPage(ExplorerPage):
                 self.preview.toPlainText(),
                 encoding=result.encoding,
                 newline=result.newline,
+                expected_signature=expected_signature,
             )
-        except (OSError, UnicodeError) as error:
+        except (OSError, UnicodeError, ValueError) as error:
             self._show_operation_error("Cannot save file", error)
             return False
 
@@ -669,6 +697,7 @@ class RealExplorerPage(ExplorerPage):
             text=self.preview.toPlainText(),
             size=size,
             modified_ns=modified_ns,
+            signature=file_signature(path),
         )
         self.preview.document().setModified(False)
         self.save_file_button.setEnabled(False)
@@ -772,6 +801,9 @@ class RealExplorerPage(ExplorerPage):
             value.setText("-")
 
     def _set_preview_text(self, text: str) -> None:
+        self.image_preview.hide()
+        self.image_preview.clear()
+        self.preview.show()
         self.preview_loading = True
         self.preview.setPlainText(text)
         self.preview.document().setModified(False)

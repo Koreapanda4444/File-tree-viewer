@@ -9,6 +9,10 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from file_content import ContentCancelled, read_file_bytes
+from fs_ops import file_signature, require_unchanged
+from fs_paths import checked_boundary
+
 MAX_EDIT_BYTES = 8 * 1_024 * 1_024
 LARGE_PREVIEW_BYTES = 1 * 1_024 * 1_024
 READ_CHUNK_SIZE = 256 * 1_024
@@ -28,10 +32,21 @@ class PreviewResult:
     is_link: bool = False
     cancelled: bool = False
     error: str | None = None
+    signature: dict[str, int] | None = None
+    image_bytes: bytes | None = None
+    image: object | None = None
 
 
 class FilePreviewTask:
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        max_edit_bytes: int = MAX_EDIT_BYTES,
+        preview_bytes: int = LARGE_PREVIEW_BYTES,
+    ) -> None:
+        self.max_edit_bytes = max(1, max_edit_bytes)
+        self.preview_bytes = max(1, preview_bytes)
         self.path = path
         self._cancelled = threading.Event()
 
@@ -40,34 +55,43 @@ class FilePreviewTask:
 
     def run(self) -> PreviewResult:
         try:
-            is_link = self.path.is_symlink()
-            details = (
-                self.path.stat() if is_link else self.path.stat(follow_symlinks=False)
+            initial = self.path.stat()
+            limit = (
+                self.preview_bytes
+                if initial.st_size > self.max_edit_bytes
+                else self.max_edit_bytes
             )
-            if not stat.S_ISREG(details.st_mode):
-                raise OSError("Preview is unavailable for this file type")
-            size = details.st_size
-            modified_ns = details.st_mtime_ns
-            truncated = size > MAX_EDIT_BYTES
-            read_limit = LARGE_PREVIEW_BYTES if truncated else size
-            data = self._read_bytes(read_limit)
+            content = read_file_bytes(
+                self.path, limit=limit, cancelled=self._cancelled, allow_links=True
+            )
             if self._cancelled.is_set():
-                return self._cancelled_result(size, modified_ns)
-                return
-
-            text, encoding, binary = decode_text(data, truncated=truncated)
+                return self._cancelled_result(
+                    content.details.st_size, content.details.st_mtime_ns
+                )
+            text, encoding, binary = decode_text(
+                content.data, truncated=content.truncated
+            )
+            image = image_signature(content.data)
+            binary = binary or image
+            if binary:
+                text = hex_preview(content.data[:4096])
+                encoding = None
             return PreviewResult(
                 path=self.path,
                 text=text,
                 encoding=encoding,
                 newline=detect_newline(text),
-                size=size,
-                modified_ns=modified_ns,
-                editable=not binary and not truncated and not is_link,
-                truncated=truncated,
+                size=content.details.st_size,
+                modified_ns=content.details.st_mtime_ns,
+                editable=not binary and not content.truncated and not content.is_link,
+                truncated=content.truncated,
                 binary=binary,
-                is_link=is_link,
+                is_link=content.is_link,
+                signature=content.signature,
+                image_bytes=content.data if image and not content.truncated else None,
             )
+        except ContentCancelled:
+            return self._cancelled_result(0, 0)
         except (OSError, RuntimeError, UnicodeError, ValueError) as error:
             return PreviewResult(
                 path=self.path,
@@ -81,18 +105,6 @@ class FilePreviewTask:
                 binary=False,
                 error=str(error),
             )
-
-    def _read_bytes(self, limit: int) -> bytearray:
-        data = bytearray()
-        remaining = limit
-        with self.path.open("rb") as file:
-            while remaining > 0 and not self._cancelled.is_set():
-                chunk = file.read(min(READ_CHUNK_SIZE, remaining))
-                if not chunk:
-                    break
-                data.extend(chunk)
-                remaining -= len(chunk)
-        return data
 
     def _cancelled_result(self, size: int, modified_ns: int) -> PreviewResult:
         return PreviewResult(
@@ -186,9 +198,11 @@ def save_text_atomic(
     *,
     encoding: str,
     newline: str,
+    expected_signature: dict[str, int] | None = None,
 ) -> tuple[int, int]:
-    if path.is_symlink():
-        raise OSError("Symbolic links are read-only in the built-in editor")
+    checked_boundary(path.parent, path, allow_leaf_link=False)
+    expected = expected_signature or file_signature(path)
+    require_unchanged(path, expected)
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     if newline != "\n":
         normalized = normalized.replace("\n", newline)
@@ -207,6 +221,8 @@ def save_text_atomic(
             file.flush()
             os.fsync(file.fileno())
         os.chmod(temporary_path, stat.S_IMODE(original.st_mode))
+        checked_boundary(path.parent, path, allow_leaf_link=False)
+        require_unchanged(path, expected)
         os.replace(temporary_path, path)
     except (OSError, UnicodeError):
         temporary_path.unlink(missing_ok=True)
@@ -214,3 +230,29 @@ def save_text_atomic(
 
     updated = path.stat(follow_symlinks=False)
     return updated.st_size, updated.st_mtime_ns
+
+
+def image_signature(data: bytes) -> bool:
+    return data.startswith(
+        (
+            b"\x89PNG\r\n\x1a\n",
+            b"\xff\xd8\xff",
+            b"GIF87a",
+            b"GIF89a",
+            b"BM",
+            b"II*\x00",
+            b"MM\x00*",
+            b"\x00\x00\x01\x00",
+        )
+    ) or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+
+
+def hex_preview(data: bytes) -> str:
+    return "\n".join(
+        f"{offset:08x}  {data[offset : offset + 16].hex(' '):47}  "
+        + "".join(
+            chr(value) if 32 <= value < 127 else "."
+            for value in data[offset : offset + 16]
+        )
+        for offset in range(0, len(data), 16)
+    )

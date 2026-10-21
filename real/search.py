@@ -11,16 +11,15 @@ from typing import Any
 
 from PySide6.QtCore import (
     QAbstractItemModel,
-    QFileInfo,
     QModelIndex,
     QObject,
     Qt,
     Signal,
     Slot,
 )
-from PySide6.QtWidgets import QFileIconProvider
 
 from fs_paths import is_hidden, is_reparse_point
+from real.icons import FileIconCache
 from ui.tasks import CancellableWorker
 
 RESULT_BATCH_SIZE = 1_024
@@ -73,10 +72,11 @@ class SearchWorker(CancellableWorker):
         iterators = []
         stopped = False
 
-        def open_directory(directory: Path):
+        def open_directory(directory: Path, details=None):
             nonlocal skipped
             try:
-                details = directory.stat(follow_symlinks=False)
+                if details is None:
+                    details = directory.stat(follow_symlinks=False)
                 identity: tuple[object, ...]
                 if details.st_ino:
                     identity = ("inode", details.st_dev, details.st_ino)
@@ -135,7 +135,13 @@ class SearchWorker(CancellableWorker):
                     matched += 1
 
                 if is_directory and not is_reparse_point(entry):
-                    child_iterator = open_directory(Path(entry.path))
+                    try:
+                        child_iterator = open_directory(
+                            Path(entry.path), entry.stat(follow_symlinks=False)
+                        )
+                    except OSError:
+                        skipped += 1
+                        child_iterator = None
                     if child_iterator is not None:
                         iterators.append(child_iterator)
 
@@ -194,7 +200,7 @@ class SearchResultsModel(QAbstractItemModel):
         self._counts = [0, 0]
         self._cache: OrderedDict[tuple[int, int], list[tuple[str, str]]] = OrderedDict()
         self._closed = False
-        self.icons = QFileIconProvider()
+        self.icons = FileIconCache()
 
     @property
     def total_count(self) -> int:
@@ -207,26 +213,25 @@ class SearchResultsModel(QAbstractItemModel):
             category = 0 if result.is_directory else 1
             grouped[category].append((result.name, result.path))
 
+        with self._database:
+            self._database.executemany(
+                "INSERT INTO results(category, position, name, path) VALUES (?, ?, ?, ?)",
+                (
+                    (category, self._counts[category] + offset, name, path)
+                    for category, rows in enumerate(grouped)
+                    for offset, (name, path) in enumerate(rows)
+                ),
+            )
         for category, rows in enumerate(grouped):
             if not rows:
                 continue
             parent = self.index(category, 0)
             first = self._counts[category]
             last = first + len(rows) - 1
-            first_changed_page = first // CACHE_PAGE_SIZE
+            page = first // CACHE_PAGE_SIZE
             for key in tuple(self._cache):
-                if key[0] == category and key[1] >= first_changed_page:
+                if key[0] == category and key[1] >= page:
                     del self._cache[key]
-            database_rows = [
-                (category, first + offset, name, path)
-                for offset, (name, path) in enumerate(rows)
-            ]
-            self._database.executemany(
-                "INSERT INTO results(category, position, name, path) "
-                "VALUES (?, ?, ?, ?)",
-                database_rows,
-            )
-            self._database.commit()
             self.beginInsertRows(parent, first, last)
             self._counts[category] += len(rows)
             self.endInsertRows()
@@ -238,6 +243,7 @@ class SearchResultsModel(QAbstractItemModel):
         self._database.commit()
         self._counts = [0, 0]
         self._cache.clear()
+        self.icons.clear()
         self.endResetModel()
 
     def close(self) -> None:
@@ -312,7 +318,7 @@ class SearchResultsModel(QAbstractItemModel):
             if index.column() == 2:
                 return "Folder" if category == 0 else "File"
         if role == Qt.ItemDataRole.DecorationRole and index.column() == 0:
-            return self.icons.icon(QFileInfo(path))
+            return self.icons.icon(Path(path), is_directory=category == 0)
         if role in (Qt.ItemDataRole.ToolTipRole, Qt.ItemDataRole.UserRole):
             return path
         return None
@@ -353,6 +359,8 @@ class SearchResultsModel(QAbstractItemModel):
         return None
 
     def _result_at(self, category: int, row: int) -> tuple[str, str] | None:
+        if category not in (0, 1) or row < 0 or row >= self._counts[category]:
+            return None
         page = row // CACHE_PAGE_SIZE
         key = (category, page)
         results = self._cache.get(key)

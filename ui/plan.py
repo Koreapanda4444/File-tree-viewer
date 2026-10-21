@@ -74,6 +74,7 @@ class SnapshotNode:
     parent: SnapshotNode | None = None
     children: list[SnapshotNode] = field(default_factory=list)
     child_count: int | None = None
+    row: int = 0
 
     @property
     def path(self) -> PurePosixPath | None:
@@ -112,6 +113,8 @@ class SnapshotTreeModel(QAbstractItemModel):
     ) -> QModelIndex:
         if row < 0 or column < 0 or column >= len(self.headers):
             return QModelIndex()
+        if parent.isValid() and parent.column() > 0:
+            return QModelIndex()
         if not parent.isValid():
             return self.createIndex(0, column, self.root) if row == 0 else QModelIndex()
         parent_node = self.node_from_index(parent)
@@ -128,7 +131,7 @@ class SnapshotTreeModel(QAbstractItemModel):
             return self.createIndex(0, 0, parent)
         if parent.parent is None:
             return QModelIndex()
-        return self.createIndex(parent.parent.children.index(parent), 0, parent)
+        return self.createIndex(parent.row, 0, parent)
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         node = self.node_from_index(index)
@@ -180,6 +183,8 @@ class SnapshotTreeModel(QAbstractItemModel):
         return None
 
     def hasChildren(self, parent: QModelIndex = INVALID_INDEX) -> bool:
+        if parent.column() > 0:
+            return False
         if not parent.isValid():
             return True
         node = self.node_from_index(parent)
@@ -190,29 +195,33 @@ class SnapshotTreeModel(QAbstractItemModel):
     def canFetchMore(self, parent: QModelIndex) -> bool:
         node = self.node_from_index(parent)
         return bool(
-            node is not None
+            parent.column() == 0
+            and node is not None
             and node.is_directory
             and len(node.children) < self._child_count(node)
         )
 
     def fetchMore(self, parent: QModelIndex) -> None:
         node = self.node_from_index(parent)
-        if node is None or not node.is_directory:
+        if parent.column() > 0 or node is None or not node.is_directory:
             return
         first = len(node.children)
         remaining = self._child_count(node) - first
         if remaining <= 0:
             return
-        entries = self.snapshot.children(
+        entries = self.snapshot.children_after(
             node.path,
-            offset=first,
+            after=node.children[-1].entry if node.children else None,
             limit=min(QUERY_PAGE_SIZE, remaining),
         )
         if not entries:
             node.child_count = first
             return
         self.beginInsertRows(parent, first, first + len(entries) - 1)
-        node.children.extend(SnapshotNode(entry, node) for entry in entries)
+        node.children.extend(
+            SnapshotNode(entry, node, row=first + offset)
+            for offset, entry in enumerate(entries)
+        )
         self.endInsertRows()
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:

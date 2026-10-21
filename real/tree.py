@@ -9,7 +9,6 @@ from typing import Any
 
 from PySide6.QtCore import (
     QAbstractItemModel,
-    QFileInfo,
     QModelIndex,
     QObject,
     QPersistentModelIndex,
@@ -17,9 +16,9 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtWidgets import QFileIconProvider
 
 from fs_paths import is_hidden, is_reparse_point
+from real.icons import FileIconCache
 
 PAGE_SIZE = 256
 SCAN_BATCH_SIZE = 1_024
@@ -41,6 +40,7 @@ class FileNode:
     size: int | None = None
     modified: float | None = None
     load_generation: int = 0
+    fetch_pending: bool = False
 
     def load_details(self) -> None:
         if self.details_loaded:
@@ -74,10 +74,12 @@ class FileTreeModel(QAbstractItemModel):
         page_size: int = PAGE_SIZE,
     ) -> None:
         super().__init__(parent)
+        if page_size <= 0:
+            raise ValueError("Tree page size must be positive")
         self.page_size = page_size
         self.show_hidden = False
         self.root: FileNode | None = None
-        self.icons = QFileIconProvider()
+        self.icons = FileIconCache()
 
     @property
     def root_path(self) -> Path | None:
@@ -90,6 +92,7 @@ class FileTreeModel(QAbstractItemModel):
 
         self.beginResetModel()
         self._close_current_tree()
+        self.icons.clear()
         self.root = FileNode(
             path=root_path,
             name=str(root_path),
@@ -125,6 +128,7 @@ class FileTreeModel(QAbstractItemModel):
 
         node.close_iterator()
         node.load_generation += 1
+        node.fetch_pending = False
         if node.children:
             self.beginRemoveRows(parent, 0, len(node.children) - 1)
             for child in node.children:
@@ -156,6 +160,8 @@ class FileTreeModel(QAbstractItemModel):
         if row < 0 or column < 0 or column >= len(self.headers):
             return QModelIndex()
 
+        if parent.isValid() and parent.column() > 0:
+            return QModelIndex()
         if not parent.isValid():
             if row == 0 and self.root is not None:
                 return self.createIndex(0, column, self.root)
@@ -175,6 +181,8 @@ class FileTreeModel(QAbstractItemModel):
         return self.createIndex(parent_node.row, 0, parent_node)
 
     def hasChildren(self, parent: QModelIndex = INVALID_INDEX) -> bool:
+        if parent.column() > 0:
+            return False
         if not parent.isValid():
             return self.root is not None
 
@@ -185,11 +193,23 @@ class FileTreeModel(QAbstractItemModel):
 
     def canFetchMore(self, parent: QModelIndex) -> bool:
         node = self.node_from_index(parent)
-        return bool(node and node.is_directory and not node.fully_loaded)
+        return bool(
+            parent.column() == 0
+            and node
+            and node.is_directory
+            and not node.fully_loaded
+            and not node.fetch_pending
+        )
 
     def fetchMore(self, parent: QModelIndex) -> None:
         node = self.node_from_index(parent)
-        if node is None or not node.is_directory or node.fully_loaded:
+        if (
+            parent.column() > 0
+            or node is None
+            or not node.is_directory
+            or node.fully_loaded
+            or node.fetch_pending
+        ):
             return
 
         if node.iterator is None:
@@ -241,6 +261,7 @@ class FileTreeModel(QAbstractItemModel):
 
         if not children:
             if not node.fully_loaded:
+                node.fetch_pending = True
                 generation = node.load_generation
                 persistent = QPersistentModelIndex(parent)
                 QTimer.singleShot(
@@ -268,6 +289,7 @@ class FileTreeModel(QAbstractItemModel):
         node = self.node_from_index(index)
         if node is None or node.load_generation != generation:
             return
+        node.fetch_pending = False
         if self.canFetchMore(index):
             self.fetchMore(index)
 
@@ -289,7 +311,9 @@ class FileTreeModel(QAbstractItemModel):
                 return _format_time(node.modified)
 
         if role == Qt.ItemDataRole.DecorationRole and index.column() == 0:
-            return self.icons.icon(QFileInfo(str(node.path)))
+            return self.icons.icon(
+                node.path, is_directory=node.is_directory, is_link=node.is_link
+            )
         if role == Qt.ItemDataRole.ToolTipRole:
             return str(node.path)
         if role == Qt.ItemDataRole.UserRole:

@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import sqlite3
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import QSignalBlocker, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -21,9 +25,15 @@ from PySide6.QtWidgets import (
 from diagnostics import (
     DiagnosticCancelled,
     DiagnosticReport,
+    FileChangedError,
     scan_snapshot_problems,
 )
-from snapshot import FileSnapshot
+from duplicate_management import (
+    duplicate_selection_groups,
+    prepare_duplicate_deletions,
+    sorted_duplicate_groups,
+)
+from snapshot import FileSnapshot, SnapshotCancelled
 from ui.analysis import format_size
 from ui.tasks import CancellableWorker
 
@@ -53,8 +63,12 @@ class DiagnosticWorker(CancellableWorker):
 
 
 class DiagnosticDialog(QDialog):
-    def __init__(self, report: DiagnosticReport, parent=None) -> None:
+    def __init__(
+        self, report: DiagnosticReport, parent=None, *, already_deleted=()
+    ) -> None:
         super().__init__(parent)
+        self.report = report
+        self.already_deleted = already_deleted
         self._staged_delete_paths = ()
         self.setWindowTitle("Duplicate and Problem Files")
         self.resize(1_050, 720)
@@ -70,6 +84,23 @@ class DiagnosticDialog(QDialog):
         form.addRow("Other problems", QLabel(f"{report.problem_count:,}"))
         layout.addWidget(summary)
 
+        tools = QHBoxLayout()
+        self.order = QComboBox()
+        for label, value in (
+            ("Savings", "savings"),
+            ("File size", "size"),
+            ("Copy count", "copies"),
+            ("Path", "path"),
+        ):
+            self.order.addItem(label, value)
+        keep = QPushButton("Select All Except One per Group")
+        clear = QPushButton("Clear Selection")
+        self.selection_summary = QLabel("No duplicate candidates selected")
+        tools.addWidget(self.order)
+        tools.addWidget(keep)
+        tools.addWidget(clear)
+        layout.addLayout(tools)
+        layout.addWidget(self.selection_summary)
         tabs = QTabWidget()
         self.duplicates = duplicate_tree(report)
         tabs.addTab(
@@ -119,6 +150,9 @@ class DiagnosticDialog(QDialog):
         self.stage_button.setEnabled(False)
         self.stage_button.clicked.connect(self.accept_selected_deletes)
         self.duplicates.itemSelectionChanged.connect(self.update_stage_button)
+        self.order.currentIndexChanged.connect(self.reorder_groups)
+        keep.clicked.connect(self.select_redundant_copies)
+        clear.clicked.connect(self.duplicates.clearSelection)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -127,7 +161,19 @@ class DiagnosticDialog(QDialog):
         return self._staged_delete_paths
 
     def update_stage_button(self) -> None:
-        self.stage_button.setEnabled(bool(self.selected_duplicate_paths()))
+        paths = self.selected_duplicate_paths()
+        try:
+            duplicate_selection_groups(
+                self.report, paths, already_deleted=self.already_deleted
+            )
+        except ValueError as error:
+            self.stage_button.setEnabled(False)
+            self.selection_summary.setText(str(error))
+        else:
+            self.stage_button.setEnabled(bool(paths))
+            self.selection_summary.setText(
+                f"{len(paths):,} candidate(s) selected; contents and retained copies will be rechecked before staging"
+            )
 
     def selected_duplicate_paths(self):
         return tuple(
@@ -136,15 +182,60 @@ class DiagnosticDialog(QDialog):
             if (path := item.data(0, Qt.ItemDataRole.UserRole)) is not None
         )
 
+    def reorder_groups(self) -> None:
+        selected = set(self.selected_duplicate_paths())
+        blocker = QSignalBlocker(self.duplicates)
+        temporary = duplicate_tree(self.report, order=self.order.currentData())
+        self.duplicates.clear()
+        while temporary.topLevelItemCount():
+            self.duplicates.addTopLevelItem(temporary.takeTopLevelItem(0))
+        temporary.deleteLater()
+        for index in range(self.duplicates.topLevelItemCount()):
+            group = self.duplicates.topLevelItem(index)
+            if selected.intersection(group.data(0, Qt.ItemDataRole.UserRole + 1) or ()):
+                populate_duplicate_group(group)
+            for row in range(group.childCount()):
+                child = group.child(row)
+                child.setSelected(child.data(0, Qt.ItemDataRole.UserRole) in selected)
+        del blocker
+        self.update_stage_button()
+
+    def select_redundant_copies(self) -> None:
+        blocker = QSignalBlocker(self.duplicates)
+        self.duplicates.clearSelection()
+        for index in range(self.duplicates.topLevelItemCount()):
+            group = self.duplicates.topLevelItem(index)
+            populate_duplicate_group(group)
+            group.setExpanded(True)
+            for row in range(1, group.childCount()):
+                group.child(row).setSelected(True)
+        del blocker
+        self.update_stage_button()
+
     def accept_selected_deletes(self) -> None:
         paths = self.selected_duplicate_paths()
         if not paths:
             return
-        self._staged_delete_paths = paths
-        self.accept()
+        try:
+            duplicate_selection_groups(
+                self.report, paths, already_deleted=self.already_deleted
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Invalid duplicate selection", str(error))
+            return
+        answer = QMessageBox.question(
+            self,
+            "Review Duplicate Deletes",
+            f"Recheck and stage {len(paths):,} DELETE operation(s)? At least one matching copy must remain in each group. Files change only when the Plan is applied.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._staged_delete_paths = paths
+            self.accept()
 
 
-def duplicate_tree(report: DiagnosticReport) -> QTreeWidget:
+def duplicate_tree(report: DiagnosticReport, *, order="savings") -> QTreeWidget:
     tree = QTreeWidget()
     tree.setHeaderLabels(
         ("Group / Path", "Size", "Copies", "Potential Savings", "SHA-256")
@@ -155,7 +246,7 @@ def duplicate_tree(report: DiagnosticReport) -> QTreeWidget:
     tree.setColumnWidth(1, 100)
     tree.setColumnWidth(2, 70)
     tree.setColumnWidth(3, 130)
-    for number, group in enumerate(report.duplicate_groups, start=1):
+    for number, group in enumerate(sorted_duplicate_groups(report, order), start=1):
         parent = QTreeWidgetItem(
             (
                 f"Duplicate group {number:,}",
@@ -167,13 +258,23 @@ def duplicate_tree(report: DiagnosticReport) -> QTreeWidget:
         )
         parent.setToolTip(4, group.digest)
         tree.addTopLevelItem(parent)
-        for path in group.paths:
-            child = QTreeWidgetItem((path.as_posix(), "", "", "", ""))
-            child.setToolTip(0, path.as_posix())
-            child.setData(0, Qt.ItemDataRole.UserRole, path)
-            parent.addChild(child)
+        parent.setData(0, Qt.ItemDataRole.UserRole + 1, group.paths)
+        parent.setChildIndicatorPolicy(
+            QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator
+        )
+    tree.itemExpanded.connect(populate_duplicate_group)
     tree.header().setStretchLastSection(True)
     return tree
+
+
+def populate_duplicate_group(parent) -> None:
+    if parent.childCount():
+        return
+    for path in parent.data(0, Qt.ItemDataRole.UserRole + 1) or ():
+        child = QTreeWidgetItem((path.as_posix(), "", "", "", ""))
+        child.setToolTip(0, path.as_posix())
+        child.setData(0, Qt.ItemDataRole.UserRole, path)
+        parent.addChild(child)
 
 
 def collision_tree(report: DiagnosticReport) -> QTreeWidget:
@@ -229,3 +330,41 @@ def set_item(table: QTableWidget, row: int, column: int, value: str) -> None:
     item.setToolTip(value)
     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
     table.setItem(row, column, item)
+
+
+class DuplicateReviewWorker(CancellableWorker):
+    progress = Signal(str, int)
+    finished = Signal(object, bool, str)
+
+    def __init__(self, snapshot, plan, report, paths) -> None:
+        super().__init__()
+        self.snapshot, self.plan, self.report, self.paths = (
+            snapshot,
+            plan,
+            report,
+            paths,
+        )
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = prepare_duplicate_deletions(
+                self.snapshot,
+                self.plan,
+                self.report,
+                self.paths,
+                cancelled=self._cancelled,
+                progress=self.progress.emit,
+            )
+        except (SnapshotCancelled, DiagnosticCancelled):
+            self.finished.emit(None, True, "")
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            FileChangedError,
+            sqlite3.Error,
+        ) as error:
+            self.finished.emit(None, False, str(error))
+        else:
+            self.finished.emit(result, False, "")

@@ -64,7 +64,7 @@ from snapshot_compare import SnapshotComparison
 from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
-from ui.diagnostics import DiagnosticDialog, DiagnosticWorker
+from ui.diagnostics import DiagnosticDialog, DiagnosticWorker, DuplicateReviewWorker
 from ui.performance import (
     PlanLoadWorker,
     PlanPreviewWorker,
@@ -452,6 +452,7 @@ class PlanExplorerPage(QWidget):
         self.simulation_worker: PlanSimulationWorker | None = None
         self.simulation_outcome: tuple[object, bool, str] | None = None
         self.simulation_purpose = ""
+        self.diagnostic_report = None
         self.last_application: PlanApplicationRecord | None = None
         self.recovery_scan = None
         self._recovery_notified_root = None
@@ -758,6 +759,7 @@ class PlanExplorerPage(QWidget):
         old_snapshot = self.snapshot
         old_model = self.snapshot_model
         self.snapshot = snapshot
+        self.diagnostic_report = None
         self.snapshot_model = SnapshotTreeModel(snapshot, self)
         self.snapshot_model.move_requested.connect(self.stage_moves)
         self.tree.setModel(self.snapshot_model)
@@ -1325,6 +1327,13 @@ class PlanExplorerPage(QWidget):
             self.progress_label.setText("Plan file operation cancelled")
             self.status_changed.emit("Plan file operation cancelled")
             return
+        if kind == "duplicate_review" and isinstance(result, tuple):
+            self.plan.extend(result)
+            self._refresh_plan_list()
+            self.status_changed.emit(
+                f"Staged {len(result):,} verified duplicate deletions"
+            )
+            return
         if kind == "plan_preview" and isinstance(result, FileSnapshot):
             self.show_structure_preview(result)
             self.progress_label.setText("Structure preview complete")
@@ -1526,25 +1535,25 @@ class PlanExplorerPage(QWidget):
         total_problems = result.problem_count + duplicate_groups
         self.progress_label.setText(f"Found {total_problems:,} problem group(s)")
         self.status_changed.emit("Duplicate and problem file scan complete")
-        dialog = DiagnosticDialog(result, self)
+        self.diagnostic_report = result
+        dialog = DiagnosticDialog(
+            result,
+            self,
+            already_deleted=tuple(
+                op.source
+                for op in self.plan.operations
+                if op.action is PlanAction.DELETE
+                and op.conflict_policy is not ConflictPolicy.SKIP
+            ),
+        )
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         staged_paths = dialog.staged_delete_paths if accepted else ()
         dialog.deleteLater()
-        existing_deletes = {
-            operation.source
-            for operation in self.plan.operations
-            if operation.action is PlanAction.DELETE
-        }
-        staged = 0
-        for path in staged_paths:
-            if path in existing_deletes:
-                continue
-            self.plan.add_delete(path)
-            existing_deletes.add(path)
-            staged += 1
-        if staged:
-            self._refresh_plan_list()
-            self.status_changed.emit(f"Staged {staged:,} duplicate file deletion(s)")
+        if staged_paths and self.snapshot is not None:
+            self.start_plan_io(
+                DuplicateReviewWorker(self.snapshot, self.plan, result, staged_paths),
+                "duplicate_review",
+            )
 
     def show_plan_diff(self) -> None:
         if self.simulation_is_running:

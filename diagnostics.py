@@ -9,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from fs_ops import file_signature, require_unchanged
+from fs_paths import checked_boundary
 from snapshot import FileSnapshot, open_snapshot_database
 
 HASH_CHUNK_SIZE = 1024 * 1024
@@ -29,10 +31,19 @@ class DuplicateGroup:
     digest: str
     size: int
     paths: tuple[PurePosixPath, ...]
+    physical_copies: int | None = None
 
     @property
     def reclaimable_size(self) -> int:
-        return self.size * (len(self.paths) - 1)
+        return self.size * max(
+            0,
+            (
+                self.physical_copies
+                if self.physical_copies is not None
+                else len(self.paths)
+            )
+            - 1,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +273,7 @@ def find_duplicate_files(
     root = snapshot.root.resolve(strict=True)
     groups: list[DuplicateGroup] = []
     changed: list[PathProblem] = []
-    hashes: dict[str, list[PurePosixPath]] = {}
+    hashes: dict[str, list[tuple[PurePosixPath, str | None]]] = {}
     current_size: int | None = None
     hashed_file_count = 0
     hashed_bytes = 0
@@ -272,10 +283,17 @@ def find_duplicate_files(
             return
         for digest, paths in hashes.items():
             if len(paths) > 1:
-                groups.append(DuplicateGroup(digest, current_size, tuple(paths)))
+                groups.append(
+                    DuplicateGroup(
+                        digest,
+                        current_size,
+                        tuple(path for path, identity in paths),
+                        len({identity or str(path) for path, identity in paths}),
+                    )
+                )
 
     rows = database.execute(
-        "SELECT entry.path, entry.size, entry.modified_ns "
+        "SELECT entry.path, entry.size, entry.modified_ns, entry.identity "
         "FROM entries AS entry "
         "LEFT JOIN errors ON errors.path = entry.path "
         "WHERE entry.is_directory = 0 AND entry.is_symlink = 0 "
@@ -285,7 +303,7 @@ def find_duplicate_files(
         "  GROUP BY size HAVING COUNT(*) > 1"
         ") ORDER BY entry.size, entry.path"
     )
-    for path_text, size_value, modified_ns_value in rows:
+    for path_text, size_value, modified_ns_value, identity in rows:
         check_cancelled(cancelled)
         path = PurePosixPath(str(path_text))
         size = int(size_value)
@@ -302,6 +320,7 @@ def find_duplicate_files(
                 absolute,
                 expected_size=size,
                 expected_modified_ns=modified_ns,
+                expected_identity=identity,
                 cancelled=cancelled,
             )
         except FileChangedError as error:
@@ -314,7 +333,7 @@ def find_duplicate_files(
             inaccessible.setdefault(path.as_posix(), PathProblem(path, str(error)))
             continue
 
-        hashes.setdefault(digest, []).append(path)
+        hashes.setdefault(digest, []).append((path, identity))
         hashed_file_count += 1
         hashed_bytes += size
         if hashed_file_count % 64 == 0 or hashed_file_count == candidate_count:
@@ -335,6 +354,7 @@ def hash_snapshot_file(
     expected_size: int,
     expected_modified_ns: int,
     cancelled: threading.Event | None,
+    expected_identity: str | None = None,
 ) -> str:
     try:
         resolved = path.resolve(strict=True)
@@ -349,15 +369,31 @@ def hash_snapshot_file(
             "The path now resolves outside the Snapshot root"
         ) from error
 
+    checked_boundary(root, path, allow_leaf_link=False)
+    signature = file_signature(path)
     details = path.lstat()
+    if (
+        expected_identity is not None
+        and f"{details.st_dev}:{details.st_ino}" != expected_identity
+    ):
+        raise FileChangedError("The file identity changed after the Snapshot")
     if not stat.S_ISREG(details.st_mode):
         raise FileChangedError("The item is no longer a regular file")
     verify_snapshot_details(details, expected_size, expected_modified_ns)
 
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    with os.fdopen(os.open(path, flags), "rb") as stream:
         opened = os.fstat(stream.fileno())
-        if not stat.S_ISREG(opened.st_mode):
+        if (opened.st_dev, opened.st_ino) != (
+            details.st_dev,
+            details.st_ino,
+        ) or not stat.S_ISREG(opened.st_mode):
             raise FileChangedError("The item is no longer a regular file")
         verify_snapshot_details(opened, expected_size, expected_modified_ns)
         while chunk := stream.read(HASH_CHUNK_SIZE):
@@ -366,6 +402,10 @@ def hash_snapshot_file(
         verify_snapshot_details(
             os.fstat(stream.fileno()), expected_size, expected_modified_ns
         )
+    try:
+        require_unchanged(path, signature)
+    except OSError as error:
+        raise FileChangedError("The file changed while hashing") from error
     return digest.hexdigest()
 
 

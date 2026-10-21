@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from fs_ops import file_signature, path_exists, transaction_lock
-from fs_paths import checked_boundary, normalize_root, normalized_path
+from fs_paths import checked_boundary, is_link_stat, normalize_root, normalized_path
 from plan_apply import (
     ApplicationStatus,
     MutationKind,
@@ -220,7 +220,7 @@ def reconcile_pending(record: PlanApplicationRecord) -> None:
                 and stat.S_ISDIR(details.st_mode)
                 and not any(target.iterdir())
             )
-            if not safe:
+            if not safe or is_link_stat(details):
                 raise FileExistsError(f"Unconfirmed created item was changed: {target}")
             applied = replace(mutation, after_signature=file_signature(target))
             log_event(record, "applied", applied)

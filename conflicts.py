@@ -47,10 +47,7 @@ def resolve_plan_conflicts(
     if plan.root is None or plan.root != snapshot.root:
         raise ValueError("The Plan and Snapshot roots do not match")
 
-    grouped: dict[str, list[SimulationIssue]] = defaultdict(list)
-    for issue in simulation.issues:
-        grouped[issue.operation_id].append(issue)
-    required = set(grouped)
+    required = {issue.operation_id for issue in simulation.issues}
     if set(choices) != required:
         raise ValueError("Every conflicting operation needs one resolution")
 
@@ -68,7 +65,7 @@ def resolve_plan_conflicts(
     resolved = FilePlan(plan.root)
 
     for operation in plan.operations:
-        operation_issues = grouped.get(operation.operation_id)
+        operation_issues = simulation.issues_for(operation.operation_id)
         if not operation_issues:
             resolved.append(operation)
             continue

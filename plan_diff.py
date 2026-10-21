@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import PurePosixPath
 
-from fs_paths import checked_boundary, path_collision_key
+from fs_paths import checked_boundary, is_link_stat, path_collision_key
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot, SnapshotEntry
 
@@ -204,7 +204,68 @@ def simulate_plan(
         0,
         len(lookup_paths),
     )
-    entry_cache = snapshot.entries_by_path(lookup_paths)
+    entry_cache = snapshot.entries_by_path(
+        lookup_paths,
+        normalized=True,
+        checkpoint=lambda: check_simulation_cancelled(cancelled),
+    )
+    file_targets = {
+        path_collision_key(operation.target)
+        for operation in active_operations
+        if operation.target is not None
+        and (
+            operation.action is PlanAction.CREATE_FILE
+            or (
+                operation.source is not None
+                and (source_entry := entry_cache.get(operation.source)) is not None
+                and (not source_entry.is_directory or source_entry.is_symlink)
+            )
+        )
+    }
+    reported_ancestors: set[PurePosixPath] = set()
+    root_problem = None
+    if validate_live:
+        try:
+            checked_boundary(snapshot.root, snapshot.root, allow_leaf_link=False)
+        except (OSError, ValueError) as error:
+            root_problem = str(error)
+    live_source_cache: dict[PurePosixPath, str | None] = {}
+    live_target_cache: dict[PurePosixPath, bool] = {}
+    ancestor_cache: dict[PurePosixPath, PurePosixPath | None] = {}
+    parent_cache: dict[PurePosixPath, str | None] = {}
+    vacated_keys = {path_collision_key(path): path for path in vacated_paths}
+
+    def vacated_ancestor(path: PurePosixPath) -> PurePosixPath | None:
+        if path not in ancestor_cache:
+            ancestor_cache[path] = next(
+                (
+                    vacated_keys[key]
+                    for part in (path, *path.parents)
+                    if (key := path_collision_key(part)) in vacated_keys
+                ),
+                None,
+            )
+        return ancestor_cache[path]
+
+    def parent_problem(path: PurePosixPath) -> str | None:
+        for part in reversed((path, *path.parents)):
+            if part == PurePosixPath("."):
+                continue
+            if part not in parent_cache:
+                try:
+                    details = plan.absolute_path(part).lstat()
+                    parent_cache[part] = (
+                        None
+                        if stat.S_ISDIR(details.st_mode) and not is_link_stat(details)
+                        else f"Destination ancestor is not a usable folder: {part}"
+                    )
+                except OSError as error:
+                    parent_cache[part] = (
+                        f"Destination ancestor cannot be checked: {part}: {error}"
+                    )
+            if parent_cache[part] is not None:
+                return parent_cache[part]
+        return None
 
     def entry(path: PurePosixPath) -> SnapshotEntry | None:
         return entry_cache.get(path)
@@ -238,7 +299,9 @@ def simulate_plan(
                 source,
             )
         elif validate_live:
-            live_problem = source_live_problem(snapshot, source_entry)
+            if source not in live_source_cache:
+                live_source_cache[source] = source_live_problem(snapshot, source_entry)
+            live_problem = live_source_cache[source]
             if live_problem is not None:
                 report(
                     operation,
@@ -257,21 +320,26 @@ def simulate_plan(
                 source,
             )
         for parent in source.parents:
-            for ancestor_operation in source_map.get(parent, ()):
-                report(
-                    operation,
-                    IssueKind.CONFLICT,
-                    IssueCode.SOURCE_OVERLAP,
-                    f"An ancestor is also changed: {parent}",
-                    source,
-                )
-                report(
-                    ancestor_operation,
-                    IssueKind.CONFLICT,
-                    IssueCode.SOURCE_OVERLAP,
-                    f"A descendant is also changed: {source}",
-                    parent,
-                )
+            ancestor_operations = source_map.get(parent, ())
+            if not ancestor_operations:
+                continue
+            report(
+                operation,
+                IssueKind.CONFLICT,
+                IssueCode.SOURCE_OVERLAP,
+                f"An ancestor is also changed: {parent}",
+                source,
+            )
+            if parent not in reported_ancestors:
+                reported_ancestors.add(parent)
+                for ancestor_operation in ancestor_operations:
+                    report(
+                        ancestor_operation,
+                        IssueKind.CONFLICT,
+                        IssueCode.SOURCE_OVERLAP,
+                        f"One or more descendants are also changed, including: {source}",
+                        parent,
+                    )
 
     for position, operation in enumerate(active_operations, start=1):
         simulation_checkpoint(
@@ -312,14 +380,14 @@ def simulate_plan(
             )
 
         target_entry = entry(target)
+        if validate_live and target not in live_target_cache:
+            live_target_cache[target] = live_path_exists(plan, target)
         target_exists = (
-            live_path_exists(plan, target)
-            if validate_live
-            else target_entry is not None
+            live_target_cache[target] if validate_live else target_entry is not None
         )
         if (
             target_exists
-            and not path_is_vacated(target, vacated_paths)
+            and vacated_ancestor(target) is None
             and operation.conflict_policy is not ConflictPolicy.OVERWRITE
         ):
             report(
@@ -331,9 +399,31 @@ def simulate_plan(
             )
 
         parent = target.parent
+        blocker = next(
+            (
+                ancestor
+                for ancestor in target.parents
+                if path_collision_key(ancestor) in file_targets
+            ),
+            None,
+        )
+        if blocker is not None:
+            report(
+                operation,
+                IssueKind.INVALID,
+                IssueCode.PARENT_INVALID,
+                f"A planned file is used as a destination folder: {blocker}",
+                blocker,
+            )
+            continue
+        if root_problem is not None:
+            report(
+                operation, IssueKind.CONFLICT, IssueCode.PARENT_CHANGED, root_problem
+            )
+            continue
         if parent == PurePosixPath("."):
             continue
-        blocking_source = changed_ancestor(parent, vacated_paths)
+        blocking_source = vacated_ancestor(parent)
         if blocking_source is not None:
             report(
                 operation,
@@ -347,6 +437,17 @@ def simulate_plan(
         if folder_is_planned(parent, created_folders):
             continue
         parent_entry = entry(parent)
+        if validate_live and parent_entry is not None:
+            problem = parent_problem(parent)
+            if problem is not None:
+                report(
+                    operation,
+                    IssueKind.CONFLICT,
+                    IssueCode.PARENT_CHANGED,
+                    problem,
+                    parent,
+                )
+                continue
         if parent_entry is None:
             report(
                 operation,

@@ -108,6 +108,9 @@ class FileSnapshot:
     def entries_by_path(
         self,
         paths,
+        *,
+        normalized: bool = False,
+        checkpoint: Callable[[], None] | None = None,
     ) -> dict[PurePosixPath, SnapshotEntry | None]:
         results: dict[PurePosixPath, SnapshotEntry | None] = {}
         database = self._connection()
@@ -116,6 +119,8 @@ class FileSnapshot:
         def load_batch():
             if not batch:
                 return
+            if checkpoint is not None:
+                checkpoint()
             placeholders = ",".join("?" for _ in batch)
             for row in database.execute(
                 entry_select() + f" WHERE entries.path IN ({placeholders})",
@@ -128,11 +133,15 @@ class FileSnapshot:
         for path in paths:
             if path is None:
                 continue
-            normalized = normalize_plan_path(path)
-            if normalized in results:
+            key = (
+                path
+                if normalized and isinstance(path, PurePosixPath)
+                else normalize_plan_path(path)
+            )
+            if key in results:
                 continue
-            results[normalized] = None
-            batch.append(normalized)
+            results[key] = None
+            batch.append(key)
             if len(batch) >= LOOKUP_BATCH_SIZE:
                 load_batch()
         load_batch()

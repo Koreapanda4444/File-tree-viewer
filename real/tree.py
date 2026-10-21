@@ -103,6 +103,13 @@ class FileTreeModel(QAbstractItemModel):
         )
         self.endResetModel()
 
+    def clear(self) -> None:
+        self.beginResetModel()
+        self._close_current_tree()
+        self.root = None
+        self.icons.clear()
+        self.endResetModel()
+
     def close(self) -> None:
         self._close_current_tree()
 

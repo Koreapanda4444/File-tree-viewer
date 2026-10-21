@@ -74,6 +74,7 @@ from ui.file_groups import FileGroupDelegate
 from ui.file_views import FolderViews
 from ui.image_preview import ImagePreview
 from ui.locations import LocationsButton, LocationStore
+from ui.navigation_tabs import FolderTabs
 from ui.plan import PlanExplorerPage
 from ui.preferences import (
     Preferences,
@@ -481,6 +482,8 @@ class RealExplorerPage(ExplorerPage):
         self.path_completion.idle.connect(
             lambda: self._emit_ready_to_close() if self.close_requested else None
         )
+        self.navigation_tabs = FolderTabs(self)
+        self.layout().insertWidget(0, self.navigation_tabs)
 
     @property
     def search_is_running(self) -> bool:
@@ -516,7 +519,7 @@ class RealExplorerPage(ExplorerPage):
         self.set_root(path)
         self.location.setText(str(self.model.root_path or ""))
 
-    def set_root(self, path: Path) -> bool:
+    def set_root(self, path: Path | None) -> bool:
         if (
             self.operation_is_running
             or self.search_is_running
@@ -529,7 +532,10 @@ class RealExplorerPage(ExplorerPage):
         if self.model.root_path is not None and not self._confirm_editor_transition():
             return False
         try:
-            self.model.set_root(path)
+            if path is None:
+                self.model.clear()
+            else:
+                self.model.set_root(path)
         except (OSError, ValueError) as error:
             QMessageBox.critical(self, "Cannot open root", str(error))
             return False
@@ -545,15 +551,17 @@ class RealExplorerPage(ExplorerPage):
         self.name_completion.stop()
         self.name_completion.closed = False
         self.name_input.clear()
-        self.refresh_button.setEnabled(True)
-        self.search_input.setEnabled(True)
+        self.refresh_button.setEnabled(self.model.root_path is not None)
+        self.search_input.setEnabled(self.model.root_path is not None)
         self.clear_search_button.setEnabled(bool(self.search_input.text()))
         self.update_search_button()
         self._expand_root()
-        if not self.history_navigation:
+        if not self.history_navigation and self.model.root_path is not None:
             self.history.visit(self.model.root_path)
         self.update_navigation_buttons()
-        saved = self.locations.visit(self.model.root_path)
+        saved = self.model.root_path is None or self.locations.visit(
+            self.model.root_path
+        )
         self.location_changed.emit(self.model.root_path)
         self.status_changed.emit(
             f"Root: {self.model.root_path}"

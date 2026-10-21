@@ -29,8 +29,8 @@ def normalize_plan_path(path: PurePosixPath | str) -> PurePosixPath:
 
 
 def validate_name(name: str, *, windows: bool | None = None) -> str:
-    clean = name.strip()
-    if not clean or clean in {".", ".."}:
+    clean = name
+    if not clean.strip() or clean in {".", ".."}:
         raise ValueError("Enter a valid name")
     if any(ord(character) < 32 for character in clean):
         raise ValueError("A name cannot contain control characters")
@@ -41,10 +41,12 @@ def validate_name(name: str, *, windows: bool | None = None) -> str:
             raise ValueError("The name contains an invalid Windows character")
         if clean.endswith((".", " ")):
             raise ValueError("A Windows name cannot end with a dot or space")
-        stem = clean.split(".", 1)[0].casefold()
-        reserved = {"con", "prn", "aux", "nul"}
+        stem = clean.split(".", 1)[0].rstrip(" ").casefold()
+        reserved = {"con", "prn", "aux", "nul", "conin$", "conout$"}
         reserved.update(
-            f"{prefix}{number}" for prefix in ("com", "lpt") for number in range(1, 10)
+            f"{prefix}{number}"
+            for prefix in ("com", "lpt")
+            for number in "123456789¹²³"
         )
         if stem in reserved:
             raise ValueError("The name is reserved by Windows")

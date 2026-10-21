@@ -175,7 +175,11 @@ class VirtualTreeModel(QAbstractItemModel):
         current = self.root
         for name in (part for part in normalized.split("/") if part):
             current = next(
-                (child for child in current.children if child.name == name),
+                (
+                    child
+                    for child in current.children
+                    if child.name.casefold() == name.casefold()
+                ),
                 None,
             )
             if current is None:
@@ -344,7 +348,10 @@ class VirtualTreeModel(QAbstractItemModel):
         *,
         ignore: VirtualNode | None = None,
     ) -> None:
-        if any(child is not ignore and child.name == name for child in parent.children):
+        if any(
+            child is not ignore and child.name.casefold() == name.casefold()
+            for child in parent.children
+        ):
             raise FileExistsError(name)
 
     def _validate_transfer(
@@ -361,9 +368,9 @@ class VirtualTreeModel(QAbstractItemModel):
         for node in nodes:
             if node is self.root:
                 raise ValueError("The virtual root cannot be copied or moved")
-            if node.name in names:
+            if node.name.casefold() in names:
                 raise FileExistsError(node.name)
-            names.add(node.name)
+            names.add(node.name.casefold())
             if node is destination or is_ancestor(node, destination):
                 raise ValueError("A folder cannot be placed inside itself")
             if moving and node.parent is destination:
@@ -488,9 +495,9 @@ def node_from_data(data: dict[str, Any]) -> VirtualNode:
             if not isinstance(child_entry, dict):
                 raise TypeError("Invalid workspace item")
             child = node_from_entry(child_entry, parent)
-            if child.name in names:
+            if child.name.casefold() in names:
                 raise ValueError(f"Duplicate item name: {child.name}")
-            names.add(child.name)
+            names.add(child.name.casefold())
             parent.children.append(child)
             stack.append((child, child_entry))
     return root

@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QMenu, QStackedWidget, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QMenu,
+    QSizePolicy,
+    QStackedWidget,
+    QToolButton,
+    QWidget,
+)
 
 
 class AddressBar(QWidget):
@@ -16,6 +23,10 @@ class AddressBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.stack = QStackedWidget()
+        self.stack.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        self.stack.setMinimumWidth(1)
         self.crumbs = QWidget()
         self.crumb_layout = QHBoxLayout(self.crumbs)
         self.crumb_layout.setContentsMargins(0, 0, 0, 0)

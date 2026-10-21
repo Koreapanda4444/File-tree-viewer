@@ -68,6 +68,7 @@ from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
 from ui.file_compare import FileComparisonDialog
 from ui.image_preview import ImagePreview
+from ui.locations import LocationsButton, LocationStore
 from ui.plan import PlanExplorerPage
 from ui.preferences import (
     Preferences,
@@ -281,10 +282,15 @@ class RealExplorerPage(ExplorerPage):
     task_failed = Signal(str)
     task_progress = Signal(str, int, int)
     ready_to_close = Signal()
+    location_changed = Signal(object)
+    locations_changed = Signal()
 
     def __init__(self) -> None:
         super().__init__(virtual=False)
 
+        self.locations = LocationStore()
+        self.locations_button = LocationsButton(self)
+        self.layout().itemAt(0).layout().addWidget(self.locations_button)
         self.history = NavigationHistory()
         self.history_navigation = False
         self.model = FileTreeModel(self)
@@ -440,8 +446,26 @@ class RealExplorerPage(ExplorerPage):
         if not self.history_navigation:
             self.history.visit(self.model.root_path)
         self.update_navigation_buttons()
-        self.status_changed.emit(f"Root: {self.model.root_path}")
+        saved = self.locations.visit(self.model.root_path)
+        self.location_changed.emit(self.model.root_path)
+        self.status_changed.emit(
+            f"Root: {self.model.root_path}"
+            + ("" if saved else " — recent locations could not be saved")
+        )
         return True
+
+    def toggle_favorite(self, path):
+        if path is None:
+            return
+        try:
+            saved = self.locations.toggle_favorite(path)
+        except ValueError as error:
+            self.status_changed.emit(str(error))
+            return
+        self.locations_changed.emit()
+        self.status_changed.emit(
+            "Favorites updated" if saved else "Favorites could not be saved"
+        )
 
     def update_navigation_buttons(self):
         busy = (

@@ -61,6 +61,7 @@ from real.operations import (
 from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.tree import FileTreeModel
+from ui.feedback import TaskMonitor, show_error
 from ui.file_compare import FileComparisonDialog
 from ui.image_preview import ImagePreview
 from ui.plan import PlanExplorerPage
@@ -260,6 +261,8 @@ class ExplorerPage(QWidget):
 
 class RealExplorerPage(ExplorerPage):
     status_changed = Signal(str)
+    task_failed = Signal(str)
+    task_progress = Signal(str, int, int)
     ready_to_close = Signal()
 
     def __init__(self) -> None:
@@ -487,6 +490,7 @@ class RealExplorerPage(ExplorerPage):
             self.status_changed.emit(f"Root: {self.model.root_path}")
 
     def show_search_progress(self, scanned: int, matched: int) -> None:
+        self.task_progress.emit(f"{scanned:,} checked, {matched:,} found", scanned, 0)
         if self.search_view_active:
             self.status_changed.emit(
                 f"Searching: {scanned:,} checked, {matched:,} found"
@@ -1077,6 +1081,7 @@ class RealExplorerPage(ExplorerPage):
         total: int,
         name: str,
     ) -> None:
+        self.task_progress.emit(f"{action.title()}: {name}", position, total)
         self.status_changed.emit(f"{action.title()}: {position}/{total} - {name}")
 
     def finish_file_operation(
@@ -1129,10 +1134,12 @@ class RealExplorerPage(ExplorerPage):
             self._refresh_after_operation()
 
         if errors and not self.close_requested:
-            shown = "\n".join(errors[:8])
-            if len(errors) > 8:
-                shown += f"\n...and {len(errors) - 8} more"
-            QMessageBox.warning(self, "File operation incomplete", shown)
+            show_error(
+                self,
+                "File operation incomplete",
+                f"{len(changes):,} completed; {len(errors):,} failed or cancelled. Completed copies and moves are available in Undo.",
+                "\n".join(errors),
+            )
 
         if action == "delete":
             message = f"Moved {len(changes)} item(s) to the Recycle Bin"
@@ -1272,6 +1279,8 @@ class RealExplorerPage(ExplorerPage):
 
 class VirtualExplorerPage(ExplorerPage):
     status_changed = Signal(str)
+    task_failed = Signal(str)
+    task_progress = Signal(str, int, int)
     ready_to_close = Signal()
     close_aborted = Signal()
 
@@ -1950,7 +1959,26 @@ class MainWindow(QMainWindow):
         restore_layout(self, self.settings)
         settings_menu = self.menuBar().addMenu("Settings")
         settings_menu.addAction("Preferences...", self.edit_preferences)
+        self.task_monitor = TaskMonitor(self)
+        self.statusBar().addPermanentWidget(self.task_monitor)
+        for page in (self.real_page, self.virtual_page, self.plan_page):
+            page.task_failed.connect(self.show_task_error)
+            page.task_progress.connect(
+                lambda message, completed, total, p=page: self.task_monitor.advance(
+                    p, message, completed, total
+                )
+            )
         self.statusBar().showMessage("Ready")
+
+    def show_task_error(self, message: str) -> None:
+        if self.isEnabled():
+            show_error(
+                self,
+                "Background task failed",
+                "The task stopped unexpectedly. Review its result before retrying.",
+                message,
+            )
+        self.statusBar().showMessage("Background task failed: " + message)
 
     def apply_preferences(self, preferences: Preferences) -> None:
         self.preferences = preferences

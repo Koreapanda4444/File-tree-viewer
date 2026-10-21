@@ -63,6 +63,7 @@ from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
 from ui.diagnostics import DiagnosticDialog, DiagnosticWorker, DuplicateReviewWorker
+from ui.feedback import show_error
 from ui.performance import (
     AnalysisReportWorker,
     PlanLoadWorker,
@@ -418,6 +419,8 @@ class PlanListModel(QAbstractItemModel):
 
 class PlanExplorerPage(QWidget):
     status_changed = Signal(str)
+    task_failed = Signal(str)
+    task_progress = Signal(str, int, int)
     ready_to_close = Signal()
 
     def __init__(self) -> None:
@@ -549,6 +552,13 @@ class PlanExplorerPage(QWidget):
         row.addWidget(self.cancel_button)
         self.progress_label.setWordWrap(True)
         layout.addWidget(self.progress_label)
+        self.recovery_notice = QLabel()
+        self.recovery_notice.setWordWrap(True)
+        self.recovery_notice.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.recovery_notice.hide()
+        layout.addWidget(self.recovery_notice)
         self.import_button.clicked.connect(self.select_snapshot_root)
         self.cancel_button.clicked.connect(self.cancel_snapshot)
         return layout
@@ -724,6 +734,9 @@ class PlanExplorerPage(QWidget):
             self.progress_label.setText("Cancelling...")
 
     def show_scan_progress(self, scanned: int, errors: int) -> None:
+        self.task_progress.emit(
+            f"Snapshot: {scanned:,} items, {errors:,} errors", scanned, 0
+        )
         self.progress_label.setText(f"{scanned:,} items, {errors:,} errors")
 
     def receive_scan_result(self, result: object, cancelled: bool, error: str) -> None:
@@ -753,7 +766,12 @@ class PlanExplorerPage(QWidget):
         result, cancelled, error = outcome
         if error:
             self.progress_label.setText("Snapshot failed")
-            QMessageBox.warning(self, "Cannot import snapshot", error)
+            show_error(
+                self,
+                "Cannot import snapshot",
+                "The snapshot could not be imported. Check the selected folder and access permissions.",
+                error,
+            )
             self.status_changed.emit(error)
         elif cancelled:
             self.progress_label.setText("Snapshot cancelled")
@@ -1322,12 +1340,22 @@ class PlanExplorerPage(QWidget):
         self.plan_io_kind = kind
         self._set_plan_io(True)
         self.progress_label.setText(
-            "Loading Plan…" if kind == "load" else "Saving Plan…"
+            {
+                "load": "Loading Plan…",
+                "save": "Saving Plan…",
+                "snapshot_load": "Opening Snapshot…",
+                "snapshot_save": "Saving Snapshot…",
+                "snapshot_compare": "Comparing Snapshots…",
+                "plan_preview": "Building structure preview…",
+                "duplicate_review": "Rechecking duplicate candidates…",
+                "analysis_export": "Exporting analysis report…",
+            }.get(kind, "Processing…")
         )
         thread.start()
 
     def show_plan_io_progress(self, message: str, completed: int) -> None:
-        self.progress_label.setText(f"{message}: {completed:,} operations")
+        self.task_progress.emit(message, completed, 0)
+        self.progress_label.setText(f"{message}: {completed:,}")
 
     def receive_plan_io_result(
         self,
@@ -1360,7 +1388,12 @@ class PlanExplorerPage(QWidget):
         result, cancelled, error = outcome
         if error:
             self.progress_label.setText("Plan file operation failed")
-            QMessageBox.warning(self, "Cannot process Plan file", error)
+            show_error(
+                self,
+                "Cannot process Plan file",
+                "The file operation failed. Review the details before retrying.",
+                error,
+            )
             self.status_changed.emit(error)
             return
         if cancelled:
@@ -1485,7 +1518,9 @@ class PlanExplorerPage(QWidget):
         result, cancelled, error = outcome
         if error:
             self.progress_label.setText("Analysis failed")
-            QMessageBox.warning(self, "Cannot analyze snapshot", error)
+            show_error(
+                self, "Cannot analyze snapshot", "Snapshot analysis stopped.", error
+            )
             self.status_changed.emit(error)
             return
         if cancelled:
@@ -1565,7 +1600,9 @@ class PlanExplorerPage(QWidget):
         result, cancelled, error = outcome
         if error:
             self.progress_label.setText("Problem scan failed")
-            QMessageBox.warning(self, "Cannot scan for problems", error)
+            show_error(
+                self, "Cannot scan for problems", "The problem scan stopped.", error
+            )
             self.status_changed.emit(error)
             return
         if cancelled:
@@ -1653,6 +1690,7 @@ class PlanExplorerPage(QWidget):
         completed: int,
         total: int,
     ) -> None:
+        self.task_progress.emit(message, completed, total)
         self.progress_label.setText(f"{message}: {completed:,}/{total:,}")
 
     def receive_simulation_result(
@@ -1844,6 +1882,7 @@ class PlanExplorerPage(QWidget):
         total: int,
         name: str,
     ) -> None:
+        self.task_progress.emit(f"{phase}: {name}", completed, total)
         self.progress_label.setText(f"{phase}: {completed:,}/{total:,} — {name}")
 
     def receive_apply_result(self, result: object, error: str) -> None:
@@ -1915,12 +1954,12 @@ class PlanExplorerPage(QWidget):
         self.plan.clear()
         self._refresh_plan_list()
         self.progress_label.setText("Recovery incomplete")
-        QMessageBox.critical(
+        show_error(
             self,
             "Manual recovery required",
-            f"{result.error}\n\nSome changes could not be restored. "
-            "Do not apply another Plan until this recovery record is checked:\n"
-            f"{result.journal_path}",
+            "Some changes could not be restored.",
+            str(result.error),
+            recovery_path=result.journal_path,
         )
         self.start_snapshot(result.root)
 
@@ -2126,7 +2165,12 @@ class PlanExplorerPage(QWidget):
         return answer == QMessageBox.StandardButton.Yes
 
     def _show_plan_error(self, error: Exception) -> None:
-        QMessageBox.warning(self, "Cannot stage operation", str(error))
+        show_error(
+            self,
+            "Cannot process Plan",
+            "Review the selected paths, operation and conflicts.",
+            str(error),
+        )
         self.status_changed.emit(str(error))
 
     def _set_scanning(self, scanning: bool) -> None:
@@ -2242,6 +2286,13 @@ class PlanExplorerPage(QWidget):
         self.update_buttons()
 
     def update_buttons(self) -> None:
+        attention = bool(self.recovery_scan and self.recovery_scan.needs_attention)
+        self.recovery_notice.setVisible(attention)
+        if attention:
+            self.recovery_notice.setText(
+                f"Recovery required — {len(self.recovery_scan.candidates):,} record(s) need review. Apply is blocked; use Recover Interrupted Plan."
+            )
+            self.recovery_notice.setToolTip(self.recovery_scan.summary())
         ready = (
             self.snapshot is not None
             and not self.scan_is_running

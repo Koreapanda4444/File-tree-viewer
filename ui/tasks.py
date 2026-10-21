@@ -51,6 +51,8 @@ def prepare_worker_thread(owner: QObject, worker: QObject, *, on_finished) -> QT
     runner.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
     if hasattr(owner, "status_changed"):
         runner.failed.connect(owner.status_changed)
+    if hasattr(owner, "task_failed"):
+        runner.failed.connect(owner.task_failed)
     thread.finished.connect(on_finished)
     thread.finished.connect(thread.deleteLater)
     thread.runner = runner

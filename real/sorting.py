@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import QSortFilterProxyModel, Qt
+from PySide6.QtGui import QColor
+
+from fs_paths import normalized_path
 
 GROUP_ROLE = int(Qt.ItemDataRole.UserRole) + 8
 
@@ -11,6 +14,7 @@ class FileSortModel(QSortFilterProxyModel):
     def __init__(self, source, parent=None):
         super().__init__(parent)
         self.setSourceModel(source)
+        self.cut_paths = set()
         self.grouping = "None"
         self.folders_first = True
         self.setDynamicSortFilter(True)
@@ -84,6 +88,12 @@ class FileSortModel(QSortFilterProxyModel):
         return self.key(a, left.column()) < self.key(b, right.column())
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if (
+            role == Qt.ItemDataRole.ForegroundRole
+            and index.isValid()
+            and normalized_path(self.path_from_index(index)) in self.cut_paths
+        ):
+            return QColor("gray")
         if role == GROUP_ROLE and index.isValid():
             group = self.group(self.node(self.mapToSource(index)))
             if group is None:

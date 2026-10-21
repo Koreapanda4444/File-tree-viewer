@@ -69,6 +69,7 @@ from real.tree import FileTreeModel
 from ui.address import AddressBar
 from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
+from ui.file_commands import FileCommands
 from ui.file_compare import FileComparisonDialog
 from ui.file_groups import FileGroupDelegate
 from ui.file_views import FolderViews
@@ -320,6 +321,7 @@ class RealExplorerPage(ExplorerPage):
     task_failed = Signal(str)
     task_progress = Signal(str, int, int)
     ready_to_close = Signal()
+    transfer_completed = Signal(str, object)
     location_changed = Signal(object)
     locations_changed = Signal()
 
@@ -484,6 +486,7 @@ class RealExplorerPage(ExplorerPage):
         )
         self.navigation_tabs = FolderTabs(self)
         self.layout().insertWidget(0, self.navigation_tabs)
+        self.file_commands = FileCommands(self)
 
     @property
     def search_is_running(self) -> bool:
@@ -1459,6 +1462,7 @@ class RealExplorerPage(ExplorerPage):
 
         if changes:
             self._refresh_after_operation()
+        self.transfer_completed.emit(action, changes)
 
         if errors and not self.close_requested:
             show_error(

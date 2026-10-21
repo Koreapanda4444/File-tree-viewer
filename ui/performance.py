@@ -177,3 +177,32 @@ class SnapshotCompareWorker(CancellableWorker):
         finally:
             if before is not None:
                 before.close()
+
+
+class PlanPreviewWorker(CancellableWorker):
+    progress = Signal(str, int)
+    finished = Signal(object, bool, str)
+
+    def __init__(self, snapshot: FileSnapshot, plan: FilePlan) -> None:
+        super().__init__()
+        self.snapshot = snapshot
+        self.plan = plan
+
+    @Slot()
+    def run(self) -> None:
+        from plan_preview import build_plan_preview
+        from snapshot import SnapshotCancelled
+
+        try:
+            result = build_plan_preview(
+                self.snapshot,
+                self.plan,
+                cancelled=self._cancelled,
+                progress=self.progress.emit,
+            )
+        except (SnapshotCancelled, SimulationCancelled):
+            self.finished.emit(None, True, "")
+        except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
+            self.finished.emit(None, False, str(error))
+        else:
+            self.finished.emit(result, False, "")

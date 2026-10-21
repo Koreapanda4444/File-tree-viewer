@@ -61,6 +61,7 @@ from ui.conflicts import ConflictResolutionDialog
 from ui.diagnostics import DiagnosticDialog, DiagnosticWorker
 from ui.performance import (
     PlanLoadWorker,
+    PlanPreviewWorker,
     PlanSaveWorker,
     PlanSimulationWorker,
     SnapshotCompareWorker,
@@ -587,6 +588,8 @@ class PlanExplorerPage(QWidget):
         self.organize_button = QPushButton("Organize Files")
         self.analysis_button = QPushButton("Analyze Structure")
         self.diagnostic_button = QPushButton("Find Problems")
+        self.preview_plan_button = QPushButton("Preview Structure")
+        self.preview_plan_button.clicked.connect(self.preview_plan_structure)
         self.diff_button = QPushButton("Diff / Simulate")
         self.apply_button = QPushButton("Apply All")
         self.cancel_apply_button = QPushButton("Cancel Apply")
@@ -601,6 +604,7 @@ class PlanExplorerPage(QWidget):
             self.organize_button,
             self.analysis_button,
             self.diagnostic_button,
+            self.preview_plan_button,
             self.diff_button,
             self.apply_button,
             self.cancel_apply_button,
@@ -916,6 +920,51 @@ class PlanExplorerPage(QWidget):
         self._refresh_plan_list()
         self.status_changed.emit("Plan cleared")
 
+    def preview_plan_structure(self) -> None:
+        if self.snapshot is not None:
+            self.start_plan_io(
+                PlanPreviewWorker(self.snapshot, self.plan), "plan_preview"
+            )
+
+    def show_structure_preview(self, after: FileSnapshot) -> None:
+        if self.snapshot is None:
+            after.close()
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Planned Folder Structure — original files are unchanged")
+        dialog.resize(1150, 720)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(
+            QLabel(
+                f"Before: {self.snapshot.entry_count:,} items · After: {after.entry_count:,} items"
+            )
+        )
+        split = QSplitter(Qt.Orientation.Horizontal)
+        models = []
+        for title, snapshot in (("Before", self.snapshot), ("After Plan", after)):
+            panel = QWidget()
+            column = QVBoxLayout(panel)
+            column.addWidget(QLabel(title))
+            tree = QTreeView()
+            tree.setUniformRowHeights(True)
+            model = SnapshotTreeModel(snapshot, tree)
+            models.append(model)
+            tree.setModel(model)
+            tree.setDragEnabled(False)
+            tree.setAcceptDrops(False)
+            tree.setColumnWidth(0, 300)
+            index = model.index(0, 0)
+            model.fetchMore(index)
+            tree.expand(index)
+            column.addWidget(tree)
+            split.addWidget(panel)
+        layout.addWidget(split)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+            after.close()
+
     def compare_saved_snapshot(self) -> None:
         if self.snapshot is None:
             return
@@ -1087,6 +1136,10 @@ class PlanExplorerPage(QWidget):
         if cancelled:
             self.progress_label.setText("Plan file operation cancelled")
             self.status_changed.emit("Plan file operation cancelled")
+            return
+        if kind == "plan_preview" and isinstance(result, FileSnapshot):
+            self.show_structure_preview(result)
+            self.progress_label.setText("Structure preview complete")
             return
         if kind == "snapshot_compare" and isinstance(result, SnapshotComparison):
             dialog = SnapshotComparisonDialog(result, self)
@@ -1999,6 +2052,7 @@ class PlanExplorerPage(QWidget):
             "Cancel Problem Scan" if self.diagnostic_is_running else "Find Problems"
         )
         self.diagnostic_button.setEnabled(self.diagnostic_is_running or ready)
+        self.preview_plan_button.setEnabled(ready and bool(len(self.plan)))
         self.diff_button.setText(
             "Cancel Simulation" if self.simulation_is_running else "Diff / Simulate"
         )

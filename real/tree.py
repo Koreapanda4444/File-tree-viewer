@@ -90,6 +90,8 @@ class FileTreeModel(QAbstractItemModel):
         if not root_path.is_dir():
             raise NotADirectoryError(root_path)
 
+        with os.scandir(root_path):
+            pass
         self.beginResetModel()
         self._close_current_tree()
         self.icons.clear()

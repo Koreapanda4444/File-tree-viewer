@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from dataclasses import replace
@@ -102,11 +103,13 @@ class ExplorerPage(QWidget):
         row.addWidget(QLabel("Workspace" if self.virtual else "Root"))
 
         self.location = QLineEdit()
-        self.location.setReadOnly(True)
+        self.location.setReadOnly(self.virtual)
         if self.virtual:
             self.location.setText("VM:/")
         else:
-            self.location.setPlaceholderText("Select a folder or drive")
+            self.location.setPlaceholderText(
+                "Enter a folder or drive path, then press Enter"
+            )
         row.addWidget(self.location, 1)
 
         self.location_buttons = []
@@ -301,6 +304,7 @@ class RealExplorerPage(ExplorerPage):
         self.select_root_button.setEnabled(True)
         self.show_hidden.setEnabled(True)
 
+        self.location.returnPressed.connect(self.navigate_address)
         self.select_root_button.clicked.connect(self.choose_root)
         self.refresh_button.clicked.connect(self.refresh_root)
         self.show_hidden.toggled.connect(self.toggle_hidden)
@@ -345,6 +349,17 @@ class RealExplorerPage(ExplorerPage):
         )
         if selected:
             self.set_root(Path(selected))
+
+    def navigate_address(self) -> None:
+        text = self.location.text().strip().strip('"')
+        if not text:
+            self.location.setText(str(self.model.root_path or ""))
+            return
+        path = Path(os.path.expandvars(text)).expanduser()
+        if not path.is_absolute():
+            path = (self.model.root_path or Path.home()) / path
+        self.set_root(path)
+        self.location.setText(str(self.model.root_path or ""))
 
     def set_root(self, path: Path) -> None:
         if (

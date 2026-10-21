@@ -47,6 +47,7 @@ from real.operations import (
 from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.tree import FileTreeModel
+from ui.file_compare import FileComparisonDialog
 from ui.plan import PlanExplorerPage
 from ui.tasks import prepare_worker_thread
 from virtual.workspace import (
@@ -257,6 +258,9 @@ class RealExplorerPage(ExplorerPage):
         self.search_input.returnPressed.connect(self.start_search)
         self.search_button.clicked.connect(self.start_search)
         self.clear_search_button.clicked.connect(self.clear_search)
+        self.compare_files_button = QPushButton("Compare Files")
+        self.compare_files_button.clicked.connect(self.compare_selected_files)
+        self.layout().addWidget(self.compare_files_button)
         self.new_file_button.clicked.connect(self.create_new_file)
         self.new_folder_button.clicked.connect(self.create_new_folder)
         self.rename_button.clicked.connect(self.rename_selected)
@@ -803,6 +807,7 @@ class RealExplorerPage(ExplorerPage):
 
     def update_action_buttons(self, *args: object) -> None:
         blocked = self.search_is_running or self.operation_is_running
+        self.compare_files_button.setEnabled(not blocked)
         has_root = self.model.root_path is not None
         selected = self._operable_selected_paths()
 
@@ -813,6 +818,19 @@ class RealExplorerPage(ExplorerPage):
         self.move_button.setEnabled(bool(selected) and not blocked)
         self.delete_button.setEnabled(bool(selected) and not blocked)
         self.undo_button.setEnabled(bool(self.undo_stack) and not blocked)
+
+    def compare_selected_files(self) -> None:
+        if not self._confirm_editor_transition():
+            return
+        paths = [path for path in self.selected_paths() if path.is_file()]
+        while len(paths) < 2:
+            path, _ = QFileDialog.getOpenFileName(self, "Select File to Compare")
+            if not path:
+                return
+            paths.append(Path(path))
+        dialog = FileComparisonDialog(paths[0], paths[1], self)
+        dialog.exec()
+        dialog.deleteLater()
 
     def create_new_file(self) -> None:
         self._create_item(directory=False)

@@ -20,6 +20,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import QApplication, QStyle
 
+from fs_paths import validate_windows_name as validate_name
+
 INVALID_INDEX = QModelIndex()
 WORKSPACE_FORMAT = "file-tree-viewer-virtual-v1"
 
@@ -425,25 +427,6 @@ def clone_tree(source: VirtualNode, parent: VirtualNode) -> VirtualNode:
             target_node.children.append(clone)
             stack.append((child, clone))
     return root
-
-
-def validate_name(name: str) -> str:
-    checked = name.strip()
-    if not checked or checked in {".", ".."}:
-        raise ValueError("Enter a valid name")
-    if any(ord(character) < 32 for character in checked):
-        raise ValueError("The name contains a control character")
-    if any(character in checked for character in '<>:"/\\|?*'):
-        raise ValueError("The name contains an invalid character")
-    if checked.endswith((".", " ")):
-        raise ValueError("The name cannot end with a dot or space")
-    stem = checked.split(".", 1)[0].casefold()
-    reserved = {"con", "prn", "aux", "nul"}
-    reserved.update(f"com{number}" for number in range(1, 10))
-    reserved.update(f"lpt{number}" for number in range(1, 10))
-    if stem in reserved:
-        raise ValueError("The name is reserved by Windows")
-    return checked
 
 
 def node_size(node: VirtualNode) -> int:

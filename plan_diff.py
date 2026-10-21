@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import PurePosixPath
 
+from fs_paths import path_collision_key
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot, SnapshotEntry
 
@@ -461,11 +462,6 @@ def live_path_exists(plan: FilePlan, path: PurePosixPath) -> bool:
         return os.path.lexists(plan.absolute_path(path))
     except OSError:
         return True
-
-
-def path_collision_key(path: PurePosixPath) -> str:
-    value = path.as_posix()
-    return value.casefold() if os.name == "nt" else value
 
 
 def path_is_vacated(

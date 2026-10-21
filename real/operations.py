@@ -9,6 +9,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot
 from send2trash import send2trash
 
+from fs_paths import normalized_path, validate_name
+
 
 @dataclass(frozen=True, slots=True)
 class FileChange:
@@ -52,44 +54,20 @@ def rename_item(source: Path, new_name: str) -> OperationRecord:
     return OperationRecord("rename", [FileChange(source, target)])
 
 
-def validate_name(name: str) -> str:
-    clean_name = name.strip()
-    if not clean_name or clean_name in {".", ".."}:
-        raise ValueError("Enter a valid name")
-    if any(ord(character) < 32 for character in clean_name):
-        raise ValueError("A name cannot contain control characters")
-    if "\0" in clean_name or "/" in clean_name or "\\" in clean_name:
-        raise ValueError("A name cannot contain path separators")
-    if os.name == "nt":
-        if any(character in clean_name for character in '<>:"|?*'):
-            raise ValueError("The name contains an invalid Windows character")
-        if clean_name.endswith((".", " ")):
-            raise ValueError("A Windows name cannot end with a dot or space")
-        stem = clean_name.split(".", 1)[0].casefold()
-        reserved = {"con", "prn", "aux", "nul"}
-        reserved.update(f"com{number}" for number in range(1, 10))
-        reserved.update(f"lpt{number}" for number in range(1, 10))
-        if stem in reserved:
-            raise ValueError("The name is reserved by Windows")
-    return clean_name
-
-
 def normalize_sources(paths: list[Path]) -> list[Path]:
     unique: list[Path] = []
     seen: set[str] = set()
     for path in paths:
         absolute = Path(os.path.abspath(path))
-        key = os.path.normcase(str(absolute))
+        key = normalized_path(absolute)
         if key not in seen:
             unique.append(absolute)
             seen.add(key)
 
-    selected_keys = {os.path.normcase(str(path)) for path in unique}
+    selected_keys = {normalized_path(path) for path in unique}
     result = []
     for path in unique:
-        if any(
-            os.path.normcase(str(parent)) in selected_keys for parent in path.parents
-        ):
+        if any(normalized_path(parent) in selected_keys for parent in path.parents):
             continue
         result.append(path)
     return result

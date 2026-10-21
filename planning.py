@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
+
+from fs_paths import normalize_plan_path, normalize_root
 
 
 class PlanAction(str, Enum):
@@ -178,31 +180,6 @@ class FilePlan:
         target: PurePosixPath | str | None = None,
     ) -> PlanOperation:
         return self.append(PlanOperation(action, source, target))
-
-
-def normalize_root(root: Path | str | None) -> Path | None:
-    if root is None:
-        return None
-    if isinstance(root, str) and not root.strip():
-        raise ValueError("The plan root cannot be empty")
-    return Path(root).expanduser().absolute()
-
-
-def normalize_plan_path(path: PurePosixPath | str) -> PurePosixPath:
-    raw_path = str(path).replace("\\", "/")
-    if not raw_path or raw_path.startswith("/") or PureWindowsPath(raw_path).drive:
-        raise ValueError("Plan paths must be relative")
-
-    parts = raw_path.split("/")
-    if any(not part or part in {".", ".."} for part in parts):
-        raise ValueError("Plan paths cannot contain empty, current, or parent parts")
-    if any(
-        "\0" in part or any(ord(character) < 32 for character in part) for part in parts
-    ):
-        raise ValueError("Plan paths cannot contain control characters")
-    if parts[0].casefold() == ".file-tree-viewer":
-        raise ValueError("This path is reserved for File Tree Viewer recovery data")
-    return PurePosixPath(*parts)
 
 
 def validate_operation(

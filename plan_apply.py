@@ -12,6 +12,7 @@ from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
+from fs_paths import normalized_path, path_is_within
 from plan_diff import simulate_plan
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot
@@ -598,18 +599,6 @@ def validate_undo_state(record: PlanApplicationRecord) -> None:
             raise FileExistsError(f"Undo destination already exists: {source}")
         set_exists(target, False)
         set_exists(source, True)
-
-
-def path_is_within(path: Path, parent: Path) -> bool:
-    try:
-        common = os.path.commonpath((normalized_path(path), normalized_path(parent)))
-    except ValueError:
-        return False
-    return common == normalized_path(parent)
-
-
-def normalized_path(path: Path) -> str:
-    return os.path.normcase(os.path.abspath(str(path)))
 
 
 def required_text(data: dict[str, object], key: str) -> str:

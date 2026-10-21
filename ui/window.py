@@ -77,6 +77,7 @@ from ui.preferences import (
     restore_layout,
     save_layout,
 )
+from ui.reveal import FileRevealer
 from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
 from ui.widgets import PlainLabel as QLabel
@@ -171,6 +172,15 @@ class ExplorerPage(QWidget):
         row.addWidget(self.search_input, 1)
         row.addWidget(self.search_button)
         row.addWidget(self.clear_search_button)
+        if not self.virtual:
+            self.name_input = QLineEdit()
+            self.name_input.setPlaceholderText("Jump to file or folder…")
+            self.name_input.setMaximumWidth(280)
+            self.name_input.setEnabled(False)
+            self.jump_button = QPushButton("Jump")
+            self.jump_button.setEnabled(False)
+            row.addWidget(self.name_input)
+            row.addWidget(self.jump_button)
         return row
 
     def _create_content(self) -> QSplitter:
@@ -374,6 +384,25 @@ class RealExplorerPage(ExplorerPage):
             self.show_hidden.isChecked,
         )
         self.path_completion.chosen.connect(lambda value: self.navigate_address())
+        self.file_revealer = FileRevealer(self.model)
+        self.file_revealer.found.connect(self.reveal_file_index)
+        self.file_revealer.failed.connect(self.status_changed)
+        self.name_completion = PathCompletion(
+            self.name_input,
+            lambda: self.model.root_path or Path.home(),
+            self.show_hidden.isChecked,
+            directories_only=False,
+        )
+        self.name_completion.chosen.connect(self.jump_to_item)
+        self.name_completion.idle.connect(
+            lambda: self._emit_ready_to_close() if self.close_requested else None
+        )
+        self.name_input.returnPressed.connect(
+            lambda: self.jump_to_item(self.name_input.text())
+        )
+        self.jump_button.clicked.connect(
+            lambda: self.jump_to_item(self.name_input.text())
+        )
         self.path_completion.idle.connect(
             lambda: self._emit_ready_to_close() if self.close_requested else None
         )
@@ -438,6 +467,9 @@ class RealExplorerPage(ExplorerPage):
         self.address_bar.set_path(self.model.root_path)
         self.path_completion.stop()
         self.path_completion.closed = False
+        self.name_completion.stop()
+        self.name_completion.closed = False
+        self.name_input.clear()
         self.refresh_button.setEnabled(True)
         self.search_input.setEnabled(True)
         self.clear_search_button.setEnabled(bool(self.search_input.text()))
@@ -453,6 +485,33 @@ class RealExplorerPage(ExplorerPage):
             + ("" if saved else " — recent locations could not be saved")
         )
         return True
+
+    def jump_to_item(self, text):
+        if self.operation_is_running or self.search_is_running or not text.strip():
+            return
+        path = Path(text).expanduser()
+        if not path.is_absolute():
+            path = (self.model.root_path or Path.home()) / path
+        path = Path(os.path.abspath(path))
+        if not path.exists() and not path.is_symlink():
+            self.status_changed.emit(f"Item no longer exists: {path}")
+            return
+        if path.is_dir() and not path.is_symlink():
+            self.set_root(path)
+            return
+        if path.parent != self.model.root_path or self.search_view_active:
+            if not self.set_root(path.parent):
+                return
+        elif not self._confirm_editor_transition():
+            return
+        self.status_changed.emit(f"Locating {path.name}…")
+        self.file_revealer.start(path)
+
+    def reveal_file_index(self, index):
+        self.tree.setCurrentIndex(index)
+        self.tree.scrollTo(index)
+        self.tree.setFocus()
+        self.status_changed.emit(f"Selected: {self.model.path_from_index(index)}")
 
     def toggle_favorite(self, path):
         if path is None:
@@ -1053,6 +1112,8 @@ class RealExplorerPage(ExplorerPage):
         self.update_navigation_buttons()
         blocked = self.search_is_running or self.operation_is_running
         self.compare_files_button.setEnabled(not blocked)
+        self.name_input.setEnabled(not blocked and self.model.root_path is not None)
+        self.jump_button.setEnabled(not blocked and self.model.root_path is not None)
         has_root = self.model.root_path is not None
         selected = self._operable_selected_paths()
 
@@ -1346,7 +1407,9 @@ class RealExplorerPage(ExplorerPage):
         if not self._confirm_editor_transition():
             self.close_cancelled = True
             return False
+        self.file_revealer.stop()
         waiting = not self.path_completion.stop()
+        waiting = not self.name_completion.stop() or waiting
         self.close_requested = True
         if self.search_is_running:
             self.cancel_search()
@@ -1365,6 +1428,7 @@ class RealExplorerPage(ExplorerPage):
     def cancel_close_request(self) -> None:
         self.close_requested = False
         self.path_completion.closed = False
+        self.name_completion.closed = False
 
     def finalize_close(self) -> None:
         self.search_results.close()
@@ -1398,6 +1462,7 @@ class RealExplorerPage(ExplorerPage):
             and not self.operation_is_running
             and not self.preview_is_running
             and self.path_completion.thread is None
+            and self.name_completion.thread is None
         ):
             self.ready_to_close.emit()
 

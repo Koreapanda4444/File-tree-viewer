@@ -129,10 +129,11 @@ class SyncReviewDialog(QDialog):
     ready_to_close = Signal()
     status_changed = Signal(str)
 
-    def __init__(self, plan, parent=None):
+    def __init__(self, plan, parent=None, *, application_result=None):
         super().__init__(parent)
         self.plan = plan
-        self.thread = self.worker = self.outcome = self.application_result = None
+        self.thread = self.worker = self.outcome = None
+        self.application_result = application_result
         self.close_requested = False
         self.action = ""
         self.setWindowTitle("Staged Multi-root Synchronization Plan")
@@ -180,6 +181,13 @@ class SyncReviewDialog(QDialog):
         self.cancel_button = QPushButton("Cancel after current step")
         for button in (self.undo_button, self.recover_button, self.cancel_button):
             button.setEnabled(False)
+        if application_result is not None:
+            self.reviewed.setEnabled(False)
+            self.undo_button.setEnabled(application_result.status == "completed")
+            self.recover_button.setEnabled(bool(application_result.recovery_errors))
+            self.summary.setText(
+                f"Synchronization {application_result.status}: {application_result.completed:,} processed item(s)"
+            )
         self.undo_button.clicked.connect(lambda: self.start_execution("undo"))
         self.recover_button.clicked.connect(lambda: self.start_execution("recover"))
         self.cancel_button.clicked.connect(self.cancel)

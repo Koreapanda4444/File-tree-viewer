@@ -2444,6 +2444,9 @@ class MainWindow(QMainWindow):
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
         workspace_menu.addAction("Compare Folders…", self.compare_folders_dialog)
         self.staging = StagingController(self)
+        self.plan_page.sync_workspace.filesystem_changed.connect(
+            self.sync_filesystem_changed
+        )
         workspace_menu.addAction(
             "Add Virtual Workspace to Plan…", self.staging.request_virtual
         )
@@ -2531,7 +2534,9 @@ class MainWindow(QMainWindow):
         if self.folder_comparison_dialog is not None:
             self.folder_comparison_dialog.raise_()
             return
-        dialog = FolderComparisonDialog(self.real_page.model.root_path, self)
+        dialog = FolderComparisonDialog(
+            self.real_page.model.root_path, self, stage_sync=self.stage_sync_plan
+        )
         self.folder_comparison_dialog = dialog
         dialog.filesystem_changed.connect(self.sync_filesystem_changed)
         dialog.sync_requested.connect(
@@ -2546,6 +2551,20 @@ class MainWindow(QMainWindow):
             self.folder_comparison_dialog = None
             self.comparison_close_pending = False
             dialog.deleteLater()
+
+    def stage_sync_plan(self, plan):
+        if self.staging.busy():
+            self.statusBar().showMessage(
+                "Wait for Plan tasks to finish before staging synchronization"
+            )
+            return False
+        if not self.plan_page.sync_workspace.stage(plan):
+            return False
+        self.tabs.setCurrentWidget(self.plan_page)
+        self.statusBar().showMessage(
+            "Synchronization staged in Plan. Review both roots before applying."
+        )
+        return True
 
     def sync_filesystem_changed(self, root):
         self.plan_page.filesystem_changed.emit(root)

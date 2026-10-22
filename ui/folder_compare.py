@@ -133,13 +133,14 @@ class FolderComparisonDialog(QDialog):
     ready_to_close = Signal()
     status_changed = Signal(str)
 
-    def __init__(self, initial=None, parent=None):
+    def __init__(self, initial=None, parent=None, *, stage_sync=None):
         super().__init__(parent)
         self.setWindowTitle("Side-by-side Folder Comparison")
         self.resize(1250, 800)
         self.thread = self.worker = self.outcome = self.comparison = None
         self.close_requested = False
         self.sync_review = None
+        self.stage_sync = stage_sync
         self.stale = False
         self.hash_cache = FileHashCache()
         layout = QVBoxLayout(self)
@@ -301,6 +302,16 @@ class FolderComparisonDialog(QDialog):
             self.done(QDialog.DialogCode.Rejected)
             return
         if isinstance(result, SyncPlan):
+            if self.stage_sync is not None:
+                if self.stage_sync(result):
+                    self.sync_requested.emit(result)
+                    self.accept()
+                else:
+                    result.close()
+                    self.summary.setText(
+                        "Synchronization was not staged. Keep the current plan or discard it before trying again."
+                    )
+                return
             try:
                 self.sync_requested.emit(result)
                 dialog = SyncReviewDialog(result, self)

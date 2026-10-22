@@ -79,6 +79,7 @@ from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
 from ui.plan_diff import PlanDiffDialog
 from ui.preferences import application_settings
 from ui.snapshot_compare import SnapshotComparisonDialog
+from ui.sync_workspace import SyncWorkspace
 from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
 from ui.widgets import PlainLabel as QLabel
@@ -477,6 +478,8 @@ class PlanExplorerPage(QWidget):
         layout.addLayout(self._create_root_row())
         layout.addWidget(self._create_content(), 1)
         layout.addLayout(self._create_action_row())
+        self.sync_workspace = SyncWorkspace(self)
+        layout.addWidget(self.sync_workspace)
         self._set_scanning(False)
         self._refresh_plan_list()
         self.update_buttons()
@@ -2477,6 +2480,10 @@ class PlanExplorerPage(QWidget):
 
     def prepare_close(self) -> bool:
         self.close_cancelled = False
+        if self.sync_workspace.dialog is not None:
+            self.close_requested = True
+            self.sync_workspace.dialog.reject()
+            return False
         if self.simulation_is_running:
             self.close_requested = True
             if self.simulation_worker is not None:
@@ -2513,6 +2520,9 @@ class PlanExplorerPage(QWidget):
             self.close_requested = True
             self.cancel_snapshot()
             return False
+        if not self.sync_workspace.confirm_discard():
+            self.close_cancelled = True
+            return False
         if len(self.plan):
             answer = QMessageBox.question(
                 self,
@@ -2532,6 +2542,7 @@ class PlanExplorerPage(QWidget):
         self.close_requested = False
 
     def finalize_close(self) -> None:
+        self.sync_workspace.release()
         self.tree.setModel(None)
         if self.snapshot_model is not None:
             self.snapshot_model.deleteLater()

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from snapshot import SnapshotCancelled
 from sync_plan import plan_bidirectional_sync, plan_one_way_sync
 from ui.preferences import application_settings
+from ui.sync_preview import SyncPreviewDialog
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -136,6 +137,7 @@ class SyncReviewDialog(QDialog):
         self.application_result = application_result
         self.close_requested = False
         self.action = ""
+        self.preview_dialog = None
         self.setWindowTitle("Staged Multi-root Synchronization Plan")
         self.resize(1100, 720)
         layout = QVBoxLayout(self)
@@ -163,6 +165,10 @@ class SyncReviewDialog(QDialog):
         )
         layout.addWidget(self.reviewed)
         controls = QHBoxLayout()
+        self.preview_button = QPushButton("Preview Both Folder Trees…")
+        self.preview_button.setEnabled(plan.can_apply)
+        self.preview_button.clicked.connect(self.show_preview)
+        controls.addWidget(self.preview_button)
         self.apply_button = QPushButton(
             "Apply Synchronization…" if plan.count else "Commit Verified Baseline…"
         )
@@ -205,6 +211,22 @@ class SyncReviewDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def show_preview(self):
+        if (
+            self.thread is not None
+            or self.preview_dialog is not None
+            or not self.plan.can_apply
+        ):
+            return
+        dialog = self.preview_dialog = SyncPreviewDialog(self.plan, self)
+        try:
+            dialog.exec()
+        finally:
+            self.preview_dialog = None
+            dialog.deleteLater()
+            if self.close_requested:
+                self.done(QDialog.DialogCode.Rejected)
 
     def start_execution(self, action):
         if self.thread is not None or (
@@ -257,6 +279,7 @@ class SyncReviewDialog(QDialog):
             self.undo_button,
             self.recover_button,
             self.reviewed,
+            self.preview_button,
         ):
             button.setEnabled(False)
         self.cancel_button.setEnabled(action == "apply")
@@ -282,6 +305,7 @@ class SyncReviewDialog(QDialog):
             "Synchronization worker stopped unexpectedly",
         )
         self.cancel_button.setEnabled(False)
+        self.preview_button.setEnabled(self.plan.can_apply)
         self.bar.hide()
         if result is not None:
             self.application_result = result
@@ -316,6 +340,10 @@ class SyncReviewDialog(QDialog):
             )
 
     def done(self, result):
+        if self.preview_dialog is not None:
+            self.close_requested = True
+            self.preview_dialog.reject()
+            return
         if self.thread is not None:
             self.close_requested = True
             self.cancel()
@@ -325,9 +353,8 @@ class SyncReviewDialog(QDialog):
         self.ready_to_close.emit()
 
     def closeEvent(self, event):
-        if self.thread is not None:
-            self.close_requested = True
-            self.cancel()
+        if self.thread is not None or self.preview_dialog is not None:
+            self.done(QDialog.DialogCode.Rejected)
             event.ignore()
         else:
             self.done(QDialog.DialogCode.Rejected)

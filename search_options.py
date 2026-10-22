@@ -16,8 +16,17 @@ class SearchOptions:
     scope: str = "recursive"
     name_mode: str = "literal"
     case_sensitive: bool = False
+    content_query: str = ""
+    content_encoding: str = "auto"
 
     def __post_init__(self):
+        if (
+            not isinstance(self.content_query, str)
+            or len(self.content_query) > 512
+            or self.content_encoding
+            not in {"auto", "utf-8", "utf-16", "cp949", "cp1252"}
+        ):
+            raise ValueError("Invalid content query or encoding")
         if (
             self.name_mode not in {"literal", "wildcard", "regex"}
             or type(self.case_sensitive) is not bool

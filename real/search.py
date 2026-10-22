@@ -18,10 +18,12 @@ from PySide6.QtCore import (
     Slot,
 )
 
+from content_search import find_file_content
+from file_content import ContentCancelled
 from fs_paths import is_hidden, is_reparse_point
 from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
-from search_matching import NameMatcher
+from search_matching import NameMatcher, SearchPatternError
 from search_options import SearchOptions
 from ui.tasks import CancellableWorker
 
@@ -40,6 +42,9 @@ class SearchResult:
     path: str
     name: str
     is_directory: bool
+    line: int = 0
+    column: int = 0
+    snippet: str = ""
 
 
 class SearchWorker(CancellableWorker):
@@ -108,6 +113,14 @@ class SearchWorker(CancellableWorker):
             matcher = NameMatcher(
                 self.query, self.options.name_mode, self.options.case_sensitive
             )
+            content_matcher = (
+                NameMatcher(
+                    self.options.content_query,
+                    case_sensitive=self.options.case_sensitive,
+                )
+                if self.options.content_query
+                else None
+            )
             root_iterator = open_directory(self.root)
             if root_iterator is not None:
                 iterators.append(root_iterator)
@@ -147,14 +160,36 @@ class SearchWorker(CancellableWorker):
                     skipped += 1
                     matches = False
                 if matches:
-                    batch.append(
-                        SearchResult(
-                            path=entry.path,
-                            name=entry.name,
-                            is_directory=is_directory,
-                        )
-                    )
-                    matched += 1
+                    if content_matcher is None:
+                        batch.append(SearchResult(entry.path, entry.name, is_directory))
+                        matched += 1
+                    elif not is_directory and not is_reparse_point(entry):
+                        try:
+                            content_matches = find_file_content(
+                                Path(entry.path),
+                                content_matcher,
+                                encoding=self.options.content_encoding,
+                                cancelled=self._cancelled,
+                            )
+                        except ContentCancelled:
+                            break
+                        except SearchPatternError:
+                            raise
+                        except (OSError, UnicodeError, ValueError):
+                            skipped += 1
+                        else:
+                            for match in content_matches:
+                                batch.append(
+                                    SearchResult(
+                                        entry.path,
+                                        entry.name,
+                                        False,
+                                        match.line,
+                                        match.column,
+                                        match.snippet,
+                                    )
+                                )
+                                matched += 1
 
                 if (
                     self.options.scope != "current"
@@ -202,7 +237,7 @@ class SearchWorker(CancellableWorker):
 
 class SearchResultsModel(QAbstractItemModel):
     drag_error = Signal(str)
-    headers = ("Name", "Path", "Type")
+    headers = ("Name", "Path", "Type", "Line:Column", "Matching Text")
     category_names = ("Folders", "Files")
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -222,6 +257,7 @@ class SearchResultsModel(QAbstractItemModel):
             "position INTEGER NOT NULL, "
             "name TEXT NOT NULL, "
             "path TEXT NOT NULL, "
+            "line INTEGER NOT NULL, column_number INTEGER NOT NULL, snippet TEXT NOT NULL, "
             "PRIMARY KEY(category, position)) WITHOUT ROWID"
         )
         self._counts = [0, 0]
@@ -238,15 +274,17 @@ class SearchResultsModel(QAbstractItemModel):
         grouped = ([], [])
         for result in results:
             category = 0 if result.is_directory else 1
-            grouped[category].append((result.name, result.path))
+            grouped[category].append(
+                (result.name, result.path, result.line, result.column, result.snippet)
+            )
 
         with self._database:
             self._database.executemany(
-                "INSERT INTO results(category, position, name, path) VALUES (?, ?, ?, ?)",
+                "INSERT INTO results(category, position, name, path, line, column_number, snippet) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
-                    (category, self._counts[category] + offset, name, path)
+                    (category, self._counts[category] + offset, *values)
                     for category, rows in enumerate(grouped)
-                    for offset, (name, path) in enumerate(rows)
+                    for offset, values in enumerate(rows)
                 ),
             )
         for category, rows in enumerate(grouped):
@@ -335,7 +373,7 @@ class SearchResultsModel(QAbstractItemModel):
         result = self._result_at(category, index.row())
         if result is None:
             return None
-        name, path = result
+        name, path, line, column, snippet = result
 
         if role == Qt.ItemDataRole.DisplayRole:
             if index.column() == 0:
@@ -344,6 +382,10 @@ class SearchResultsModel(QAbstractItemModel):
                 return path
             if index.column() == 2:
                 return "Folder" if category == 0 else "File"
+            if index.column() == 3:
+                return f"{line}:{column}" if line else ""
+            if index.column() == 4:
+                return snippet
         if role == Qt.ItemDataRole.DecorationRole and index.column() == 0:
             return self.icons.icon(Path(path), is_directory=category == 0)
         if role in (Qt.ItemDataRole.ToolTipRole, Qt.ItemDataRole.UserRole):
@@ -398,7 +440,7 @@ class SearchResultsModel(QAbstractItemModel):
             return category if category in (0, 1) else None
         return None
 
-    def _result_at(self, category: int, row: int) -> tuple[str, str] | None:
+    def _result_at(self, category: int, row: int) -> tuple | None:
         if category not in (0, 1) or row < 0 or row >= self._counts[category]:
             return None
         page = row // CACHE_PAGE_SIZE
@@ -407,7 +449,7 @@ class SearchResultsModel(QAbstractItemModel):
         if results is None:
             results = list(
                 self._database.execute(
-                    "SELECT name, path FROM results "
+                    "SELECT name, path, line, column_number, snippet FROM results "
                     "WHERE category = ? AND position >= ? AND position < ? "
                     "ORDER BY position",
                     (

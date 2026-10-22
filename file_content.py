@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,11 +34,8 @@ def stat_identity(details):
     )
 
 
-def read_file_bytes(
-    path: Path, *, limit: int, cancelled=None, allow_links: bool = False
-) -> FileBytes:
-    if limit <= 0:
-        raise ValueError("The file read limit must be positive")
+@contextmanager
+def open_readonly_file(path: Path, *, allow_links=False):
     checked_boundary(path.parent, path, allow_leaf_link=allow_links)
     signature = file_signature(path)
     linked = is_link_stat(path.lstat())
@@ -54,6 +52,23 @@ def read_file_bytes(
             expected
         ):
             raise FileExistsError("The file changed while opening it")
+        yield stream, opened, signature, linked
+        if stat_identity(os.fstat(stream.fileno())) != stat_identity(opened):
+            raise FileExistsError("The file changed while reading it")
+    require_unchanged(path, signature)
+
+
+def read_file_bytes(
+    path: Path, *, limit: int, cancelled=None, allow_links: bool = False
+) -> FileBytes:
+    if limit <= 0:
+        raise ValueError("The file read limit must be positive")
+    with open_readonly_file(path, allow_links=allow_links) as (
+        stream,
+        opened,
+        signature,
+        linked,
+    ):
         chunks = []
         remaining = limit + 1
         while remaining:
@@ -64,9 +79,6 @@ def read_file_bytes(
                 break
             chunks.append(data)
             remaining -= len(data)
-        if stat_identity(os.fstat(stream.fileno())) != stat_identity(opened):
-            raise FileExistsError("The file changed while reading it")
-    require_unchanged(path, signature)
     data = b"".join(chunks)
     return FileBytes(
         data[:limit],

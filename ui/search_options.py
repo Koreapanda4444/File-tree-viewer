@@ -38,6 +38,17 @@ class SearchOptionsDialog(QDialog):
         self.case_sensitive = QCheckBox("Case sensitive")
         self.case_sensitive.setChecked(options.case_sensitive)
         layout.addRow(self.case_sensitive)
+        self.content_query = QLineEdit(options.content_query)
+        layout.addRow("File contents contain", self.content_query)
+        self.encoding = QComboBox()
+        self.encoding.addItems(("auto", "utf-8", "utf-16", "cp949", "cp1252"))
+        self.encoding.setCurrentText(options.content_encoding)
+        layout.addRow("Content encoding", self.encoding)
+        limits = PlainLabel(
+            "Content search: at most 64 MiB per file, 128 KiB per line and 20 matching lines per file. Binary, inaccessible and unsupported text files are counted as skipped."
+        )
+        limits.setWordWrap(True)
+        layout.addRow(limits)
         self.kind = QComboBox()
         for label, value in (
             ("Files and folders", "all"),
@@ -94,6 +105,8 @@ class SearchOptionsDialog(QDialog):
         layout.addRow(buttons)
 
     def reset(self):
+        self.content_query.clear()
+        self.encoding.setCurrentIndex(0)
         self.mode.setCurrentIndex(0)
         self.case_sensitive.setChecked(False)
         self.extensions.clear()
@@ -126,6 +139,8 @@ class SearchOptionsDialog(QDialog):
                         ).timestamp()
                     ) * 1_000_000_000 - (1 if name.endswith("before") else 0)
             self.options = SearchOptions(
+                content_query=self.content_query.text(),
+                content_encoding=self.encoding.currentText(),
                 name_mode=self.mode.currentData(),
                 case_sensitive=self.case_sensitive.isChecked(),
                 extensions=tuple(self.extensions.text().split(";")),

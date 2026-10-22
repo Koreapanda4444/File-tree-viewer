@@ -2533,6 +2533,9 @@ class MainWindow(QMainWindow):
             return
         dialog = FolderComparisonDialog(self.real_page.model.root_path, self)
         self.folder_comparison_dialog = dialog
+        dialog.sync_requested.connect(
+            lambda plan: self.tabs.setCurrentWidget(self.plan_page)
+        )
         dialog.ready_to_close.connect(
             lambda: self.close() if self.comparison_close_pending else None
         )

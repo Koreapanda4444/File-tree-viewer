@@ -28,8 +28,10 @@ from file_hashing import FileHashCache
 from file_metadata import format_timestamp
 from folder_compare import FolderStatus, compare_folders
 from snapshot import SnapshotCancelled
+from sync_plan import SyncPlan
 from ui.file_compare import FileComparisonDialog
 from ui.snapshot_compare import ComparisonTableModel
+from ui.sync import SyncPlanningWorker, SyncReviewDialog
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -126,6 +128,7 @@ class FolderTableModel(ComparisonTableModel):
 
 
 class FolderComparisonDialog(QDialog):
+    sync_requested = Signal(object)
     ready_to_close = Signal()
     status_changed = Signal(str)
 
@@ -195,6 +198,17 @@ class FolderComparisonDialog(QDialog):
         self.compare_files_button.clicked.connect(self.compare_files)
         row.addWidget(self.compare_files_button)
         self.extra_controls = row
+        self.delete_extra = QCheckBox("Delete destination-only items")
+        self.sync_buttons = []
+        row.addWidget(self.delete_extra)
+        for side, title in ((0, "Plan Left → Right"), (1, "Plan Right → Left")):
+            button = QPushButton(title)
+            button.setEnabled(False)
+            button.clicked.connect(
+                lambda checked=False, source=side: self.start_sync_plan(source)
+            )
+            self.sync_buttons.append(button)
+            row.addWidget(button)
         row.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
@@ -218,6 +232,9 @@ class FolderComparisonDialog(QDialog):
         self.bar.setVisible(running)
         self.bar.setRange(0, 0)
         self.compare_files_button.setEnabled(False)
+        for button in self.sync_buttons:
+            button.setEnabled(not running and self.comparison is not None)
+        self.delete_extra.setEnabled(not running)
 
     def start_compare(self):
         if self.thread is not None:
@@ -258,6 +275,15 @@ class FolderComparisonDialog(QDialog):
                 result.close()
             self.done(QDialog.DialogCode.Rejected)
             return
+        if isinstance(result, SyncPlan):
+            try:
+                self.sync_requested.emit(result)
+                dialog = SyncReviewDialog(result, self)
+                dialog.exec()
+                dialog.deleteLater()
+            finally:
+                result.close()
+            return
         if result is None:
             self.summary.setText(
                 error or ("Comparison cancelled" if cancelled else "Comparison failed")
@@ -275,6 +301,25 @@ class FolderComparisonDialog(QDialog):
         if previous is not None:
             previous.close()
         self.filter_changed()
+        for button in self.sync_buttons:
+            button.setEnabled(True)
+
+    def start_sync_plan(self, source_side):
+        if self.thread is not None or self.comparison is None:
+            return
+        self.worker = SyncPlanningWorker(
+            self.comparison, source_side, self.delete_extra.isChecked()
+        )
+        self.worker.progress.connect(
+            lambda message, count: self.summary.setText(f"{message}: {count:,}")
+        )
+        self.worker.finished.connect(self.receive)
+        self.thread = prepare_worker_thread(
+            self, self.worker, on_finished=self.comparison_thread_finished
+        )
+        self.outcome = None
+        self.set_running(True)
+        self.thread.start()
 
     def filter_changed(self):
         if self.comparison is None:

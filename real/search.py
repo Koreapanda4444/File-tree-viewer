@@ -116,6 +116,11 @@ class SearchWorker(CancellableWorker):
                     continue
 
                 scanned += 1
+                if (
+                    Path(entry.path).parent == self.root
+                    and entry.name.casefold() == ".file-tree-viewer"
+                ):
+                    continue
                 if not self.show_hidden and is_hidden(entry):
                     continue
 

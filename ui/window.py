@@ -75,6 +75,7 @@ from ui.file_drop import FileDropController
 from ui.file_groups import FileGroupDelegate
 from ui.file_views import FolderViews
 from ui.image_preview import ImagePreview
+from ui.live_search import LiveSearch
 from ui.locations import LocationsButton, LocationStore
 from ui.navigation_tabs import FolderTabs
 from ui.operation_results import OperationResultsDialog, OperationResultsModel
@@ -509,6 +510,7 @@ class RealExplorerPage(ExplorerPage):
         self.layout().insertWidget(0, self.navigation_tabs)
         self.file_commands = FileCommands(self)
         self.file_drop = FileDropController(self, self.file_commands)
+        self.live_search = LiveSearch(self)
 
     @property
     def search_is_running(self) -> bool:
@@ -570,6 +572,7 @@ class RealExplorerPage(ExplorerPage):
         self.search_view_active = False
         self._set_tree_model(self.model)
         self._configure_tree_columns()
+        self.live_search.stop()
         self.address_bar.set_path(self.model.root_path)
         self.path_completion.stop()
         self.path_completion.closed = False
@@ -766,6 +769,7 @@ class RealExplorerPage(ExplorerPage):
         if self.operation_is_running:
             return
         if self.search_is_running:
+            self.live_search.stop()
             self.cancel_search()
             return
 
@@ -796,6 +800,7 @@ class RealExplorerPage(ExplorerPage):
 
         self.search_thread = thread
         self.search_worker = worker
+        self.live_search.started(thread)
         self._set_search_running(True)
         self.status_changed.emit(f'Searching for "{query}"...')
         thread.start()
@@ -803,7 +808,7 @@ class RealExplorerPage(ExplorerPage):
     def receive_search_batch(self, batch: list) -> None:
         worker = self.search_worker
         try:
-            if self.search_view_active:
+            if self.search_view_active and self.live_search.accepts:
                 self.search_results.append_results(batch)
         except (OSError, sqlite3.Error) as error:
             if worker is not None:
@@ -823,6 +828,7 @@ class RealExplorerPage(ExplorerPage):
     def clear_search(self) -> None:
         if not self._confirm_editor_transition():
             return
+        self.live_search.stop()
         self.cancel_search()
         self._show_path(None)
         self.search_view_active = False
@@ -836,13 +842,13 @@ class RealExplorerPage(ExplorerPage):
 
     def show_search_progress(self, scanned: int, matched: int) -> None:
         self.task_progress.emit(f"{scanned:,} checked, {matched:,} found", scanned, 0)
-        if self.search_view_active:
+        if self.search_view_active and self.live_search.accepts:
             self.status_changed.emit(
                 f"Searching: {scanned:,} checked, {matched:,} found"
             )
 
     def show_search_error(self, message: str) -> None:
-        if self.search_view_active:
+        if self.search_view_active and self.live_search.accepts:
             self.status_changed.emit(f"Search error: {message}")
 
     def finish_search(
@@ -863,7 +869,11 @@ class RealExplorerPage(ExplorerPage):
         self.search_worker = None
         self._set_search_running(False)
 
-        if self.search_view_active and self.search_outcome is not None:
+        if (
+            self.search_view_active
+            and self.search_outcome is not None
+            and self.live_search.accepts
+        ):
             scanned, matched, skipped, cancelled = self.search_outcome
             if cancelled:
                 message = f"Search cancelled: {matched:,} found"
@@ -1591,6 +1601,7 @@ class RealExplorerPage(ExplorerPage):
             self.close_cancelled = True
             return False
         self.pending_folder = None
+        self.live_search.stop()
         self.file_commands.stop()
         self.file_revealer.stop()
         waiting = not self.path_completion.stop()
@@ -1626,7 +1637,9 @@ class RealExplorerPage(ExplorerPage):
         self.select_root_button.setEnabled(not running)
         self.refresh_button.setEnabled(not running and self.model.root_path is not None)
         self.show_hidden.setEnabled(not running)
-        self.search_input.setEnabled(not running and self.model.root_path is not None)
+        self.search_input.setEnabled(
+            self.model.root_path is not None and not self.operation_is_running
+        )
         self.search_button.setText("Cancel" if running else "Search")
         self.clear_search_button.setEnabled(running or self.search_view_active)
         if not running:

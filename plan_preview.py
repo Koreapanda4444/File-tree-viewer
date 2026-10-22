@@ -118,7 +118,17 @@ def build_plan_preview(
         for op in operations:
             check_cancelled(cancelled)
             if op.action is PlanAction.CREATE_FILE:
-                insert(op.target, False)
+                insert(
+                    op.target,
+                    False,
+                    values=(
+                        0,
+                        0,
+                        len((op.content or "").encode("utf-8")),
+                        time.time_ns(),
+                        None,
+                    ),
+                )
         database.commit()
         count = database.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
         errors = count_errors(database)

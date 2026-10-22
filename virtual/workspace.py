@@ -16,6 +16,7 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import QApplication, QStyle
 
 from fs_paths import validate_windows_name as validate_name
+from virtual.planning import workspace_plan
 from virtual.storage import (
     VirtualNode,
     VirtualUndoRecord,
@@ -408,6 +409,10 @@ class VirtualTaskWorker(QObject):
                 result: object = self.path
             elif self.action == "load":
                 result = load_workspace_root(self.path)
+            elif self.action == "stage":
+                if not isinstance(self.root_data, VirtualNode):
+                    raise ValueError("Workspace data is missing")
+                result = workspace_plan(self.root_data, self.path.as_posix())
             elif self.action == "export":
                 if self.root_data is None:
                     raise ValueError("Workspace data is missing")

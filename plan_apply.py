@@ -627,6 +627,7 @@ def perform_plan(
                 / "staging"
                 / operation.operation_id,
             ),
+            content=operation.content,
         )
         execute_mutation(
             record,
@@ -679,7 +680,11 @@ def reverse_mutation(mutation: AppliedMutation) -> None:
     if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
         target = required_path(mutation.target)
         if mutation.kind is MutationKind.CREATE_FILE:
-            target.unlink(missing_ok=True)
+            if path_exists(target):
+                if target.stat(follow_symlinks=False).st_size:
+                    move_without_overwrite(target, copied_backup_path(mutation))
+                else:
+                    target.unlink()
         elif target.exists():
             target.rmdir()
         return
@@ -707,7 +712,12 @@ def log_event(
     record.log_sequence += 1
 
 
-def execute_mutation(record: PlanApplicationRecord, mutation: AppliedMutation) -> None:
+def execute_mutation(
+    record: PlanApplicationRecord,
+    mutation: AppliedMutation,
+    *,
+    content: str | None = None,
+) -> None:
     validate_root_identity(record)
     for path in (mutation.source, mutation.target):
         if path is not None:
@@ -721,7 +731,12 @@ def execute_mutation(record: PlanApplicationRecord, mutation: AppliedMutation) -
     log_event(record, "intent", mutation)
     record.pending_mutations.append(mutation)
     try:
-        if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
+        if mutation.kind is MutationKind.CREATE_FILE and content is not None:
+            with required_path(mutation.target).open("xb") as stream:
+                stream.write(content.encode("utf-8"))
+                stream.flush()
+                os.fsync(stream.fileno())
+        elif mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
             create_exclusive(
                 required_path(mutation.target),
                 directory=mutation.kind is MutationKind.CREATE_FOLDER,
@@ -906,11 +921,7 @@ def validate_undo_state(record: PlanApplicationRecord) -> None:
         if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
             if actual is not None:
                 if mutation.kind is MutationKind.CREATE_FILE:
-                    if (
-                        actual.is_symlink()
-                        or not actual.is_file()
-                        or actual.stat().st_size
-                    ):
+                    if actual.is_symlink() or not actual.is_file():
                         raise ValueError(f"Created file changed: {actual}")
                 elif actual.is_symlink() or not actual.is_dir():
                     raise ValueError(f"Created folder changed type: {actual}")

@@ -111,6 +111,7 @@ def with_resolution(
         source=operation.source,
         target=target if target is not None else operation.target,
         operation_id=operation.operation_id,
+        content=operation.content,
         conflict_policy=policy,
     )
 

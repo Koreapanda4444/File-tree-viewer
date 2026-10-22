@@ -237,7 +237,11 @@ def reconcile_pending(record: PlanApplicationRecord) -> None:
         if mutation.key not in record.reversing_mutation_ids:
             continue
         target = required_path(mutation.target)
-        if mutation.kind is MutationKind.STAGE_COPY:
+        if mutation.kind is MutationKind.STAGE_COPY or (
+            mutation.kind is MutationKind.CREATE_FILE
+            and mutation.after_signature
+            and mutation.after_signature.get("st_size", 0) > 0
+        ):
             backup = copied_backup_path(mutation)
             finished = not path_exists(target) and signature_matches(
                 backup, mutation.after_signature

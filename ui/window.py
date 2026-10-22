@@ -1681,6 +1681,7 @@ class RealExplorerPage(ExplorerPage):
 
 
 class VirtualExplorerPage(ExplorerPage):
+    staged_workspace = Signal(object)
     status_changed = Signal(str)
     task_failed = Signal(str)
     task_progress = Signal(str, int, int)
@@ -2226,6 +2227,8 @@ class VirtualExplorerPage(ExplorerPage):
                 self._reset_view_after_change()
                 self._set_workspace_dirty(False)
                 self.status_changed.emit("Virtual workspace loaded")
+            elif action == "stage" and isinstance(result, tuple):
+                self.staged_workspace.emit(result)
             elif action == "export" and isinstance(result, Path):
                 self.status_changed.emit(f"Virtual workspace exported: {result}")
 
@@ -2356,6 +2359,9 @@ class MainWindow(QMainWindow):
         workspace_menu.addAction("Import Real Root into Plan", self.import_real_root)
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
         self.staging = StagingController(self)
+        workspace_menu.addAction(
+            "Add Virtual Workspace to Plan…", self.staging.request_virtual
+        )
         self.real_page.stage_requested.connect(self.staging.request)
         for action in ("copy", "move", "rename", "delete"):
             workspace_menu.addAction(

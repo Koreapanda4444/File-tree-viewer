@@ -176,6 +176,7 @@ def operation_to_dict(operation: PlanOperation) -> dict[str, Any]:
         "target": operation.target.as_posix() if operation.target is not None else None,
         "operation_id": operation.operation_id,
         "conflict_policy": operation.conflict_policy.value,
+        **({"content": operation.content} if operation.content is not None else {}),
     }
 
 
@@ -193,6 +194,7 @@ def operation_from_dict(payload: object) -> PlanOperation:
         conflict_policy=ConflictPolicy(
             optional_text(payload, "conflict_policy") or ConflictPolicy.ERROR.value
         ),
+        content=optional_text(payload, "content"),
     )
 
 

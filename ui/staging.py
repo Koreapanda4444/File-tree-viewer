@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QInputDialog
 
@@ -15,8 +17,10 @@ class StagingController(QObject):
         super().__init__(window)
         self.window = window
         self.pending = None
+        self.virtual_context = None
         window.plan_page.snapshot_ready.connect(self.snapshot_ready)
         self.drop_controller = PlanDropController(self)
+        window.virtual_page.staged_workspace.connect(self.virtual_ready)
 
     def busy(self):
         page = self.window.plan_page
@@ -129,4 +133,55 @@ class StagingController(QObject):
             "Cannot stage files",
             "No operations were added. Check paths and refresh the snapshot if files changed.",
             str(error),
+        )
+
+    def request_virtual(self):
+        page, virtual = self.window.plan_page, self.window.virtual_page
+        if (
+            self.busy()
+            or virtual.task_is_running
+            or not virtual._confirm_editor_transition()
+        ):
+            return
+        if page.snapshot is None:
+            self.window.tabs.setCurrentWidget(page)
+            self.window.statusBar().showMessage(
+                "Import a Plan snapshot to choose the destination root, then add the Virtual workspace"
+            )
+            return
+        target, accepted = QInputDialog.getText(
+            self.window,
+            "Stage Virtual Workspace",
+            "Destination folder relative to the Plan root:",
+            text="Virtual Workspace",
+        )
+        if not accepted:
+            return
+        from fs_paths import normalize_plan_path
+
+        try:
+            normalize_plan_path(target)
+        except ValueError as error:
+            self.show_error(error)
+            return
+        self.virtual_context = (page.snapshot, page.plan, page.plan.revision)
+        virtual._start_task("stage", Path(target), virtual.model.root)
+
+    def virtual_ready(self, operations):
+        context, self.virtual_context = self.virtual_context, None
+        page = self.window.plan_page
+        if context is None:
+            return
+        if self.busy() or context != (page.snapshot, page.plan, page.plan.revision):
+            self.show_error(
+                ValueError(
+                    "The Plan changed while preparing the workspace; retry staging"
+                )
+            )
+            return
+        page.plan.extend(operations)
+        page._refresh_plan_list()
+        self.window.tabs.setCurrentWidget(page)
+        page.status_changed.emit(
+            f"Staged {len(operations):,} Virtual items including text contents; review Diff to resolve destination conflicts"
         )

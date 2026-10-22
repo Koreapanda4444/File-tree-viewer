@@ -31,6 +31,7 @@ class PlanOperation:
     target: PurePosixPath | str | None = None
     operation_id: str = field(default_factory=lambda: uuid4().hex)
     conflict_policy: ConflictPolicy = ConflictPolicy.ERROR
+    content: str | None = None
 
     def __post_init__(self) -> None:
         action = PlanAction(self.action)
@@ -44,6 +45,13 @@ class PlanOperation:
         if not operation_id:
             raise ValueError("An operation ID is required")
         validate_operation(action, source, target)
+        if self.content is not None:
+            if action is not PlanAction.CREATE_FILE or not isinstance(
+                self.content, str
+            ):
+                raise ValueError("Only created files may contain staged text")
+            if len(self.content.encode("utf-8")) > 1024 * 1024:
+                raise ValueError("Staged text files are limited to 1 MiB each")
 
         object.__setattr__(self, "action", action)
         object.__setattr__(self, "source", source)

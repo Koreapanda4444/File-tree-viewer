@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import (
@@ -419,6 +420,7 @@ class PlanListModel(QAbstractItemModel):
 
 class PlanExplorerPage(QWidget):
     snapshot_ready = Signal(object)
+    filesystem_changed = Signal(object)
     status_changed = Signal(str)
     task_failed = Signal(str)
     task_progress = Signal(str, int, int)
@@ -882,11 +884,7 @@ class PlanExplorerPage(QWidget):
         try:
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
-            self.plan.extend(dialog.operations)
-            self._refresh_plan_list()
-            self.status_changed.emit(
-                f"Staged {len(dialog.operations):,} batch operation(s)"
-            )
+            self.stage_operations(dialog.operations, "Batch", use_default_policy=False)
         finally:
             dialog.deleteLater()
 
@@ -1415,10 +1413,8 @@ class PlanExplorerPage(QWidget):
             self.status_changed.emit(f"Exported analysis report: {result}")
             return
         if kind == "duplicate_review" and isinstance(result, tuple):
-            self.plan.extend(result)
-            self._refresh_plan_list()
-            self.status_changed.emit(
-                f"Staged {len(result):,} verified duplicate deletions"
+            self.stage_operations(
+                result, "Verified duplicates", use_default_policy=False
             )
             return
         if kind == "plan_preview" and isinstance(result, FileSnapshot):
@@ -1916,6 +1912,7 @@ class PlanExplorerPage(QWidget):
             return
         result, error = outcome
         if isinstance(result, RecoveryResult):
+            self.filesystem_changed.emit(result.root)
             if result.errors:
                 QMessageBox.warning(
                     self, "Recovery needs review", "\n".join(result.errors)
@@ -1937,6 +1934,7 @@ class PlanExplorerPage(QWidget):
             return
 
         self.last_application = result
+        self.filesystem_changed.emit(result.root)
         if result.status is ApplicationStatus.COMPLETED:
             self.plan.clear()
             self._refresh_plan_list()
@@ -2091,6 +2089,7 @@ class PlanExplorerPage(QWidget):
             QMessageBox.warning(self, "Cannot undo last Plan", message)
             self.status_changed.emit(message)
             return
+        self.filesystem_changed.emit(result.root)
         if result.status is ApplicationStatus.UNDONE:
             self.last_application = None
             self.progress_label.setText("Last Plan fully undone")
@@ -2115,6 +2114,21 @@ class PlanExplorerPage(QWidget):
         self.status_changed.emit("Plan Undo requires manual recovery")
         self.start_snapshot(result.root)
 
+    def stage_operations(
+        self, operations, source: str, *, use_default_policy=True
+    ) -> None:
+        additions = tuple(
+            replace(operation, conflict_policy=self.default_conflict_policy)
+            if use_default_policy
+            else operation
+            for operation in operations
+        )
+        self.plan.extend(additions)
+        self._refresh_plan_list()
+        self.status_changed.emit(
+            f"{source}: staged {len(additions):,} change(s). Review Diff / Simulate before Apply."
+        )
+
     def _finish_staging(self, operation: PlanOperation) -> None:
         self.plan.set_conflict_policy(
             [operation.operation_id], self.default_conflict_policy
@@ -2124,7 +2138,22 @@ class PlanExplorerPage(QWidget):
 
     def _refresh_plan_list(self) -> None:
         self.plan_model.set_plan(self.plan)
-        self.plan_count.setText(f"PLAN — {len(self.plan):,} staged operation(s)")
+        counts = Counter(
+            op.action.value
+            for op in self.plan.operations
+            if op.conflict_policy is not ConflictPolicy.SKIP
+        )
+        summary = ", ".join(
+            f"{count:,} {action.replace('_', ' ')}"
+            for action, count in sorted(counts.items())
+        )
+        self.plan_count.setText(
+            f"PLAN — {len(self.plan):,} staged operation(s)"
+            + (f" | {summary}" if summary else "")
+        )
+        self.plan_count.setToolTip(
+            "Changes are staged only. Review Diff / Simulate, then explicitly Apply to modify files."
+        )
         self.update_buttons()
 
     def _selected_nodes(self) -> list[SnapshotNode]:

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QInputDialog
 
 from fs_paths import checked_boundary, normalized_path, path_is_within, validate_name
-from plan_staging import stage_real_items
+from plan_staging import prepare_real_items
 from planning import PlanAction
 from ui.feedback import show_error
 from ui.plan_drop import PlanDropController
@@ -18,6 +18,11 @@ class StagingController(QObject):
         self.window = window
         self.pending = None
         self.virtual_context = None
+        self.refresh_root = None
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setInterval(200)
+        self.refresh_timer.timeout.connect(self.refresh_real)
+        window.plan_page.filesystem_changed.connect(self.filesystem_changed)
         window.plan_page.snapshot_ready.connect(self.snapshot_ready)
         self.drop_controller = PlanDropController(self)
         window.virtual_page.staged_workspace.connect(self.virtual_ready)
@@ -112,20 +117,14 @@ class StagingController(QObject):
             return
         page = self.window.plan_page
         try:
-            additions = stage_real_items(
+            additions = prepare_real_items(
                 snapshot, page.plan, pending[1], pending[2], pending[3]
             )
-            page.plan.set_conflict_policy(
-                [op.operation_id for op in additions], page.default_conflict_policy
-            )
+            page.stage_operations(additions, "Real")
         except (OSError, ValueError) as error:
             self.show_error(error)
             return
-        page._refresh_plan_list()
         self.window.tabs.setCurrentWidget(page)
-        page.status_changed.emit(
-            f"Staged {len(additions):,} {pending[2].value} operation(s); review Diff before applying"
-        )
 
     def show_error(self, error):
         show_error(
@@ -179,9 +178,38 @@ class StagingController(QObject):
                 )
             )
             return
-        page.plan.extend(operations)
-        page._refresh_plan_list()
+        page.stage_operations(operations, "Virtual", use_default_policy=False)
         self.window.tabs.setCurrentWidget(page)
         page.status_changed.emit(
             f"Staged {len(operations):,} Virtual items including text contents; review Diff to resolve destination conflicts"
         )
+
+    def filesystem_changed(self, root):
+        self.refresh_root = root
+        self.refresh_timer.start()
+
+    def refresh_real(self):
+        real = self.window.real_page
+        if real.close_requested:
+            self.refresh_timer.stop()
+            return
+        if (
+            real.operation_is_running
+            or real.search_is_running
+            or real.preview_is_running
+        ):
+            return
+        self.refresh_timer.stop()
+        root, self.refresh_root = self.refresh_root, None
+        current = real.model.root_path
+        if (
+            root is not None
+            and current is not None
+            and (path_is_within(current, root) or path_is_within(root, current))
+        ):
+            if real.preview.document().isModified():
+                real.status_changed.emit(
+                    "Plan changed files; save or discard the edited preview, then refresh Real"
+                )
+            else:
+                real.refresh_root()

@@ -9,7 +9,7 @@ from planning import FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot
 
 
-def stage_real_items(
+def prepare_real_items(
     snapshot: FileSnapshot, plan: FilePlan, paths, action, target=None
 ):
     action = PlanAction(action)
@@ -68,5 +68,10 @@ def stage_real_items(
                 raise ValueError("A new relative path is required")
             destination = target_path
         additions.append(PlanOperation(action, relative, destination))
-    plan.extend(additions)
     return tuple(additions)
+
+
+def stage_real_items(snapshot, plan, paths, action, target=None):
+    additions = prepare_real_items(snapshot, plan, paths, action, target)
+    plan.extend(additions)
+    return additions

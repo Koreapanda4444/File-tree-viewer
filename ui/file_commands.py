@@ -228,6 +228,15 @@ class FileCommands(QObject):
         add("Move To…", lambda: page.transfer_selected("move"), ready and bool(mutable))
         add("Rename", page.rename_selected, ready and len(mutable) == 1)
         add("Delete", page.delete_selected, ready and bool(mutable))
+        staged = menu.addMenu("Add to Plan")
+        for operation in ("move", "rename", "delete"):
+            action = staged.addAction(operation.title() + "…")
+            action.setEnabled(
+                ready and bool(mutable) and (operation != "rename" or len(mutable) == 1)
+            )
+            action.triggered.connect(
+                lambda checked=False, a=operation: page.stage_requested.emit(a)
+            )
         menu.addSeparator()
         add("New File", page.create_new_file, ready)
         add("New Folder", page.create_new_folder, ready)

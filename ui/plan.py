@@ -418,6 +418,7 @@ class PlanListModel(QAbstractItemModel):
 
 
 class PlanExplorerPage(QWidget):
+    snapshot_ready = Signal(object)
     status_changed = Signal(str)
     task_failed = Signal(str)
     task_progress = Signal(str, int, int)
@@ -820,6 +821,7 @@ class PlanExplorerPage(QWidget):
         if old_snapshot is not None:
             old_snapshot.close()
         self.status_changed.emit(f"Snapshot ready: {snapshot.entry_count:,} items")
+        self.snapshot_ready.emit(snapshot)
 
     def stage_create(self, directory: bool) -> None:
         if self.snapshot is None or self.scan_is_running:

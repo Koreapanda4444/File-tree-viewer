@@ -88,6 +88,7 @@ from ui.preferences import (
 )
 from ui.quick_access import QuickAccess
 from ui.reveal import FileRevealer
+from ui.staging import StagingController
 from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
 from ui.widgets import PlainLabel as QLabel
@@ -333,6 +334,7 @@ class ExplorerPage(QWidget):
 
 
 class RealExplorerPage(ExplorerPage):
+    stage_requested = Signal(str)
     status_changed = Signal(str)
     task_failed = Signal(str)
     task_progress = Signal(str, int, int)
@@ -2353,6 +2355,13 @@ class MainWindow(QMainWindow):
         workspace_menu.addSeparator()
         workspace_menu.addAction("Import Real Root into Plan", self.import_real_root)
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
+        self.staging = StagingController(self)
+        self.real_page.stage_requested.connect(self.staging.request)
+        for action in ("move", "rename", "delete"):
+            workspace_menu.addAction(
+                f"Stage Real {action.title()}…",
+                lambda checked=False, a=action: self.staging.request(a),
+            )
         self.tabs.setDocumentMode(True)
         self.settings = application_settings()
         self.preferences = Preferences.load(self.settings)

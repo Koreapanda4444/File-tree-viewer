@@ -128,6 +128,7 @@ class FolderTableModel(ComparisonTableModel):
 
 
 class FolderComparisonDialog(QDialog):
+    filesystem_changed = Signal(object)
     sync_requested = Signal(object)
     ready_to_close = Signal()
     status_changed = Signal(str)
@@ -138,6 +139,8 @@ class FolderComparisonDialog(QDialog):
         self.resize(1250, 800)
         self.thread = self.worker = self.outcome = self.comparison = None
         self.close_requested = False
+        self.sync_review = None
+        self.stale = False
         self.hash_cache = FileHashCache()
         layout = QVBoxLayout(self)
         self.path_inputs = []
@@ -301,7 +304,18 @@ class FolderComparisonDialog(QDialog):
             try:
                 self.sync_requested.emit(result)
                 dialog = SyncReviewDialog(result, self)
+                self.sync_review = dialog
+                dialog.filesystem_changed.connect(self.filesystem_changed)
+                dialog.ready_to_close.connect(self.review_closed)
                 dialog.exec()
+                self.sync_review = None
+                if dialog.application_result is not None:
+                    self.stale = True
+                    for button in self.sync_buttons:
+                        button.setEnabled(False)
+                    self.summary.setText(
+                        "Synchronization changed the folders. Run Compare again before creating another plan."
+                    )
                 dialog.deleteLater()
             finally:
                 result.close()
@@ -322,12 +336,13 @@ class FolderComparisonDialog(QDialog):
             old_model.deleteLater()
         if previous is not None:
             previous.close()
+        self.stale = False
         self.filter_changed()
         for button in self.sync_buttons:
             button.setEnabled(True)
 
     def start_sync_plan(self, source_side):
-        if self.thread is not None or self.comparison is None:
+        if self.thread is not None or self.comparison is None or self.stale:
             return
         self.worker = SyncPlanningWorker(
             self.comparison,
@@ -395,7 +410,20 @@ class FolderComparisonDialog(QDialog):
             self.worker.cancel()
             self.summary.setText("Cancelling comparison…")
 
+    def review_closed(self):
+        self.sync_review = None
+        if self.close_requested:
+            self.done(QDialog.DialogCode.Rejected)
+
+    @property
+    def is_busy(self):
+        return self.thread is not None or self.sync_review is not None
+
     def done(self, result):
+        if self.sync_review is not None:
+            self.close_requested = True
+            self.sync_review.reject()
+            return
         if self.thread is not None:
             self.close_requested = True
             self.cancel()
@@ -411,9 +439,9 @@ class FolderComparisonDialog(QDialog):
         self.ready_to_close.emit()
 
     def closeEvent(self, event):
-        if self.thread is not None:
+        if self.is_busy:
             self.close_requested = True
-            self.cancel()
+            self.done(QDialog.DialogCode.Rejected)
             event.ignore()
         else:
             self.done(QDialog.DialogCode.Rejected)

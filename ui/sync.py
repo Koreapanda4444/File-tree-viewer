@@ -6,16 +6,21 @@ from collections import OrderedDict
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QHBoxLayout,
+    QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
     QTableView,
     QVBoxLayout,
 )
 
 from snapshot import SnapshotCancelled
 from sync_plan import plan_bidirectional_sync, plan_one_way_sync
-from ui.tasks import CancellableWorker
+from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
 INVALID_INDEX = QModelIndex()
@@ -119,9 +124,16 @@ class SyncTableModel(QAbstractTableModel):
 
 
 class SyncReviewDialog(QDialog):
+    filesystem_changed = Signal(object)
+    ready_to_close = Signal()
+    status_changed = Signal(str)
+
     def __init__(self, plan, parent=None):
         super().__init__(parent)
         self.plan = plan
+        self.thread = self.worker = self.outcome = self.application_result = None
+        self.close_requested = False
+        self.action = ""
         self.setWindowTitle("Staged Multi-root Synchronization Plan")
         self.resize(1100, 720)
         layout = QVBoxLayout(self)
@@ -144,6 +156,198 @@ class SyncReviewDialog(QDialog):
         )
         self.details.setMaximumHeight(160)
         layout.addWidget(self.details)
+        self.reviewed = QCheckBox(
+            "I reviewed creates, overwrites and deletions on BOTH roots"
+        )
+        layout.addWidget(self.reviewed)
+        controls = QHBoxLayout()
+        self.apply_button = QPushButton(
+            "Apply Synchronization…" if plan.count else "Commit Verified Baseline…"
+        )
+        self.apply_button.setEnabled(False)
+        self.reviewed.toggled.connect(
+            lambda checked: self.apply_button.setEnabled(
+                checked
+                and plan.can_apply
+                and self.application_result is None
+                and self.thread is None
+            )
+        )
+        self.apply_button.clicked.connect(lambda: self.start_execution("apply"))
+        self.undo_button = QPushButton("Undo Both Roots…")
+        self.recover_button = QPushButton("Recover Both Roots…")
+        self.cancel_button = QPushButton("Cancel after current step")
+        for button in (self.undo_button, self.recover_button, self.cancel_button):
+            button.setEnabled(False)
+        self.undo_button.clicked.connect(lambda: self.start_execution("undo"))
+        self.recover_button.clicked.connect(lambda: self.start_execution("recover"))
+        self.cancel_button.clicked.connect(self.cancel)
+        for button in (
+            self.apply_button,
+            self.undo_button,
+            self.recover_button,
+            self.cancel_button,
+        ):
+            controls.addWidget(button)
+        layout.addLayout(controls)
+        self.bar = QProgressBar()
+        self.bar.hide()
+        layout.addWidget(self.bar)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def start_execution(self, action):
+        if self.thread is not None or (
+            action == "apply"
+            and (
+                not self.reviewed.isChecked()
+                or not self.plan.can_apply
+                or self.application_result is not None
+            )
+        ):
+            return
+        if action != "apply" and (
+            self.application_result is None or not self.application_result.journals
+        ):
+            return
+        answer = QMessageBox.warning(
+            self,
+            "Confirm synchronization"
+            if action == "apply"
+            else "Confirm coordinated restoration",
+            f"{action.title()} on BOTH roots?\n{self.plan.roots[0]}\n{self.plan.roots[1]}\n\nCopies replace reviewed targets with backups. Deleted items remain in transaction backups. All participants must stay available for recovery.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        marker = (
+            self.application_result.journals[0].parent / "sync.json"
+            if self.application_result
+            else None
+        )
+        self.worker = SyncExecutionWorker(self.plan, action, marker)
+        self.worker.progress.connect(self.progress)
+        self.worker.finished.connect(self.receive)
+        self.thread = prepare_worker_thread(
+            self, self.worker, on_finished=self.execution_thread_finished
+        )
+        self.action = action
+        self.outcome = None
+        for button in (
+            self.apply_button,
+            self.undo_button,
+            self.recover_button,
+            self.reviewed,
+        ):
+            button.setEnabled(False)
+        self.cancel_button.setEnabled(action == "apply")
+        self.bar.show()
+        self.bar.setRange(0, 0)
+        self.thread.start()
+
+    def progress(self, phase, completed, total, name):
+        if total:
+            self.bar.setRange(0, total)
+            self.bar.setValue(completed)
+        else:
+            self.bar.setRange(0, 0)
+        self.summary.setText(f"{phase}: {completed:,}/{total:,}\n{name}")
+
+    def receive(self, result, error):
+        self.outcome = result, error
+
+    def execution_thread_finished(self):
+        self.thread = self.worker = None
+        result, error = self.outcome or (
+            None,
+            "Synchronization worker stopped unexpectedly",
+        )
+        self.cancel_button.setEnabled(False)
+        self.bar.hide()
+        if result is not None:
+            self.application_result = result
+            import json
+            from dataclasses import asdict
+
+            self.details.setPlainText(json.dumps(asdict(result), default=str, indent=2))
+            self.summary.setText(
+                f"Synchronization {result.status}: {result.completed:,} processed item(s)"
+                + (f"\n{result.error}" if result.error else "")
+            )
+            for root in result.roots:
+                self.filesystem_changed.emit(root)
+            self.undo_button.setEnabled(result.status == "completed")
+            self.recover_button.setEnabled(bool(result.recovery_errors))
+        else:
+            self.summary.setText(error)
+            self.reviewed.setEnabled(self.application_result is None)
+            self.apply_button.setEnabled(
+                self.application_result is None
+                and self.reviewed.isChecked()
+                and self.plan.can_apply
+            )
+        if self.close_requested:
+            self.done(QDialog.DialogCode.Rejected)
+
+    def cancel(self):
+        if self.worker is not None and self.action == "apply":
+            self.worker.cancel()
+            self.summary.setText(
+                "Cancelling after the current step, then restoring all participant roots…"
+            )
+
+    def done(self, result):
+        if self.thread is not None:
+            self.close_requested = True
+            self.cancel()
+            return
+        self.table.setModel(None)
+        super().done(result)
+        self.ready_to_close.emit()
+
+    def closeEvent(self, event):
+        if self.thread is not None:
+            self.close_requested = True
+            self.cancel()
+            event.ignore()
+        else:
+            self.done(QDialog.DialogCode.Rejected)
+            event.accept()
+
+
+class SyncExecutionWorker(CancellableWorker):
+    progress = Signal(str, int, int, str)
+    finished = Signal(object, str)
+
+    def __init__(self, plan, action="apply", marker=None):
+        super().__init__()
+        self.plan, self.action, self.marker = plan, action, marker
+
+    def run(self):
+        from sync_apply import apply_sync_plan, recover_sync_group
+
+        try:
+            result = (
+                apply_sync_plan(
+                    self.plan, cancelled=self._cancelled, progress=self.progress.emit
+                )
+                if self.action == "apply"
+                else recover_sync_group(
+                    self.marker, undo=self.action == "undo", progress=self.progress.emit
+                )
+            )
+        except SnapshotCancelled:
+            self.finished.emit(None, "Synchronization cancelled before changes")
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            TypeError,
+            KeyError,
+            sqlite3.Error,
+        ) as error:
+            self.finished.emit(None, str(error))
+        else:
+            self.finished.emit(result, "")

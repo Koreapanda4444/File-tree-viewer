@@ -2533,6 +2533,7 @@ class MainWindow(QMainWindow):
             return
         dialog = FolderComparisonDialog(self.real_page.model.root_path, self)
         self.folder_comparison_dialog = dialog
+        dialog.filesystem_changed.connect(self.sync_filesystem_changed)
         dialog.sync_requested.connect(
             lambda plan: self.tabs.setCurrentWidget(self.plan_page)
         )
@@ -2545,6 +2546,16 @@ class MainWindow(QMainWindow):
             self.folder_comparison_dialog = None
             self.comparison_close_pending = False
             dialog.deleteLater()
+
+    def sync_filesystem_changed(self, root):
+        self.plan_page.filesystem_changed.emit(root)
+        if self.plan_page.snapshot is not None and self.plan_page.snapshot.root == root:
+            if not len(self.plan_page.plan) and not self.staging.busy():
+                self.plan_page.start_snapshot(root)
+            else:
+                self.plan_page.status_changed.emit(
+                    "Synchronization changed this Plan root. Review Diff against live files before applying staged changes."
+                )
 
     def import_real_root(self) -> None:
         root = self.real_page.model.root_path
@@ -2567,7 +2578,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         if (
             self.folder_comparison_dialog is not None
-            and self.folder_comparison_dialog.thread is not None
+            and self.folder_comparison_dialog.is_busy
         ):
             self.comparison_close_pending = True
             self.folder_comparison_dialog.reject()

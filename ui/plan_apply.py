@@ -45,7 +45,15 @@ class PlanUndoWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            record = undo_application(self.record, progress=self.progress.emit)
+            marker = self.record.transaction_directory / "sync.json"
+            if marker.exists():
+                from sync_apply import recover_sync_group
+
+                record = recover_sync_group(
+                    marker, undo=True, progress=self.progress.emit
+                )
+            else:
+                record = undo_application(self.record, progress=self.progress.emit)
         except (OSError, RuntimeError, ValueError) as error:
             self.finished.emit(None, str(error))
         else:

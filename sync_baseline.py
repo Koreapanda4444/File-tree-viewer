@@ -67,6 +67,12 @@ class SyncBaseline:
 def load_sync_baseline(roots, identities):
     path = baseline_path(roots)
     checked_boundary(roots[0], path, allow_leaf_link=False)
+    pending = path.with_suffix(".pending")
+    checked_boundary(roots[0], pending, allow_leaf_link=False)
+    if pending.exists():
+        raise ValueError(
+            "Synchronization history has an unfinished commit; recover it before bidirectional planning"
+        )
     if not path.exists():
         return None
     database = sqlite3.connect(

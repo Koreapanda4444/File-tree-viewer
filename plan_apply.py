@@ -48,6 +48,7 @@ class ApplicationStatus(str, Enum):
 
 
 class MutationKind(str, Enum):
+    PREPARED_FILE = "prepared_file"
     STAGE_COPY = "stage_copy"
     STAGE_MOVE = "stage_move"
     FINAL_MOVE = "final_move"
@@ -169,34 +170,7 @@ def _apply_locked(snapshot, plan, *, cancelled, progress) -> PlanApplicationReco
     if not simulation.can_apply:
         raise ValueError("Resolve all Plan problems before applying it")
 
-    transaction_id = uuid4().hex
-    transaction_directory = (
-        snapshot.root / INTERNAL_DIRECTORY / "transactions" / transaction_id
-    )
-    checked_boundary(snapshot.root, transaction_directory, allow_leaf_link=False)
-    transaction_directory.mkdir(parents=True, exist_ok=False)
-    hide_internal_directory(snapshot.root / INTERNAL_DIRECTORY)
-    (transaction_directory / "staging").mkdir()
-    (transaction_directory / "backup").mkdir()
-    record = PlanApplicationRecord(
-        transaction_id=transaction_id,
-        root=snapshot.root,
-        root_identity={
-            key: file_signature(snapshot.root)[key]
-            for key in ("st_dev", "st_ino", "st_mode")
-        },
-        transaction_directory=transaction_directory,
-        journal_path=transaction_directory / "journal.json",
-        mutation_log_path=transaction_directory / "mutations.jsonl",
-        started_at=now_text(),
-        skipped_operation_ids=[
-            operation.operation_id
-            for operation in plan.operations
-            if operation.conflict_policy is ConflictPolicy.SKIP
-        ],
-    )
-    record.mutation_log_path.touch(exist_ok=False)
-    record.save()
+    record = create_application_record(snapshot.root, plan)
 
     try:
         perform_plan(
@@ -244,6 +218,10 @@ def undo_application(
     *,
     progress: ProgressCallback | None = None,
 ) -> PlanApplicationRecord:
+    if (record.transaction_directory / "sync.json").exists():
+        raise ValueError(
+            "Use Undo Synchronization to restore every participant root together"
+        )
     with transaction_lock(record.root):
         from recovery import inspect_recovery
 
@@ -673,7 +651,7 @@ def reverse_mutation(mutation: AppliedMutation) -> None:
     for path in (mutation.source, mutation.target):
         if path is not None:
             checked_boundary(path.parent, path)
-    if mutation.kind is MutationKind.STAGE_COPY:
+    if mutation.kind in {MutationKind.STAGE_COPY, MutationKind.PREPARED_FILE}:
         target = required_path(mutation.target)
         move_without_overwrite(target, copied_backup_path(mutation))
         return
@@ -717,6 +695,7 @@ def execute_mutation(
     mutation: AppliedMutation,
     *,
     content: str | None = None,
+    payload: Path | None = None,
 ) -> None:
     validate_root_identity(record)
     for path in (mutation.source, mutation.target):
@@ -724,14 +703,31 @@ def execute_mutation(
             checked_boundary(record.root, path)
     if path_exists(required_path(mutation.target)):
         raise FileExistsError(mutation.target)
+    if mutation.kind is MutationKind.PREPARED_FILE:
+        expected_payload = (
+            record.transaction_directory / "assets" / mutation.operation_id
+        )
+        if payload != expected_payload:
+            raise ValueError("Prepared file must belong to this root transaction")
+        checked_boundary(record.root, payload, allow_leaf_link=False)
+        if not stat.S_ISREG(payload.lstat().st_mode):
+            raise ValueError("Prepared payload is not a regular file")
     mutation = replace(
         mutation,
-        before_signature=file_signature(mutation.source) if mutation.source else None,
+        before_signature=file_signature(payload)
+        if mutation.kind is MutationKind.PREPARED_FILE
+        else file_signature(mutation.source)
+        if mutation.source
+        else None,
     )
     log_event(record, "intent", mutation)
     record.pending_mutations.append(mutation)
     try:
-        if mutation.kind is MutationKind.CREATE_FILE and content is not None:
+        if mutation.kind is MutationKind.PREPARED_FILE:
+            move_without_overwrite(
+                required_path(payload), required_path(mutation.target)
+            )
+        elif mutation.kind is MutationKind.CREATE_FILE and content is not None:
             with required_path(mutation.target).open("xb") as stream:
                 stream.write(content.encode("utf-8"))
                 stream.flush()
@@ -911,7 +907,7 @@ def validate_undo_state(record: PlanApplicationRecord) -> None:
             continue
         target = required_path(mutation.target)
         actual = origin(target)
-        if mutation.kind is MutationKind.STAGE_COPY:
+        if mutation.kind in {MutationKind.STAGE_COPY, MutationKind.PREPARED_FILE}:
             if actual is None:
                 raise FileNotFoundError(f"Copied item is missing: {target}")
             if path_exists(copied_backup_path(mutation)):
@@ -1055,3 +1051,33 @@ def copied_backup_path(mutation: AppliedMutation) -> Path:
         / "backup"
         / f"copy-{mutation.operation_id}"
     )
+
+
+def create_application_record(root: Path, plan=None, *, transaction_id=None):
+    transaction_id = transaction_id or uuid4().hex
+    transaction_directory = root / INTERNAL_DIRECTORY / "transactions" / transaction_id
+    checked_boundary(root, transaction_directory, allow_leaf_link=False)
+    transaction_directory.mkdir(parents=True, exist_ok=False)
+    hide_internal_directory(root / INTERNAL_DIRECTORY)
+    (transaction_directory / "staging").mkdir()
+    (transaction_directory / "backup").mkdir()
+    record = PlanApplicationRecord(
+        transaction_id=transaction_id,
+        root=root,
+        root_identity={
+            key: file_signature(root)[key] for key in ("st_dev", "st_ino", "st_mode")
+        },
+        transaction_directory=transaction_directory,
+        journal_path=transaction_directory / "journal.json",
+        mutation_log_path=transaction_directory / "mutations.jsonl",
+        started_at=now_text(),
+        skipped_operation_ids=[
+            operation.operation_id
+            for operation in (plan.operations if plan is not None else ())
+            if operation.conflict_policy is ConflictPolicy.SKIP
+        ],
+    )
+    record.mutation_log_path.touch(exist_ok=False)
+    record.save()
+
+    return record

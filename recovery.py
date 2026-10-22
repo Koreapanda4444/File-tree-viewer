@@ -101,6 +101,12 @@ def inspect_recovery(root: Path | str) -> RecoveryScan:
                     )
                 )
                 continue
+            from sync_apply import synchronization_problem
+
+            group_problem = synchronization_problem(record)
+            if group_problem:
+                candidates.append(RecoveryCandidate(journal, record, group_problem))
+                continue
             if (
                 record.status in UNFINISHED_STATUSES
                 or record.pending_mutations
@@ -198,6 +204,12 @@ def reconcile_pending(record: PlanApplicationRecord) -> None:
         ):
             log_event(record, "aborted", mutation)
         elif (
+            mutation.kind is MutationKind.PREPARED_FILE
+            and signature_matches(target, mutation.before_signature)
+            and not path_exists(
+                record.transaction_directory / "assets" / mutation.operation_id
+            )
+        ) or (
             mutation.kind is not MutationKind.STAGE_COPY
             and mutation.source is not None
             and not path_exists(mutation.source)
@@ -237,7 +249,7 @@ def reconcile_pending(record: PlanApplicationRecord) -> None:
         if mutation.key not in record.reversing_mutation_ids:
             continue
         target = required_path(mutation.target)
-        if mutation.kind is MutationKind.STAGE_COPY or (
+        if mutation.kind in {MutationKind.STAGE_COPY, MutationKind.PREPARED_FILE} or (
             mutation.kind is MutationKind.CREATE_FILE
             and mutation.after_signature
             and mutation.after_signature.get("st_size", 0) > 0
@@ -274,6 +286,36 @@ def recover_root(root: Path | str, *, progress=None) -> RecoveryResult:
     if root_path is None:
         raise ValueError("A recovery root is required")
     clear_abandoned_lock(root_path)
+    scan = inspect_recovery(root_path)
+    coordinated = [
+        item
+        for item in scan.candidates
+        if item.record is not None
+        and (item.record.transaction_directory / "sync.json").exists()
+    ]
+    if coordinated:
+        from sync_apply import recover_sync_group
+
+        recovered, errors = [], []
+        for candidate in coordinated:
+            try:
+                result = recover_sync_group(
+                    candidate.record.transaction_directory / "sync.json",
+                    progress=progress,
+                )
+                if result.recovery_errors:
+                    errors.extend(result.recovery_errors)
+                    break
+                recovered.append(result.transaction_id)
+            except (OSError, ValueError, RuntimeError, TypeError, KeyError) as error:
+                errors.append(str(error))
+                break
+        if errors:
+            return RecoveryResult(root_path, tuple(recovered), tuple(errors))
+        remaining = recover_root(root_path, progress=progress)
+        return RecoveryResult(
+            root_path, tuple(recovered) + remaining.recovered, remaining.errors
+        )
     recovered = []
     errors = []
     with transaction_lock(root_path):

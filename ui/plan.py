@@ -60,6 +60,7 @@ from planning import (
 from recovery import RecoveryResult, inspect_recovery
 from snapshot import QUERY_PAGE_SIZE, FileSnapshot, SnapshotEntry
 from snapshot_compare import SnapshotComparison
+from sync_apply import SyncApplication
 from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
 from ui.conflicts import ConflictResolutionDialog
@@ -1992,12 +1993,41 @@ class PlanExplorerPage(QWidget):
                 "Clear the currently staged Plan before undoing the last application.",
             )
             return
+        marker = record.transaction_directory / "sync.json"
+        coordinated = marker.exists()
+        root_description = str(record.root)
+        if coordinated:
+            import json
+
+            try:
+                if marker.stat().st_size > 32768:
+                    raise ValueError("Synchronization descriptor is oversized")
+                roots = json.loads(marker.read_text(encoding="utf-8"))["roots"]
+                if (
+                    not isinstance(roots, list)
+                    or len(roots) != 2
+                    or not all(
+                        isinstance(root, str) and Path(root).is_absolute()
+                        for root in roots
+                    )
+                ):
+                    raise ValueError("Synchronization roots are invalid")
+                root_description = "\n".join(roots)
+            except (OSError, ValueError, TypeError, KeyError) as error:
+                self._show_plan_error(error)
+                return
         answer = QMessageBox.warning(
             self,
-            "Undo last applied Plan",
-            f"Undo the last applied Plan on:\n{record.root}\n\n"
-            f"This will reverse {len(record.completed_operation_ids):,} operation(s). "
-            "The current filesystem will be checked for path conflicts first.",
+            "Undo multi-root synchronization"
+            if coordinated
+            else "Undo last applied Plan",
+            f"Undo the last applied Plan on:\n{root_description}\n\n"
+            + (
+                "All operations in BOTH participant roots will be restored together. "
+                if coordinated
+                else f"This will reverse {len(record.completed_operation_ids):,} operation(s). "
+            )
+            + "The current filesystem will be checked for path conflicts first.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2083,6 +2113,33 @@ class PlanExplorerPage(QWidget):
             self.progress_label.setText("Undo failed")
             return
         result, error = outcome
+        if isinstance(result, (SyncApplication, RecoveryResult)):
+            roots = (
+                result.roots if isinstance(result, SyncApplication) else (result.root,)
+            )
+            errors = (
+                result.recovery_errors
+                if isinstance(result, SyncApplication)
+                else result.errors
+            )
+            for root in roots:
+                self.filesystem_changed.emit(root)
+            if errors:
+                show_error(
+                    self,
+                    "Recovery needs review",
+                    "Conflicting files were preserved. Resolve the recorded conflicts before retrying.",
+                    "\n".join(errors),
+                )
+            else:
+                self.status_changed.emit("Coordinated recovery / Undo complete")
+            selected_root = (
+                self.snapshot.root
+                if self.snapshot and self.snapshot.root in roots
+                else roots[0]
+            )
+            self.start_snapshot(selected_root)
+            return
         if error or not isinstance(result, PlanApplicationRecord):
             message = error or "The Undo worker returned no application record"
             self.progress_label.setText("Undo could not start")

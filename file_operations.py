@@ -4,6 +4,7 @@ import os
 import shutil
 import threading
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from send2trash import send2trash
@@ -31,6 +32,24 @@ class FileChange:
 class OperationRecord:
     action: str
     changes: list[FileChange]
+
+
+class FileConflictPolicy(str, Enum):
+    RENAME = "rename"
+    SKIP = "skip"
+    STOP = "stop"
+
+
+class FileOperationSkipped(Exception):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class OperationItem:
+    status: str
+    source: Path | None
+    target: Path | None
+    message: str = ""
 
 
 def create_item(parent: Path, name: str, *, directory: bool) -> OperationRecord:
@@ -93,14 +112,21 @@ class FileOperationTask:
         sources: list[Path] | None = None,
         destination: Path | None = None,
         record: OperationRecord | None = None,
+        conflict_policy: FileConflictPolicy | str = FileConflictPolicy.RENAME,
+        cancelled: threading.Event | None = None,
     ) -> None:
-        self._cancelled = threading.Event()
+        self._cancelled = cancelled if cancelled is not None else threading.Event()
+        self.conflict_policy = FileConflictPolicy(conflict_policy)
+        self.outcomes: list[OperationItem] = []
+        self.current_target = None
         self.action = action
         self.sources = normalize_sources(sources or [])
         self.destination = destination
         self.record = record
         self._expected_sources: dict[Path, dict[str, int] | OSError] = {}
         for source in self.sources:
+            if self._cancelled.is_set():
+                break
             try:
                 self._expected_sources[source] = file_signature(source)
             except OSError as error:
@@ -109,31 +135,84 @@ class FileOperationTask:
     def cancel(self) -> None:
         self._cancelled.set()
 
-    def run(self, *, progress=None) -> tuple[list[FileChange], list[str]]:
+    def run(
+        self, *, progress=None, item_finished=None
+    ) -> tuple[list[FileChange], list[str]]:
         changes: list[FileChange] = []
         errors: list[str] = []
-        items: list[Path] | list[FileChange]
-        if self.action == "undo":
-            items = list(reversed(self.record.changes)) if self.record else []
-        else:
-            items = self.sources
+        self.outcomes.clear()
+        items = (
+            (list(reversed(self.record.changes)) if self.record else [])
+            if self.action == "undo"
+            else self.sources
+        )
+
+        def report(status, item, message=""):
+            source, target = self._item_paths(item)
+            result = OperationItem(
+                status,
+                source,
+                self.current_target if status in {"success", "failed"} else target,
+                message,
+            )
+            self.outcomes.append(result)
+            if item_finished is not None:
+                item_finished(result)
 
         total = len(items)
         for position, item in enumerate(items, start=1):
             if self._cancelled.is_set():
-                errors.append("Operation cancelled; completed changes can be undone")
+                errors.append(
+                    "Operation cancelled; completed copies and moves can be undone"
+                )
+                for pending in items[position - 1 :]:
+                    report("cancelled", pending, "Not started; cancellation requested")
                 break
             name = self._item_name(item)
+            self.current_target = self._item_paths(item)[1]
             if progress is not None:
                 progress(self.action, position, total, name)
             try:
                 change = self._perform(item)
+            except FileOperationSkipped as error:
+                report("skipped", item, str(error))
             except (OSError, RuntimeError, shutil.Error, ValueError) as error:
-                errors.append(f"{name}: {operation_error(error)}")
+                message = operation_error(error)
+                errors.append(f"{name}: {message}")
+                report("failed", item, message)
+                if (
+                    isinstance(error, FileExistsError)
+                    and self.conflict_policy is FileConflictPolicy.STOP
+                ):
+                    for pending in items[position:]:
+                        report(
+                            "skipped", pending, "Not started; stopped after a conflict"
+                        )
+                    break
             else:
                 changes.append(change)
-
+                report("success", item)
         return changes, errors
+
+    def _item_paths(self, item):
+        if isinstance(item, Path):
+            return (
+                item,
+                self.destination / item.name if self.destination is not None else None,
+            )
+        moving = self.record is not None and self.record.action in {"move", "rename"}
+        return item.target or item.source, item.source if moving else None
+
+    def _transfer_target(self, destination, source):
+        target = destination / source.name
+        if target.exists() or target.is_symlink():
+            if self.conflict_policy is FileConflictPolicy.SKIP:
+                raise FileOperationSkipped(f"Target already exists: {target}")
+            if self.conflict_policy is FileConflictPolicy.STOP:
+                raise FileExistsError(f"Target already exists: {target}")
+            target = unique_destination(destination, source)
+        self.current_target = target
+        return target
 
     def _perform(self, item: Path | FileChange) -> FileChange:
         if isinstance(item, Path) and item in self._expected_sources:
@@ -156,13 +235,13 @@ class FileOperationTask:
 
     def _copy(self, source: Path) -> FileChange:
         destination = self._checked_destination(source, moving=False)
-        target = unique_destination(destination, source)
+        target = self._transfer_target(destination, source)
         copy_exclusive(source, target)
         return record_change(source, target)
 
     def _move(self, source: Path) -> FileChange:
         destination = self._checked_destination(source, moving=True)
-        target = unique_destination(destination, source)
+        target = self._transfer_target(destination, source)
         if target.exists() or target.is_symlink():
             raise FileExistsError(target)
         move_no_replace(source, target)

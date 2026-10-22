@@ -77,6 +77,7 @@ from ui.file_views import FolderViews
 from ui.image_preview import ImagePreview
 from ui.locations import LocationsButton, LocationStore
 from ui.navigation_tabs import FolderTabs
+from ui.operation_results import OperationResultsDialog, OperationResultsModel
 from ui.plan import PlanExplorerPage
 from ui.preferences import (
     Preferences,
@@ -312,6 +313,20 @@ class ExplorerPage(QWidget):
             row.addWidget(button)
 
         if not self.virtual:
+            self.transfer_policy = QComboBox()
+            for label, value in (
+                ("Rename conflicts", "rename"),
+                ("Skip conflicts", "skip"),
+                ("Stop on conflict", "stop"),
+            ):
+                self.transfer_policy.addItem(label, value)
+            self.transfer_policy.setToolTip(
+                "Conflict policy for Real copy/move; existing files are preserved"
+            )
+            self.operation_results_button = QPushButton("Last Operation")
+            self.operation_results_button.setEnabled(False)
+            row.addWidget(self.transfer_policy)
+            row.addWidget(self.operation_results_button)
             self.compare_files_button = QPushButton("Compare Files")
             row.addWidget(self.compare_files_button)
         return row
@@ -375,6 +390,8 @@ class RealExplorerPage(ExplorerPage):
         self.close_cancelled = False
         self.preferences = Preferences()
         self.pending_folder = None
+        self.operation_results = OperationResultsModel(self)
+        self.operation_results_button.clicked.connect(self.show_operation_results)
         self.current_metadata = None
         self.metadata_button.clicked.connect(self.show_file_metadata)
 
@@ -1254,6 +1271,7 @@ class RealExplorerPage(ExplorerPage):
         self.move_button.setEnabled(bool(selected) and not blocked)
         self.delete_button.setEnabled(bool(selected) and not blocked)
         self.undo_button.setEnabled(bool(self.undo_stack) and not blocked)
+        self.transfer_policy.setEnabled(not blocked)
         if hasattr(self, "file_commands"):
             self.file_commands.update_actions()
 
@@ -1394,7 +1412,13 @@ class RealExplorerPage(ExplorerPage):
             sources=sources,
             destination=destination,
             record=record,
+            conflict_policy=self.transfer_policy.currentData(),
         )
+        self.operation_results.reset_operation(
+            action, len(sources or []) if record is None else len(record.changes)
+        )
+        self.operation_results_button.setEnabled(True)
+        worker.items_ready.connect(self.receive_operation_items)
         worker.progress.connect(self.show_operation_progress)
         worker.finished.connect(self.finish_file_operation)
         thread = prepare_worker_thread(
@@ -1416,8 +1440,22 @@ class RealExplorerPage(ExplorerPage):
         total: int,
         name: str,
     ) -> None:
-        self.task_progress.emit(f"{action.title()}: {name}", position, total)
+        self.operation_results.total = total
+        self.task_progress.emit(f"{action.title()}: {name}", position - 1, total)
         self.status_changed.emit(f"{action.title()}: {position}/{total} - {name}")
+
+    def show_operation_results(self):
+        dialog = OperationResultsDialog(self)
+        dialog.exec()
+        dialog.deleteLater()
+
+    def receive_operation_items(self, items):
+        self.operation_results.append_items(items)
+        self.task_progress.emit(
+            self.operation_results.action,
+            len(self.operation_results.items),
+            self.operation_results.total,
+        )
 
     def finish_file_operation(
         self,
@@ -1434,6 +1472,7 @@ class RealExplorerPage(ExplorerPage):
 
         self.operation_thread = None
         self.operation_worker = None
+        self.operation_results.finish()
         self._set_operation_running(False)
 
         if self.operation_outcome is not None:
@@ -1474,18 +1513,20 @@ class RealExplorerPage(ExplorerPage):
                 self,
                 "File operation incomplete",
                 f"{len(changes):,} completed; {len(errors):,} failed or cancelled. Completed copies and moves are available in Undo.",
-                "\n".join(errors),
+                "\n".join(errors[:1000])
+                + (
+                    "\nFurther details are available in Last Operation."
+                    if len(errors) > 1000
+                    else ""
+                ),
             )
 
-        if action == "delete":
-            message = f"Moved {len(changes)} item(s) to the Recycle Bin"
-        elif action == "undo":
-            message = f"Undid {len(changes)} item(s)"
+        if self.operation_results.items:
+            self.status_changed.emit(self.operation_results.summary())
         else:
-            message = f"{action.title()} complete: {len(changes)} item(s)"
-        if errors:
-            message += f", {len(errors)} failed"
-        self.status_changed.emit(message)
+            self.status_changed.emit(
+                f"{action.title()} stopped: {len(changes):,} completed, {len(errors):,} error(s)"
+            )
         self.update_action_buttons()
 
     def _refresh_after_operation(self) -> None:
@@ -1575,6 +1616,7 @@ class RealExplorerPage(ExplorerPage):
         self.quick_access.closed = False
 
     def finalize_close(self) -> None:
+        self.file_commands.dispose()
         self.model.close()
         self.search_results.close()
 

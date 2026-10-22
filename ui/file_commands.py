@@ -16,6 +16,7 @@ class FileCommands(QObject):
         self.pending_cut_token = None
         self.actions = {}
         self.has_files = False
+        self.disposed = False
         self.selection_timer = QTimer(self)
         self.selection_timer.setInterval(5)
         self.selection_timer.timeout.connect(self.continue_select_all)
@@ -298,3 +299,9 @@ class FileCommands(QObject):
 
     def stop(self):
         self.selection_timer.stop()
+
+    def dispose(self):
+        self.stop()
+        if not self.disposed:
+            QApplication.clipboard().dataChanged.disconnect(self.clipboard_changed)
+            self.disposed = True

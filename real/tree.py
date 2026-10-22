@@ -125,7 +125,7 @@ class FileTreeModel(QAbstractItemModel):
         self.refresh()
 
     def node_from_index(self, index: QModelIndex) -> FileNode | None:
-        if not index.isValid():
+        if not index.isValid() or index.model() is not self:
             return None
         node = index.internalPointer()
         return node if isinstance(node, FileNode) else None

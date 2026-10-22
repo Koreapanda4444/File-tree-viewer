@@ -18,7 +18,7 @@ class StagingController(QObject):
         self.window = window
         self.pending = None
         self.virtual_context = None
-        self.refresh_root = None
+        self.refresh_roots = set()
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(200)
         self.refresh_timer.timeout.connect(self.refresh_real)
@@ -185,7 +185,7 @@ class StagingController(QObject):
         )
 
     def filesystem_changed(self, root):
-        self.refresh_root = root
+        self.refresh_roots.add(root)
         self.refresh_timer.start()
 
     def refresh_real(self):
@@ -200,12 +200,11 @@ class StagingController(QObject):
         ):
             return
         self.refresh_timer.stop()
-        root, self.refresh_root = self.refresh_root, None
+        roots, self.refresh_roots = self.refresh_roots, set()
         current = real.model.root_path
-        if (
-            root is not None
-            and current is not None
-            and (path_is_within(current, root) or path_is_within(root, current))
+        if current is not None and any(
+            path_is_within(current, root) or path_is_within(root, current)
+            for root in roots
         ):
             if real.preview.document().isModified():
                 real.status_changed.emit(

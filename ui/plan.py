@@ -647,6 +647,7 @@ class PlanExplorerPage(QWidget):
         self.new_file_button = QPushButton("New File")
         self.new_folder_button = QPushButton("New Folder")
         self.rename_button = QPushButton("Rename")
+        self.copy_button = QPushButton("Copy")
         self.move_button = QPushButton("Move")
         self.delete_button = QPushButton("Delete")
         self.batch_rename_button = QPushButton("Batch Rename")
@@ -663,6 +664,7 @@ class PlanExplorerPage(QWidget):
             self.new_file_button,
             self.new_folder_button,
             self.rename_button,
+            self.copy_button,
             self.move_button,
             self.delete_button,
             self.batch_rename_button,
@@ -679,6 +681,7 @@ class PlanExplorerPage(QWidget):
         self.new_file_button.clicked.connect(lambda: self.stage_create(False))
         self.new_folder_button.clicked.connect(lambda: self.stage_create(True))
         self.rename_button.clicked.connect(self.stage_rename)
+        self.copy_button.clicked.connect(self.stage_copy_dialog)
         self.move_button.clicked.connect(self.stage_move_dialog)
         self.delete_button.clicked.connect(self.stage_delete)
         self.batch_rename_button.clicked.connect(lambda: self.stage_batch(True))
@@ -905,68 +908,56 @@ class PlanExplorerPage(QWidget):
             self._refresh_plan_list()
             self.status_changed.emit(f"Staged {added} delete operation(s)")
 
+    def stage_copy_dialog(self) -> None:
+        self.stage_transfer_dialog(PlanAction.COPY)
+
     def stage_move_dialog(self) -> None:
+        self.stage_transfer_dialog(PlanAction.MOVE)
+
+    def stage_transfer_dialog(self, action) -> None:
         entries = self._selected_entries()
         if not entries or self.scan_is_running:
             return
         destination, accepted = QInputDialog.getText(
             self,
-            "Plan Move",
+            f"Plan {action.value.title()}",
             "Destination folder relative to the Plan root (empty for root):",
         )
-        if not accepted:
-            return
-        try:
-            target = normalize_plan_path(destination) if destination else None
-            self.stage_moves(tuple(entry.path for entry in entries), target)
-        except ValueError as error:
-            self._show_plan_error(error)
+        if accepted:
+            self.stage_transfers(
+                tuple(entry.path for entry in entries), destination or None, action
+            )
 
-    def stage_moves(
-        self,
-        sources: tuple[PurePosixPath, ...],
-        destination: PurePosixPath | None,
-    ) -> None:
+    def stage_moves(self, sources, destination) -> None:
+        self.stage_transfers(sources, destination, PlanAction.MOVE)
+
+    def stage_transfers(self, sources, destination, action) -> None:
         try:
+            action = PlanAction(action)
+            if action not in {PlanAction.MOVE, PlanAction.COPY}:
+                raise ValueError("Choose Copy or Move")
             destination = (
                 normalize_plan_path(destination) if destination is not None else None
             )
             sources = tuple(normalize_plan_path(source) for source in sources)
+            if self.snapshot is None or not self._directory_exists(destination):
+                raise ValueError("The destination folder does not exist")
+            operations = []
+            for source in top_level_paths(sources):
+                entry = self.snapshot.entry(source)
+                if entry is None or entry.error:
+                    raise ValueError(
+                        f"Source is missing or inaccessible in the snapshot: {source}"
+                    )
+                target = join_plan_path(destination, entry.name)
+                if source == target:
+                    continue
+                if entry.is_directory and target.is_relative_to(source):
+                    raise ValueError("A folder cannot be copied or moved inside itself")
+                operations.append(PlanOperation(action, source, target))
+            self.stage_operations(operations, "Snapshot")
         except ValueError as error:
             self._show_plan_error(error)
-            return
-        if self.snapshot is None or not self._directory_exists(destination):
-            self._show_plan_error(ValueError("The destination folder does not exist"))
-            return
-        added = 0
-        for source in top_level_paths(sources):
-            entry = self.snapshot.entry(source)
-            if entry is None:
-                continue
-            target = join_plan_path(destination, entry.name)
-            if source == target:
-                continue
-            if (
-                entry.is_directory
-                and destination is not None
-                and (destination == source or destination.is_relative_to(source))
-            ):
-                self._show_plan_error(
-                    ValueError("A folder cannot be moved inside itself")
-                )
-                continue
-            try:
-                operation = self.plan.add_move(source, target)
-                self.plan.set_conflict_policy(
-                    [operation.operation_id], self.default_conflict_policy
-                )
-            except ValueError as error:
-                self._show_plan_error(error)
-                continue
-            added += 1
-        if added:
-            self._refresh_plan_list()
-            self.status_changed.emit(f"Staged {added} move operation(s)")
 
     def review_dependencies(self) -> None:
         report = analyze_dependencies(self.plan)
@@ -2433,6 +2424,7 @@ class PlanExplorerPage(QWidget):
         self.new_file_button.setEnabled(ready)
         self.new_folder_button.setEnabled(ready)
         self.rename_button.setEnabled(len(entries) == 1)
+        self.copy_button.setEnabled(bool(entries))
         self.move_button.setEnabled(bool(entries))
         self.delete_button.setEnabled(bool(entries))
         self.batch_rename_button.setEnabled(bool(entries))
@@ -2540,6 +2532,10 @@ class PlanExplorerPage(QWidget):
         self.close_requested = False
 
     def finalize_close(self) -> None:
+        self.tree.setModel(None)
+        if self.snapshot_model is not None:
+            self.snapshot_model.deleteLater()
+            self.snapshot_model = None
         if self.snapshot is not None:
             self.snapshot.close()
             self.snapshot = None

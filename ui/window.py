@@ -77,6 +77,7 @@ from ui.file_compare import FileComparisonDialog
 from ui.file_drop import FileDropController
 from ui.file_groups import FileGroupDelegate
 from ui.file_views import FolderViews
+from ui.folder_compare import FolderComparisonDialog
 from ui.image_preview import ImagePreview
 from ui.live_search import LiveSearch
 from ui.locations import LocationsButton, LocationStore
@@ -2401,6 +2402,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("File Tree Viewer")
+        self.folder_comparison_dialog = None
+        self.comparison_close_pending = False
         self.resize(1400, 850)
         self.setMinimumSize(1000, 650)
 
@@ -2439,6 +2442,7 @@ class MainWindow(QMainWindow):
         workspace_menu.addSeparator()
         workspace_menu.addAction("Import Real Root into Plan", self.import_real_root)
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
+        workspace_menu.addAction("Compare Folders…", self.compare_folders_dialog)
         self.staging = StagingController(self)
         workspace_menu.addAction(
             "Add Virtual Workspace to Plan…", self.staging.request_virtual
@@ -2523,6 +2527,22 @@ class MainWindow(QMainWindow):
                 "Check permissions and free space for the application settings location.",
             )
 
+    def compare_folders_dialog(self):
+        if self.folder_comparison_dialog is not None:
+            self.folder_comparison_dialog.raise_()
+            return
+        dialog = FolderComparisonDialog(self.real_page.model.root_path, self)
+        self.folder_comparison_dialog = dialog
+        dialog.ready_to_close.connect(
+            lambda: self.close() if self.comparison_close_pending else None
+        )
+        try:
+            dialog.exec()
+        finally:
+            self.folder_comparison_dialog = None
+            self.comparison_close_pending = False
+            dialog.deleteLater()
+
     def import_real_root(self) -> None:
         root = self.real_page.model.root_path
         if root is None:
@@ -2542,6 +2562,14 @@ class MainWindow(QMainWindow):
         self.real_page.set_root(snapshot.root)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if (
+            self.folder_comparison_dialog is not None
+            and self.folder_comparison_dialog.thread is not None
+        ):
+            self.comparison_close_pending = True
+            self.folder_comparison_dialog.reject()
+            event.ignore()
+            return
         if not self.real_page.prepare_close():
             if self.real_page.close_cancelled:
                 event.ignore()

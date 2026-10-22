@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from snapshot import SnapshotCancelled
 from sync_plan import plan_bidirectional_sync, plan_one_way_sync
+from ui.preferences import application_settings
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -221,6 +222,14 @@ class SyncReviewDialog(QDialog):
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
+            return
+        settings = application_settings()
+        settings.setValue("recovery/last_root", str(self.plan.roots[0]))
+        settings.sync()
+        if settings.status() != settings.Status.NoError:
+            self.summary.setText(
+                "Cannot save the recovery location. Check application settings permissions before synchronization."
+            )
             return
         marker = (
             self.application_result.journals[0].parent / "sync.json"

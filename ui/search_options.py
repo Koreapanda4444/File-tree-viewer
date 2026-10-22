@@ -80,7 +80,12 @@ class SearchOptionsDialog(QDialog):
             text = str(value) if value is not None else ""
             if value is not None and name not in {"minimum_size", "maximum_size"}:
                 text = (
-                    datetime.fromtimestamp(value / 1e9, timezone.utc).date().isoformat()
+                    (
+                        datetime(1970, 1, 1, tzinfo=timezone.utc)
+                        + timedelta(microseconds=value // 1000)
+                    )
+                    .date()
+                    .isoformat()
                 )
             field = self.fields[name] = QLineEdit(text)
             field.setPlaceholderText(
@@ -128,15 +133,11 @@ class SearchOptionsDialog(QDialog):
                     day = datetime.strptime(text, "%Y-%m-%d").replace(
                         tzinfo=timezone.utc
                     )
-                    values[name] = int(
-                        (
-                            day
-                            + (
-                                timedelta(days=1)
-                                if name.endswith("before")
-                                else timedelta()
-                            )
-                        ).timestamp()
+                    seconds = (
+                        day - datetime(1970, 1, 1, tzinfo=timezone.utc)
+                    ).days * 86400
+                    values[name] = (
+                        seconds + (86400 if name.endswith("before") else 0)
                     ) * 1_000_000_000 - (1 if name.endswith("before") else 0)
             self.options = SearchOptions(
                 content_query=self.content_query.text(),

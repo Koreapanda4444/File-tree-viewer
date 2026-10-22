@@ -467,7 +467,7 @@ class RealExplorerPage(ExplorerPage):
         self.refresh_button.clicked.connect(self.refresh_root)
         self.show_hidden.toggled.connect(self.toggle_hidden)
         self.search_input.textChanged.connect(self.update_search_button)
-        self.search_input.returnPressed.connect(self.start_search)
+        self.search_input.returnPressed.connect(lambda: self.live_search.request_now())
         self.search_button.clicked.connect(self.start_search)
         self.clear_search_button.clicked.connect(self.clear_search)
         self.new_file_button.clicked.connect(self.create_new_file)

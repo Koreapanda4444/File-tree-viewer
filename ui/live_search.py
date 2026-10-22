@@ -28,6 +28,10 @@ class LiveSearch(QObject):
         if not self.page.close_requested:
             self.timer.start(350)
 
+    def request_now(self):
+        self.timer.stop()
+        self.request()
+
     def request(self):
         page = self.page
         if (

@@ -38,6 +38,10 @@ class SearchOptions:
             "filesystem",
         }:
             raise ValueError("Invalid search type or scope")
+        if not isinstance(self.extensions, (tuple, list)) or any(
+            not isinstance(value, str) for value in self.extensions
+        ):
+            raise ValueError("Invalid search extensions")
         extensions = tuple(
             sorted(
                 {
@@ -59,11 +63,21 @@ class SearchOptions:
             ("created_after", "created_before"),
         ):
             first, last = getattr(self, lower), getattr(self, upper)
+            minimum, maximum = (
+                (0, None)
+                if lower == "minimum_size"
+                else (-62135596800000000000, 253402300799999999999)
+            )
             if any(
-                value is not None and (type(value) is not int or value < 0)
+                value is not None
+                and (
+                    type(value) is not int
+                    or value < minimum
+                    or (maximum is not None and value > maximum)
+                )
                 for value in (first, last)
             ):
-                raise ValueError("Search ranges must be non-negative integers")
+                raise ValueError("Search range is outside its supported limits")
             if first is not None and last is not None and first > last:
                 raise ValueError("A search range starts after its end")
 

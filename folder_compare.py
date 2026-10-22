@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 
+from file_hashing import FileHashCache
 from fs_ops import file_signature
 from fs_paths import checked_boundary, normalize_root
 from snapshot import build_snapshot
@@ -28,6 +29,8 @@ class FolderEntry:
     left: dict | None
     right: dict | None
     details: str
+    left_digest: str | None = None
+    right_digest: str | None = None
 
 
 class FolderComparison:
@@ -69,7 +72,7 @@ class FolderComparison:
         return tuple(
             self.decode(row)
             for row in self.database.execute(
-                "SELECT COALESCE(source,target),folder_status,before_data,after_data,details FROM changes"
+                "SELECT COALESCE(source,target),folder_status,before_data,after_data,details,left_digest,right_digest FROM changes"
                 + where
                 + " ORDER BY id LIMIT ? OFFSET ?",
                 (*parameters, limit, offset),
@@ -78,18 +81,20 @@ class FolderComparison:
 
     @staticmethod
     def decode(row):
-        path, status, left, right, details = row
+        path, status, left, right, details, left_digest, right_digest = row
         return FolderEntry(
             path,
             FolderStatus(status),
             json.loads(left) if left else None,
             json.loads(right) if right else None,
             details,
+            left_digest,
+            right_digest,
         )
 
     def iter_entries(self):
         cursor = self.database.execute(
-            "SELECT COALESCE(source,target),folder_status,before_data,after_data,details FROM changes ORDER BY id"
+            "SELECT COALESCE(source,target),folder_status,before_data,after_data,details,left_digest,right_digest FROM changes ORDER BY id"
         )
         try:
             for row in cursor:
@@ -110,7 +115,15 @@ def root_identity(root):
     return {key: details[key] for key in ("st_dev", "st_ino", "st_mode")}
 
 
-def compare_folders(left_root, right_root, *, cancelled=None, progress=None):
+def compare_folders(
+    left_root,
+    right_root,
+    *,
+    cancelled=None,
+    progress=None,
+    verify_content=False,
+    hash_cache=None,
+):
     roots = tuple(normalize_root(root) for root in (left_root, right_root))
     for root in roots:
         if root is None:
@@ -142,6 +155,8 @@ def compare_folders(left_root, right_root, *, cancelled=None, progress=None):
         )
         database = changes._database
         database.execute("ALTER TABLE changes ADD COLUMN folder_status TEXT")
+        database.execute("ALTER TABLE changes ADD COLUMN left_digest TEXT")
+        database.execute("ALTER TABLE changes ADD COLUMN right_digest TEXT")
         database.execute(
             "UPDATE changes SET folder_status=CASE WHEN kind='created' THEN 'right_only' WHEN kind='deleted' THEN 'left_only' WHEN kind='unchanged' THEN 'same' ELSE 'modified' END"
         )
@@ -156,10 +171,76 @@ def compare_folders(left_root, right_root, *, cancelled=None, progress=None):
         check_cancelled(cancelled)
         if identities != tuple(root_identity(root) for root in roots):
             raise FileExistsError("A comparison root was replaced while scanning")
-        return FolderComparison(changes, *snapshots, identities)
+        result = FolderComparison(changes, *snapshots, identities)
+        if verify_content:
+            verify_folder_contents(
+                result, hash_cache=hash_cache, cancelled=cancelled, progress=progress
+            )
+        return result
     except BaseException:
         if changes is not None:
             changes.close()
         for snapshot in snapshots:
             snapshot.close()
         raise
+
+
+def verify_folder_contents(
+    comparison, *, hash_cache=None, cancelled=None, progress=None
+):
+    cache = hash_cache or FileHashCache()
+    cursor = comparison.database.execute(
+        "SELECT id,before_data,after_data,folder_status FROM changes ORDER BY id"
+    )
+    processed = 0
+    try:
+        for row_id, before, after, status in cursor:
+            check_cancelled(cancelled)
+            if status in {FolderStatus.ERROR.value, FolderStatus.TYPE_CONFLICT.value}:
+                continue
+            entries = [
+                json.loads(value) if value else None for value in (before, after)
+            ]
+            hashes = []
+            try:
+                for root, entry in zip(
+                    (comparison.left_root, comparison.right_root), entries, strict=True
+                ):
+                    hashes.append(
+                        cache.digest(root, entry, cancelled=cancelled)
+                        if entry and not entry["is_directory"]
+                        else None
+                    )
+            except (OSError, ValueError) as error:
+                comparison.database.execute(
+                    "UPDATE changes SET folder_status='error',details=? WHERE id=?",
+                    (str(error), row_id),
+                )
+            else:
+                details = (
+                    "SHA-256 verified"
+                    if any(hashes)
+                    else "Matching directory structure"
+                )
+                if all(hashes):
+                    status = (
+                        FolderStatus.SAME.value
+                        if hashes[0] == hashes[1]
+                        else FolderStatus.MODIFIED.value
+                    )
+                    details = (
+                        "SHA-256 equal" if hashes[0] == hashes[1] else "SHA-256 differs"
+                    )
+                comparison.database.execute(
+                    "UPDATE changes SET folder_status=?,details=?,left_digest=?,right_digest=? WHERE id=?",
+                    (status, details, *hashes, row_id),
+                )
+            processed += 1
+            if progress and processed % 64 == 0:
+                progress("Verifying file contents with SHA-256", processed)
+        check_cancelled(cancelled)
+        comparison.database.commit()
+        comparison.hash_verified = True
+        comparison.recount()
+    finally:
+        cursor.close()

@@ -130,7 +130,11 @@ def prepare_sync_plan(comparison, *, cancelled=None):
                 plan.issue(
                     f"{entry.path}: {entry.status.value}; resolve this item manually"
                 )
-            normalize_plan_path(entry.path)
+            relative = normalize_plan_path(entry.path)
+            if any(part.casefold() == ".file-tree-viewer" for part in relative.parts):
+                plan.issue(
+                    f"{entry.path}: nested application recovery data cannot be synchronized"
+                )
             for side, value, digest in (
                 (0, entry.left, entry.left_digest),
                 (1, entry.right, entry.right_digest),
@@ -227,3 +231,110 @@ def plan_one_way_sync(
     except BaseException:
         plan.close()
         raise
+
+
+def plan_bidirectional_sync(
+    comparison,
+    *,
+    conflict_policy="block",
+    initialize=False,
+    cancelled=None,
+    progress=None,
+):
+    from sync_baseline import entry_state, load_sync_baseline
+
+    if conflict_policy not in {"block", "left", "right"}:
+        raise ValueError("Invalid synchronization conflict policy")
+    plan = prepare_sync_plan(comparison, cancelled=cancelled)
+    plan.direction = f"Bidirectional; conflicts: {conflict_policy}" + (
+        "; additive initialization" if initialize else ""
+    )
+    baseline = None
+    deleted_folders = set()
+    try:
+        baseline = load_sync_baseline(plan.roots, plan.identities)
+        for index, entry in enumerate(comparison.iter_entries()):
+            check_cancelled(cancelled)
+            if progress and index % 512 == 0:
+                progress("Analyzing bidirectional changes", index)
+            if entry.status in {FolderStatus.ERROR, FolderStatus.TYPE_CONFLICT}:
+                continue
+            values = [entry_data(plan, side, entry.path) for side in (0, 1)]
+            states = [entry_state(value) for value in values]
+            if states[0] == states[1]:
+                continue
+            chosen = None
+            if baseline is None:
+                if any(state is None for state in states):
+                    if initialize:
+                        chosen = 0 if states[0] is not None else 1
+                    else:
+                        plan.issue(
+                            f"{entry.path}: no baseline; creation versus deletion is ambiguous. Review additive initialization."
+                        )
+                        continue
+                elif conflict_policy == "block":
+                    plan.issue(
+                        f"{entry.path}: both sides differ without shared history"
+                    )
+                    continue
+                else:
+                    chosen = 0 if conflict_policy == "left" else 1
+            else:
+                previous = [baseline.state(side, entry.path) for side in (0, 1)]
+                changed = [
+                    state != old for state, old in zip(states, previous, strict=True)
+                ]
+                if not any(changed):
+                    continue
+                if changed[0] != changed[1]:
+                    chosen = 0 if changed[0] else 1
+                elif conflict_policy == "block":
+                    plan.issue(
+                        f"{entry.path}: both sides changed since the last successful synchronization"
+                    )
+                    continue
+                else:
+                    chosen = 0 if conflict_policy == "left" else 1
+            destination = 1 - chosen
+            source, target = values[chosen], values[destination]
+            relative = normalize_plan_path(entry.path)
+            if any(
+                (destination, str(parent)) in deleted_folders
+                for parent in relative.parents
+            ):
+                continue
+            if source is None:
+                if target is None:
+                    continue
+                if target["is_directory"]:
+                    if baseline is None or not baseline.subtree_unchanged(
+                        plan, destination, entry.path
+                    ):
+                        plan.issue(
+                            f"{entry.path}: folder deletion conflicts with descendant changes; resolve manually"
+                        )
+                        continue
+                    deleted_folders.add((destination, entry.path))
+                plan.add(
+                    SyncOperation(
+                        SyncAction.DELETE, entry.path, destination, target=target
+                    )
+                )
+            elif source["is_directory"]:
+                if target is None:
+                    plan.add(SyncOperation(SyncAction.MKDIR, entry.path, destination))
+            else:
+                plan.add(
+                    SyncOperation(
+                        SyncAction.COPY, entry.path, destination, chosen, source, target
+                    )
+                )
+        plan.database.commit()
+        return plan
+    except BaseException:
+        plan.close()
+        raise
+    finally:
+        if baseline is not None:
+            baseline.close()

@@ -214,6 +214,28 @@ class FolderComparisonDialog(QDialog):
         buttons.rejected.connect(self.reject)
         row.addWidget(buttons)
         layout.addLayout(row)
+        sync_row = QHBoxLayout()
+        self.sync_policy = QComboBox()
+        for label, policy in (
+            ("Block conflicts", "block"),
+            ("Prefer Left", "left"),
+            ("Prefer Right", "right"),
+        ):
+            self.sync_policy.addItem(label, policy)
+        self.initialize_sync = QCheckBox(
+            "Initialize: copy one-sided items; never infer deletions"
+        )
+        self.bidirectional_button = QPushButton("Plan Bidirectional…")
+        self.bidirectional_button.setEnabled(False)
+        self.bidirectional_button.clicked.connect(lambda: self.start_sync_plan(None))
+        self.sync_buttons.append(self.bidirectional_button)
+        for widget in (
+            self.sync_policy,
+            self.initialize_sync,
+            self.bidirectional_button,
+        ):
+            sync_row.addWidget(widget)
+        layout.addLayout(sync_row)
 
     def browse(self, field):
         if self.thread is not None:
@@ -308,7 +330,11 @@ class FolderComparisonDialog(QDialog):
         if self.thread is not None or self.comparison is None:
             return
         self.worker = SyncPlanningWorker(
-            self.comparison, source_side, self.delete_extra.isChecked()
+            self.comparison,
+            source_side,
+            self.delete_extra.isChecked(),
+            conflict_policy=self.sync_policy.currentData(),
+            initialize=self.initialize_sync.isChecked(),
         )
         self.worker.progress.connect(
             lambda message, count: self.summary.setText(f"{message}: {count:,}")

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from snapshot import SnapshotCancelled
-from sync_plan import plan_one_way_sync
+from sync_plan import plan_bidirectional_sync, plan_one_way_sync
 from ui.tasks import CancellableWorker
 from ui.widgets import PlainLabel
 
@@ -25,21 +25,39 @@ class SyncPlanningWorker(CancellableWorker):
     progress = Signal(str, int)
     finished = Signal(object, bool, str)
 
-    def __init__(self, comparison, source_side, delete_extra):
+    def __init__(
+        self,
+        comparison,
+        source_side,
+        delete_extra,
+        *,
+        conflict_policy="block",
+        initialize=False,
+    ):
         super().__init__()
         self.comparison = comparison
         self.source_side = source_side
         self.delete_extra = delete_extra
+        self.conflict_policy, self.initialize = conflict_policy, initialize
 
     def run(self):
         try:
-            result = plan_one_way_sync(
-                self.comparison,
-                source_side=self.source_side,
-                delete_extra=self.delete_extra,
-                cancelled=self._cancelled,
-                progress=self.progress.emit,
-            )
+            if self.source_side is None:
+                result = plan_bidirectional_sync(
+                    self.comparison,
+                    conflict_policy=self.conflict_policy,
+                    initialize=self.initialize,
+                    cancelled=self._cancelled,
+                    progress=self.progress.emit,
+                )
+            else:
+                result = plan_one_way_sync(
+                    self.comparison,
+                    source_side=self.source_side,
+                    delete_extra=self.delete_extra,
+                    cancelled=self._cancelled,
+                    progress=self.progress.emit,
+                )
         except SnapshotCancelled:
             self.finished.emit(None, True, "")
         except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:

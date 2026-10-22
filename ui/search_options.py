@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -25,6 +26,18 @@ class SearchOptionsDialog(QDialog):
         self.extensions = QLineEdit(";".join(options.extensions))
         self.extensions.setPlaceholderText("txt;py;tar.gz (blank = all)")
         layout.addRow("Extensions", self.extensions)
+        self.mode = QComboBox()
+        for label, value in (
+            ("Contains text", "literal"),
+            ("Wildcard (*, ?, [abc])", "wildcard"),
+            ("Regular expression", "regex"),
+        ):
+            self.mode.addItem(label, value)
+        self.mode.setCurrentIndex(self.mode.findData(options.name_mode))
+        layout.addRow("Name matching", self.mode)
+        self.case_sensitive = QCheckBox("Case sensitive")
+        self.case_sensitive.setChecked(options.case_sensitive)
+        layout.addRow(self.case_sensitive)
         self.kind = QComboBox()
         for label, value in (
             ("Files and folders", "all"),
@@ -81,6 +94,8 @@ class SearchOptionsDialog(QDialog):
         layout.addRow(buttons)
 
     def reset(self):
+        self.mode.setCurrentIndex(0)
+        self.case_sensitive.setChecked(False)
         self.extensions.clear()
         self.kind.setCurrentIndex(0)
         self.scope.setCurrentIndex(0)
@@ -111,6 +126,8 @@ class SearchOptionsDialog(QDialog):
                         ).timestamp()
                     ) * 1_000_000_000 - (1 if name.endswith("before") else 0)
             self.options = SearchOptions(
+                name_mode=self.mode.currentData(),
+                case_sensitive=self.case_sensitive.isChecked(),
                 extensions=tuple(self.extensions.text().split(";")),
                 kind=self.kind.currentData(),
                 scope=self.scope.currentData(),

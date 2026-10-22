@@ -14,8 +14,15 @@ class SearchOptions:
     created_after: int | None = None
     created_before: int | None = None
     scope: str = "recursive"
+    name_mode: str = "literal"
+    case_sensitive: bool = False
 
     def __post_init__(self):
+        if (
+            self.name_mode not in {"literal", "wildcard", "regex"}
+            or type(self.case_sensitive) is not bool
+        ):
+            raise ValueError("Invalid matching mode or case option")
         if self.kind not in {"all", "files", "folders"} or self.scope not in {
             "current",
             "recursive",

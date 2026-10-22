@@ -66,6 +66,7 @@ from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.sorting import FileSortModel
 from real.tree import FileTreeModel
+from search_matching import NameMatcher, SearchPatternError
 from search_options import SearchOptions
 from ui.address import AddressBar
 from ui.completion import PathCompletion
@@ -795,6 +796,13 @@ class RealExplorerPage(ExplorerPage):
         query = self.search_input.text().strip()
         if root is None or not self.has_search_request():
             return
+        try:
+            NameMatcher(
+                query, self.search_options.name_mode, self.search_options.case_sensitive
+            )
+        except SearchPatternError as error:
+            self.status_changed.emit(str(error))
+            return
         if self.search_options.scope == "filesystem":
             root = Path(root.anchor)
         if not self._confirm_editor_transition():
@@ -804,6 +812,7 @@ class RealExplorerPage(ExplorerPage):
         self.search_results.clear()
         self.search_view_active = True
         self.search_outcome = None
+        self.search_error = ""
         self._set_tree_model(self.search_results)
         self._configure_search_columns()
         self.tree.expand(self.search_results.index(0, 0))
@@ -871,6 +880,7 @@ class RealExplorerPage(ExplorerPage):
 
     def show_search_error(self, message: str) -> None:
         if self.search_view_active and self.live_search.accepts:
+            self.search_error = message
             self.status_changed.emit(f"Search error: {message}")
 
     def finish_search(
@@ -897,7 +907,9 @@ class RealExplorerPage(ExplorerPage):
             and self.live_search.accepts
         ):
             scanned, matched, skipped, cancelled = self.search_outcome
-            if cancelled:
+            if self.search_error:
+                message = f"Search stopped: {self.search_error}; {matched:,} partial result(s)"
+            elif cancelled:
                 message = f"Search cancelled: {matched:,} found"
             else:
                 message = f"Search complete: {matched:,} found in {scanned:,} items"

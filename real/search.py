@@ -21,6 +21,7 @@ from PySide6.QtCore import (
 from fs_paths import is_hidden, is_reparse_point
 from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
+from search_matching import NameMatcher
 from search_options import SearchOptions
 from ui.tasks import CancellableWorker
 
@@ -56,7 +57,7 @@ class SearchWorker(CancellableWorker):
     ) -> None:
         super().__init__()
         self.root = root
-        self.query = query.casefold()
+        self.query = query
         self.show_hidden = show_hidden
         self.options = options or SearchOptions()
         self._pending_batches = threading.Semaphore(MAX_PENDING_BATCHES)
@@ -104,6 +105,9 @@ class SearchWorker(CancellableWorker):
                 return None
 
         try:
+            matcher = NameMatcher(
+                self.query, self.options.name_mode, self.options.case_sensitive
+            )
             root_iterator = open_directory(self.root)
             if root_iterator is not None:
                 iterators.append(root_iterator)
@@ -136,11 +140,8 @@ class SearchWorker(CancellableWorker):
                     continue
 
                 try:
-                    matches = (
-                        self.query in entry.name.casefold()
-                        and self.options.matches(
-                            entry.name, is_directory, entry.stat(follow_symlinks=False)
-                        )
+                    matches = matcher.matches(entry.name) and self.options.matches(
+                        entry.name, is_directory, entry.stat(follow_symlinks=False)
                     )
                 except OSError:
                     skipped += 1

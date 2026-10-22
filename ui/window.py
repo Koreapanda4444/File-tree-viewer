@@ -66,6 +66,7 @@ from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.sorting import FileSortModel
 from real.tree import FileTreeModel
+from search_options import SearchOptions
 from ui.address import AddressBar
 from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
@@ -89,6 +90,7 @@ from ui.preferences import (
 )
 from ui.quick_access import QuickAccess
 from ui.reveal import FileRevealer
+from ui.search_options import SearchOptionsDialog
 from ui.staging import StagingController
 from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
@@ -185,6 +187,8 @@ class ExplorerPage(QWidget):
         row.addWidget(self.search_button)
         row.addWidget(self.clear_search_button)
         if not self.virtual:
+            self.search_filters_button = QPushButton("Filters…")
+            row.addWidget(self.search_filters_button)
             self.name_input = QLineEdit()
             self.name_input.setPlaceholderText("Jump to file or folder…")
             self.name_input.setMaximumWidth(280)
@@ -510,7 +514,9 @@ class RealExplorerPage(ExplorerPage):
         self.layout().insertWidget(0, self.navigation_tabs)
         self.file_commands = FileCommands(self)
         self.file_drop = FileDropController(self, self.file_commands)
+        self.search_options = SearchOptions()
         self.live_search = LiveSearch(self)
+        self.search_filters_button.clicked.connect(self.edit_search_options)
 
     @property
     def search_is_running(self) -> bool:
@@ -757,13 +763,25 @@ class RealExplorerPage(ExplorerPage):
         if self.search_is_running:
             self.search_button.setEnabled(True)
             return
-        can_search = self.model.root_path is not None and bool(
-            self.search_input.text().strip()
-        )
+        can_search = self.model.root_path is not None and self.has_search_request()
         self.search_button.setEnabled(can_search)
         self.clear_search_button.setEnabled(
             self.search_view_active or bool(self.search_input.text())
         )
+
+    def has_search_request(self):
+        return bool(self.search_input.text().strip()) or self.search_options.active
+
+    def edit_search_options(self):
+        dialog = SearchOptionsDialog(self.search_options, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.search_options = dialog.options
+            self.search_filters_button.setText(
+                "Filters ●" if self.search_options.active else "Filters…"
+            )
+            self.update_search_button()
+            self.live_search.changed()
+        dialog.deleteLater()
 
     def start_search(self) -> None:
         if self.operation_is_running:
@@ -775,8 +793,10 @@ class RealExplorerPage(ExplorerPage):
 
         root = self.model.root_path
         query = self.search_input.text().strip()
-        if root is None or not query:
+        if root is None or not self.has_search_request():
             return
+        if self.search_options.scope == "filesystem":
+            root = Path(root.anchor)
         if not self._confirm_editor_transition():
             return
 
@@ -789,7 +809,9 @@ class RealExplorerPage(ExplorerPage):
         self.tree.expand(self.search_results.index(0, 0))
         self.tree.expand(self.search_results.index(1, 0))
 
-        worker = SearchWorker(root, query, self.show_hidden.isChecked())
+        worker = SearchWorker(
+            root, query, self.show_hidden.isChecked(), self.search_options
+        )
         worker.batch_found.connect(self.receive_search_batch)
         worker.progress.connect(self.show_search_progress)
         worker.failed.connect(self.show_search_error)

@@ -41,7 +41,7 @@ class LiveSearch(QObject):
             page.search_worker.cancel()
             return
         self.waiting = False
-        if page.search_input.text().strip():
+        if page.has_search_request():
             page.start_search()
         elif page.search_view_active:
             page.clear_search()

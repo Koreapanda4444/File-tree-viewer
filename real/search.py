@@ -21,6 +21,7 @@ from PySide6.QtCore import (
 from fs_paths import is_hidden, is_reparse_point
 from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
+from search_options import SearchOptions
 from ui.tasks import CancellableWorker
 
 RESULT_BATCH_SIZE = 1_024
@@ -46,11 +47,18 @@ class SearchWorker(CancellableWorker):
     failed = Signal(str)
     finished = Signal(int, int, int, bool)
 
-    def __init__(self, root: Path, query: str, show_hidden: bool) -> None:
+    def __init__(
+        self,
+        root: Path,
+        query: str,
+        show_hidden: bool,
+        options: SearchOptions | None = None,
+    ) -> None:
         super().__init__()
         self.root = root
         self.query = query.casefold()
         self.show_hidden = show_hidden
+        self.options = options or SearchOptions()
         self._pending_batches = threading.Semaphore(MAX_PENDING_BATCHES)
 
     def batch_processed(self) -> None:
@@ -116,10 +124,7 @@ class SearchWorker(CancellableWorker):
                     continue
 
                 scanned += 1
-                if (
-                    Path(entry.path).parent == self.root
-                    and entry.name.casefold() == ".file-tree-viewer"
-                ):
+                if entry.name.casefold() == ".file-tree-viewer":
                     continue
                 if not self.show_hidden and is_hidden(entry):
                     continue
@@ -130,7 +135,17 @@ class SearchWorker(CancellableWorker):
                     skipped += 1
                     continue
 
-                if self.query in entry.name.casefold():
+                try:
+                    matches = (
+                        self.query in entry.name.casefold()
+                        and self.options.matches(
+                            entry.name, is_directory, entry.stat(follow_symlinks=False)
+                        )
+                    )
+                except OSError:
+                    skipped += 1
+                    matches = False
+                if matches:
                     batch.append(
                         SearchResult(
                             path=entry.path,
@@ -140,7 +155,11 @@ class SearchWorker(CancellableWorker):
                     )
                     matched += 1
 
-                if is_directory and not is_reparse_point(entry):
+                if (
+                    self.options.scope != "current"
+                    and is_directory
+                    and not is_reparse_point(entry)
+                ):
                     try:
                         child_iterator = open_directory(
                             Path(entry.path), entry.stat(follow_symlinks=False)

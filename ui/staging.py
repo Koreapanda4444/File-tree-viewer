@@ -3,10 +3,11 @@ from __future__ import annotations
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QInputDialog
 
-from fs_paths import normalized_path, validate_name
+from fs_paths import checked_boundary, normalized_path, path_is_within, validate_name
 from plan_staging import stage_real_items
 from planning import PlanAction
 from ui.feedback import show_error
+from ui.plan_drop import PlanDropController
 
 
 class StagingController(QObject):
@@ -15,6 +16,7 @@ class StagingController(QObject):
         self.window = window
         self.pending = None
         window.plan_page.snapshot_ready.connect(self.snapshot_ready)
+        self.drop_controller = PlanDropController(self)
 
     def busy(self):
         page = self.window.plan_page
@@ -44,6 +46,16 @@ class StagingController(QObject):
         paths = list(paths) if paths is not None else real._operable_selected_paths()
         root = real.model.root_path
         if not paths or root is None:
+            return
+        if page.snapshot is not None and all(
+            path_is_within(path, page.snapshot.root) for path in paths
+        ):
+            root = page.snapshot.root
+        try:
+            for path in paths:
+                checked_boundary(root, path)
+        except (OSError, ValueError) as error:
+            self.show_error(error)
             return
         action = PlanAction(action)
         target = None

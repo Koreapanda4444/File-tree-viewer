@@ -14,6 +14,7 @@ from snapshot_store import check_cancelled
 
 
 class SnapshotChangeKind(str, Enum):
+    UNCHANGED = "unchanged"
     CREATED = "created"
     DELETED = "deleted"
     MODIFIED = "modified"
@@ -102,7 +103,13 @@ class SnapshotComparison:
 
 
 def compare_snapshots(
-    before: FileSnapshot, after: FileSnapshot, *, cancelled=None, progress=None
+    before: FileSnapshot,
+    after: FileSnapshot,
+    *,
+    cancelled=None,
+    progress=None,
+    include_unchanged=False,
+    ignore_directory_times=False,
 ) -> SnapshotComparison:
     temporary = tempfile.TemporaryDirectory(prefix="file-tree-viewer-compare-")
     database = sqlite3.connect(
@@ -176,6 +183,12 @@ def compare_snapshots(
                         "error",
                     )
                     if getattr(old, key) != getattr(new, key)
+                    and not (
+                        ignore_directory_times
+                        and old.is_directory
+                        and new.is_directory
+                        and key == "modified_ns"
+                    )
                 ]
                 if (
                     same_root
@@ -186,6 +199,8 @@ def compare_snapshots(
                     fields.append("identity")
                 if fields:
                     add(SnapshotChangeKind.MODIFIED, old, new, ", ".join(fields))
+                elif include_unchanged:
+                    add(SnapshotChangeKind.UNCHANGED, old, new, "Matching metadata")
                 old, new = next(left, None), next(right, None)
             elif new is None or (
                 old is not None and old.path.as_posix() < new.path.as_posix()

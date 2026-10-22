@@ -245,11 +245,11 @@ class SearchResultsModel(QAbstractItemModel):
         self._temporary_directory = tempfile.TemporaryDirectory(
             prefix="file-tree-viewer-search-"
         )
-        database_path = Path(self._temporary_directory.name) / "results.sqlite3"
-        self._database = sqlite3.connect(database_path)
-        self._database.execute("PRAGMA journal_mode=OFF")
+        self.database_path = Path(self._temporary_directory.name) / "results.sqlite3"
+        self._database = sqlite3.connect(self.database_path)
+        self._database.execute("PRAGMA journal_mode=WAL")
         self._database.execute("PRAGMA synchronous=OFF")
-        self._database.execute("PRAGMA locking_mode=EXCLUSIVE")
+        self._database.execute("PRAGMA locking_mode=NORMAL")
         self._database.execute("PRAGMA cache_size=-8192")
         self._database.execute(
             "CREATE TABLE results ("
@@ -261,7 +261,7 @@ class SearchResultsModel(QAbstractItemModel):
             "PRIMARY KEY(category, position)) WITHOUT ROWID"
         )
         self._counts = [0, 0]
-        self._cache: OrderedDict[tuple[int, int], list[tuple[str, str]]] = OrderedDict()
+        self._cache: OrderedDict[tuple[int, int], list[tuple]] = OrderedDict()
         self._closed = False
         self.icons = FileIconCache()
 

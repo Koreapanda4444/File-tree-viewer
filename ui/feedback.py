@@ -63,6 +63,7 @@ class TaskMonitor(QWidget):
                 (
                     ("operation", "File operation"),
                     ("search", "Search"),
+                    ("search_export", "Search export"),
                     ("preview", "Preview"),
                 ),
             ),

@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, TextIO
 
+from fs_ops import move_no_replace
 from organization import OrganizationRule
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation, normalize_root
 
@@ -242,7 +243,9 @@ def atomic_json_write(path: Path | str, payload: object) -> None:
     )
 
 
-def atomic_text_write(path: Path | str, writer: Callable[[TextIO], object]) -> None:
+def atomic_text_write(
+    path: Path | str, writer: Callable[[TextIO], object], *, overwrite=True
+) -> None:
     destination = Path(path).expanduser().absolute()
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
@@ -260,7 +263,10 @@ def atomic_text_write(path: Path | str, writer: Callable[[TextIO], object]) -> N
             writer(stream)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary_path, destination)
+        if overwrite:
+            os.replace(temporary_path, destination)
+        else:
+            move_no_replace(temporary_path, destination, allow_cross_device=False)
         temporary_path = None
     finally:
         if temporary_path is not None:

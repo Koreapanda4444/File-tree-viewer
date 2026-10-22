@@ -66,6 +66,7 @@ from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.sorting import FileSortModel
 from real.tree import FileTreeModel
+from search_history import SearchRequest
 from search_matching import NameMatcher, SearchPatternError
 from search_options import SearchOptions
 from ui.address import AddressBar
@@ -92,6 +93,7 @@ from ui.preferences import (
 from ui.quick_access import QuickAccess
 from ui.reveal import FileRevealer
 from ui.search_options import SearchOptionsDialog
+from ui.search_tools import SearchTools
 from ui.staging import StagingController
 from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
@@ -189,7 +191,9 @@ class ExplorerPage(QWidget):
         row.addWidget(self.clear_search_button)
         if not self.virtual:
             self.search_filters_button = QPushButton("Filters…")
+            self.search_tools_button = QPushButton("Search Tools…")
             row.addWidget(self.search_filters_button)
+            row.addWidget(self.search_tools_button)
             self.name_input = QLineEdit()
             self.name_input.setPlaceholderText("Jump to file or folder…")
             self.name_input.setMaximumWidth(280)
@@ -518,6 +522,8 @@ class RealExplorerPage(ExplorerPage):
         self.search_options = SearchOptions()
         self.live_search = LiveSearch(self)
         self.search_filters_button.clicked.connect(self.edit_search_options)
+        self.search_tools = SearchTools(self)
+        self.search_context = None
 
     @property
     def search_is_running(self) -> bool:
@@ -555,7 +561,8 @@ class RealExplorerPage(ExplorerPage):
 
     def set_root(self, path: Path | None) -> bool:
         if (
-            self.operation_is_running
+            self.search_export_thread is not None
+            or self.operation_is_running
             or self.search_is_running
             or self.preview_is_running
         ):
@@ -785,6 +792,11 @@ class RealExplorerPage(ExplorerPage):
         dialog.deleteLater()
 
     def start_search(self) -> None:
+        if self.search_export_thread is not None:
+            self.status_changed.emit(
+                "Wait for search export to finish, or cancel it using Cancel Task"
+            )
+            return
         if self.operation_is_running:
             return
         if self.search_is_running:
@@ -831,6 +843,9 @@ class RealExplorerPage(ExplorerPage):
 
         self.search_thread = thread
         self.search_worker = worker
+        self.search_context = SearchRequest(
+            query, self.search_options, str(self.model.root_path)
+        )
         self.live_search.started(thread)
         self._set_search_running(True)
         self.status_changed.emit(f'Searching for "{query}"...')
@@ -857,6 +872,12 @@ class RealExplorerPage(ExplorerPage):
         self.status_changed.emit("Cancelling search...")
 
     def clear_search(self) -> None:
+        if self.search_export_thread is not None:
+            self.search_export_worker.cancel()
+            self.status_changed.emit(
+                "Cancelling search export; retry Clear after it stops"
+            )
+            return
         if not self._confirm_editor_transition():
             return
         self.live_search.stop()
@@ -916,6 +937,15 @@ class RealExplorerPage(ExplorerPage):
             if skipped:
                 message += f", {skipped:,} locations skipped"
             self.status_changed.emit(message)
+            if (
+                not self.search_error
+                and not cancelled
+                and self.search_context is not None
+                and not self.search_tools.history.record(self.search_context)
+            ):
+                self.status_changed.emit(
+                    message + "; search history could not be saved"
+                )
 
         if self.close_requested:
             self._emit_ready_to_close()
@@ -1638,7 +1668,10 @@ class RealExplorerPage(ExplorerPage):
         self.live_search.stop()
         self.file_commands.stop()
         self.file_revealer.stop()
-        waiting = not self.path_completion.stop()
+        waiting = self.search_export_thread is not None
+        if self.search_export_worker is not None:
+            self.search_export_worker.cancel()
+        waiting = not self.path_completion.stop() or waiting
         waiting = not self.name_completion.stop() or waiting
         waiting = not self.quick_access.stop() or waiting
         self.close_requested = True
@@ -1696,6 +1729,7 @@ class RealExplorerPage(ExplorerPage):
     def _emit_ready_to_close(self) -> None:
         if (
             not self.search_is_running
+            and self.search_export_thread is None
             and not self.operation_is_running
             and not self.preview_is_running
             and self.path_completion.thread is None

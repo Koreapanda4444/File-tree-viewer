@@ -47,10 +47,10 @@ class StagingController(QObject):
             return
         action = PlanAction(action)
         target = None
-        if action is PlanAction.MOVE:
+        if action in {PlanAction.MOVE, PlanAction.COPY}:
             target, accepted = QInputDialog.getText(
                 window,
-                "Stage Move",
+                f"Stage {action.value.title()}",
                 "Destination folder relative to the Plan root (blank = root):",
             )
             if not accepted:

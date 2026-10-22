@@ -9,6 +9,7 @@ from fs_paths import normalize_plan_path, normalize_root, validate_windows_name
 
 
 class PlanAction(str, Enum):
+    COPY = "copy"
     MOVE = "move"
     RENAME = "rename"
     DELETE = "delete"
@@ -77,6 +78,9 @@ class FilePlan:
             self.clear()
         else:
             self.revision += 1
+
+    def add_copy(self, source, target) -> PlanOperation:
+        return self._append(PlanAction.COPY, source=source, target=target)
 
     def add_move(
         self,
@@ -229,7 +233,7 @@ def validate_operation(
     source: PurePosixPath | None,
     target: PurePosixPath | None,
 ) -> None:
-    if action in {PlanAction.MOVE, PlanAction.RENAME}:
+    if action in {PlanAction.COPY, PlanAction.MOVE, PlanAction.RENAME}:
         if source is None or target is None:
             raise ValueError(f"{action.value} requires source and target paths")
         if source == target:
@@ -253,7 +257,7 @@ def basic_dependencies(plan: FilePlan) -> dict[str, tuple[str, ...]]:
     for operation in plan.operations:
         if operation.conflict_policy is ConflictPolicy.SKIP:
             continue
-        if operation.source is not None:
+        if operation.source is not None and operation.action is not PlanAction.COPY:
             sources.setdefault(operation.source, []).append(operation.operation_id)
         if operation.action is PlanAction.CREATE_FOLDER:
             folders.setdefault(operation.target, []).append(operation.operation_id)

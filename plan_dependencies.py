@@ -87,7 +87,7 @@ def analyze_dependencies(plan: FilePlan) -> DependencyAnalysis:
     overwrites = {}
     by_id = {op.operation_id: op for op in operations}
     for op in operations:
-        if op.source is not None:
+        if op.source is not None and op.action is not PlanAction.COPY:
             sources.setdefault(path_collision_key(op.source), op)
         if op.target is not None:
             targets[path_collision_key(op.target)].append(op)
@@ -183,6 +183,7 @@ def analyze_dependencies(plan: FilePlan) -> DependencyAnalysis:
             PlanAction.MOVE: 2,
             PlanAction.RENAME: 3,
             PlanAction.CREATE_FILE: 4,
+            PlanAction.COPY: 5,
         }[op.action]
 
     positions = {op.operation_id: i for i, op in enumerate(operations)}

@@ -229,7 +229,7 @@ class FileCommands(QObject):
         add("Rename", page.rename_selected, ready and len(mutable) == 1)
         add("Delete", page.delete_selected, ready and bool(mutable))
         staged = menu.addMenu("Add to Plan")
-        for operation in ("move", "rename", "delete"):
+        for operation in ("copy", "move", "rename", "delete"):
             action = staged.addAction(operation.title() + "…")
             action.setEnabled(
                 ready and bool(mutable) and (operation != "rename" or len(mutable) == 1)

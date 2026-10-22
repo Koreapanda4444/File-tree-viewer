@@ -12,6 +12,7 @@ from plan_apply import (
     ApplicationStatus,
     MutationKind,
     PlanApplicationRecord,
+    copied_backup_path,
     load_application_record,
     log_event,
     now_text,
@@ -197,7 +198,8 @@ def reconcile_pending(record: PlanApplicationRecord) -> None:
         ):
             log_event(record, "aborted", mutation)
         elif (
-            mutation.source is not None
+            mutation.kind is not MutationKind.STAGE_COPY
+            and mutation.source is not None
             and not path_exists(mutation.source)
             and signature_matches(target, mutation.before_signature)
         ):
@@ -235,7 +237,15 @@ def reconcile_pending(record: PlanApplicationRecord) -> None:
         if mutation.key not in record.reversing_mutation_ids:
             continue
         target = required_path(mutation.target)
-        if mutation.source is None:
+        if mutation.kind is MutationKind.STAGE_COPY:
+            backup = copied_backup_path(mutation)
+            finished = not path_exists(target) and signature_matches(
+                backup, mutation.after_signature
+            )
+            untouched = not path_exists(backup) and signature_matches(
+                target, mutation.after_signature
+            )
+        elif mutation.source is None:
             finished = not path_exists(target)
             untouched = signature_matches(target, mutation.after_signature)
         else:

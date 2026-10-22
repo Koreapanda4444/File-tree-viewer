@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fs_ops import (
+    copy_exclusive,
     create_exclusive,
     file_signature,
     move_no_replace,
@@ -47,6 +48,7 @@ class ApplicationStatus(str, Enum):
 
 
 class MutationKind(str, Enum):
+    STAGE_COPY = "stage_copy"
     STAGE_MOVE = "stage_move"
     FINAL_MOVE = "final_move"
     BACKUP_DELETE = "backup_delete"
@@ -484,6 +486,25 @@ def perform_plan(
     }
     staged: dict[str, Path] = {}
 
+    for operation in by_action[PlanAction.COPY]:
+        check_cancelled(cancelled)
+        source = absolute_operation_path(record.root, operation.source)
+        target = record.transaction_directory / "staging" / operation.operation_id
+        emit_progress(
+            progress, "Copying into transaction storage", record, total, source
+        )
+        verify_live_source(snapshot, operation.source)
+        expected = tree_fingerprint(source)
+        execute_mutation(
+            record,
+            AppliedMutation(
+                MutationKind.STAGE_COPY, operation.operation_id, source, target
+            ),
+        )
+        if tree_fingerprint(source) != expected:
+            raise FileExistsError(f"Copy source changed during preparation: {source}")
+        staged[operation.operation_id] = target
+
     movable = by_action[PlanAction.MOVE] + by_action[PlanAction.RENAME]
     for operation in movable:
         check_cancelled(cancelled)
@@ -619,6 +640,22 @@ def perform_plan(
         check_cancelled(cancelled)
         complete_operation(record, operation)
 
+    for operation in by_action[PlanAction.COPY]:
+        check_cancelled(cancelled)
+        target = absolute_operation_path(record.root, operation.target)
+        emit_progress(progress, "Publishing copied items", record, total, target)
+        execute_mutation(
+            record,
+            AppliedMutation(
+                MutationKind.FINAL_MOVE,
+                operation.operation_id,
+                staged[operation.operation_id],
+                target,
+            ),
+        )
+        check_cancelled(cancelled)
+        complete_operation(record, operation)
+
 
 def rollback_mutations(record: PlanApplicationRecord) -> list[str]:
     errors: list[str] = []
@@ -635,6 +672,10 @@ def reverse_mutation(mutation: AppliedMutation) -> None:
     for path in (mutation.source, mutation.target):
         if path is not None:
             checked_boundary(path.parent, path)
+    if mutation.kind is MutationKind.STAGE_COPY:
+        target = required_path(mutation.target)
+        move_without_overwrite(target, copied_backup_path(mutation))
+        return
     if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
         target = required_path(mutation.target)
         if mutation.kind is MutationKind.CREATE_FILE:
@@ -684,6 +725,10 @@ def execute_mutation(record: PlanApplicationRecord, mutation: AppliedMutation) -
             create_exclusive(
                 required_path(mutation.target),
                 directory=mutation.kind is MutationKind.CREATE_FOLDER,
+            )
+        elif mutation.kind is MutationKind.STAGE_COPY:
+            copy_exclusive(
+                required_path(mutation.source), required_path(mutation.target)
             )
         else:
             move_without_overwrite(
@@ -851,6 +896,13 @@ def validate_undo_state(record: PlanApplicationRecord) -> None:
             continue
         target = required_path(mutation.target)
         actual = origin(target)
+        if mutation.kind is MutationKind.STAGE_COPY:
+            if actual is None:
+                raise FileNotFoundError(f"Copied item is missing: {target}")
+            if path_exists(copied_backup_path(mutation)):
+                raise FileExistsError("Copied-item recovery storage is occupied")
+            state[normalized_path(target)] = None
+            continue
         if mutation.kind in {MutationKind.CREATE_FILE, MutationKind.CREATE_FOLDER}:
             if actual is not None:
                 if mutation.kind is MutationKind.CREATE_FILE:
@@ -940,7 +992,7 @@ def validate_mutation_shape(
     directory = record.transaction_directory
     stage = directory / "staging" / mutation.operation_id
     backup = directory / "backup" / mutation.operation_id
-    if mutation.kind is MutationKind.STAGE_MOVE:
+    if mutation.kind in {MutationKind.STAGE_MOVE, MutationKind.STAGE_COPY}:
         internal, expected, user_path = mutation.target, stage, mutation.source
     elif mutation.kind is MutationKind.FINAL_MOVE:
         internal, expected, user_path = mutation.source, stage, mutation.target
@@ -984,3 +1036,11 @@ def capture_undo_state(record: PlanApplicationRecord) -> dict[str, str]:
         path for path in paths if not any(parent in paths for parent in path.parents)
     ]
     return {str(path): tree_fingerprint(path) for path in roots}
+
+
+def copied_backup_path(mutation: AppliedMutation) -> Path:
+    return (
+        required_path(mutation.target).parent.parent
+        / "backup"
+        / f"copy-{mutation.operation_id}"
+    )

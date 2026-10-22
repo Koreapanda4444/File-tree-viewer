@@ -23,6 +23,7 @@ class SimulationCancelled(Exception):
 
 
 class ChangeKind(str, Enum):
+    COPIED = "copied"
     MOVED = "moved"
     RENAMED = "renamed"
     CREATED = "created"
@@ -313,7 +314,9 @@ def simulate_plan(
                     source,
                 )
 
-        if len(source_map[source]) > 1:
+        if len(source_map[source]) > 1 and any(
+            op.action is not PlanAction.COPY for op in source_map[source]
+        ):
             report(
                 operation,
                 IssueKind.CONFLICT,
@@ -367,7 +370,7 @@ def simulate_plan(
         source = operation.source
         source_entry = entry(source) if source is not None else None
         if (
-            operation.action is PlanAction.MOVE
+            operation.action in {PlanAction.MOVE, PlanAction.COPY}
             and source is not None
             and source_entry is not None
             and source_entry.is_directory
@@ -377,7 +380,7 @@ def simulate_plan(
                 operation,
                 IssueKind.INVALID,
                 IssueCode.SELF_MOVE,
-                "A folder cannot be moved inside itself",
+                "A folder cannot be moved or copied inside itself",
                 target,
             )
 
@@ -519,7 +522,9 @@ def emit_simulation_progress(
 
 
 def change_from_operation(operation: PlanOperation) -> PlanChange:
-    if operation.action is PlanAction.MOVE:
+    if operation.action is PlanAction.COPY:
+        kind = ChangeKind.COPIED
+    elif operation.action is PlanAction.MOVE:
         kind = ChangeKind.MOVED
     elif operation.action is PlanAction.RENAME:
         kind = ChangeKind.RENAMED

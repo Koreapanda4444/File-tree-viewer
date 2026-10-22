@@ -179,6 +179,7 @@ def summary_text(simulation: PlanSimulation) -> str:
     parts = [
         f"{len(simulation.changes) - simulation.skipped_count:,} active changes",
         f"{counts[ChangeKind.MOVED]:,} moved",
+        f"{counts[ChangeKind.COPIED]:,} copied",
         f"{counts[ChangeKind.RENAMED]:,} renamed",
         f"{counts[ChangeKind.CREATED]:,} created",
         f"{counts[ChangeKind.DELETED]:,} deleted",

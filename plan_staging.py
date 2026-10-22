@@ -13,7 +13,12 @@ def stage_real_items(
     snapshot: FileSnapshot, plan: FilePlan, paths, action, target=None
 ):
     action = PlanAction(action)
-    if action not in {PlanAction.MOVE, PlanAction.RENAME, PlanAction.DELETE}:
+    if action not in {
+        PlanAction.COPY,
+        PlanAction.MOVE,
+        PlanAction.RENAME,
+        PlanAction.DELETE,
+    }:
         raise ValueError("Unsupported staging action")
     if plan.root is None or normalized_path(plan.root) != normalized_path(
         snapshot.root
@@ -23,7 +28,7 @@ def stage_real_items(
     if not sources or (action is PlanAction.RENAME and len(sources) != 1):
         raise ValueError("Select one item to rename, or one or more items to stage")
     target_path = normalize_plan_path(target) if target is not None else None
-    if action is PlanAction.MOVE and target_path is not None:
+    if action in {PlanAction.MOVE, PlanAction.COPY} and target_path is not None:
         parent = snapshot.entry(target_path)
         if (
             parent is None
@@ -56,7 +61,7 @@ def stage_real_items(
                 f"Item differs from the snapshot; refresh it first: {path}"
             )
         destination = None
-        if action is PlanAction.MOVE:
+        if action in {PlanAction.MOVE, PlanAction.COPY}:
             destination = (target_path or PurePosixPath()) / relative.name
         elif action is PlanAction.RENAME:
             if target_path is None:

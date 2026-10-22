@@ -1054,7 +1054,12 @@ class PlanExplorerPage(QWidget):
         def update_fields():
             source.setEnabled(
                 action.currentData()
-                in {PlanAction.MOVE, PlanAction.RENAME, PlanAction.DELETE}
+                in {
+                    PlanAction.COPY,
+                    PlanAction.MOVE,
+                    PlanAction.RENAME,
+                    PlanAction.DELETE,
+                }
             )
             target.setEnabled(action.currentData() is not PlanAction.DELETE)
 

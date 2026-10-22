@@ -64,7 +64,9 @@ def build_plan_preview(
             "CREATE TEMP TABLE staged AS SELECT '' AS operation_id, entries.*, errors.message AS error FROM entries LEFT JOIN errors ON errors.path=entries.path WHERE 0"
         )
         moves = [
-            op for op in operations if op.action in {PlanAction.MOVE, PlanAction.RENAME}
+            op
+            for op in operations
+            if op.action in {PlanAction.MOVE, PlanAction.RENAME, PlanAction.COPY}
         ]
         for op in moves:
             check_cancelled(cancelled)
@@ -77,7 +79,7 @@ def build_plan_preview(
             check_cancelled(cancelled)
             if progress:
                 progress("Simulating folder structure", position)
-            if op.source is not None:
+            if op.source is not None and op.action is not PlanAction.COPY:
                 remove(op.source)
         for op in operations:
             if op.conflict_policy is ConflictPolicy.OVERWRITE and op.target is not None:
@@ -100,7 +102,13 @@ def build_plan_preview(
                 insert(
                     target,
                     directory,
-                    values=(directory, link, size, modified, identity),
+                    values=(
+                        directory,
+                        link,
+                        size,
+                        modified,
+                        None if op.action is PlanAction.COPY else identity,
+                    ),
                 )
                 if error:
                     database.execute(

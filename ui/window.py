@@ -2357,7 +2357,7 @@ class MainWindow(QMainWindow):
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
         self.staging = StagingController(self)
         self.real_page.stage_requested.connect(self.staging.request)
-        for action in ("move", "rename", "delete"):
+        for action in ("copy", "move", "rename", "delete"):
             workspace_menu.addAction(
                 f"Stage Real {action.title()}…",
                 lambda checked=False, a=action: self.staging.request(a),

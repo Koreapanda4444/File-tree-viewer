@@ -2451,6 +2451,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("File Tree Viewer")
+        self.history_dialog = None
         self.disk_dialog = None
         self.folder_comparison_dialog = None
         self.comparison_close_pending = False
@@ -2494,6 +2495,7 @@ class MainWindow(QMainWindow):
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
         workspace_menu.addAction("Compare Folders…", self.compare_folders_dialog)
         workspace_menu.addAction("Analyze Disk Usage…", self.analyze_disk_usage)
+        workspace_menu.addAction("Operation History…", self.show_history)
         self.staging = StagingController(self)
         self.plan_page.sync_workspace.filesystem_changed.connect(
             self.sync_filesystem_changed
@@ -2603,6 +2605,20 @@ class MainWindow(QMainWindow):
             self.comparison_close_pending = False
             dialog.deleteLater()
 
+    def show_history(self):
+        from ui.history import HistoryDialog
+
+        if self.history_dialog is not None:
+            self.history_dialog.raise_()
+            return
+        dialog = self.history_dialog = HistoryDialog(self)
+        dialog.reveal_requested.connect(self.reveal_usage_item)
+        try:
+            dialog.exec()
+        finally:
+            self.history_dialog = None
+            dialog.deleteLater()
+
     def analyze_disk_usage(self):
         from ui.disk_usage import DiskUsageDialog
 
@@ -2680,6 +2696,10 @@ class MainWindow(QMainWindow):
         self.real_page.set_root(snapshot.root)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.history_dialog is not None:
+            self.history_dialog.reject()
+            event.ignore()
+            return
         if self.disk_dialog is not None:
             self.disk_dialog.reject()
             event.ignore()

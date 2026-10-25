@@ -71,6 +71,7 @@ from search_history import SearchRequest
 from search_matching import NameMatcher, SearchPatternError
 from search_options import SearchOptions
 from ui.address import AddressBar
+from ui.appearance import install_appearance
 from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
 from ui.file_commands import FileCommands
@@ -2451,6 +2452,7 @@ class VirtualExplorerPage(ExplorerPage):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.appearance = install_appearance()
         self.setWindowTitle("File Tree Viewer")
         self.recovery_history_dialog = None
         self.history_dialog = None

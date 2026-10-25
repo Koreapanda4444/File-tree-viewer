@@ -6,7 +6,8 @@ import sys
 import tempfile
 import time
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from ui.window import MainWindow
@@ -22,6 +23,9 @@ def main() -> int:
     options, qt_arguments = parser.parse_known_args()
     if options.smoke_test:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     app = QApplication([sys.argv[0], *qt_arguments])
     app.setApplicationName("FileTreeViewer")
     app.setOrganizationName("FileTreeViewer")

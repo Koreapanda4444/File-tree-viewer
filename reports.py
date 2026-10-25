@@ -222,3 +222,69 @@ def export_analysis_report(
 
     atomic_text_write(destination, write)
     return destination
+
+
+def export_operation_report(store, path, *, format, filters=None, cancelled=None):
+    destination = Path(path).expanduser().absolute()
+    if format not in {"json", "csv", "html"}:
+        raise ValueError("Choose JSON, CSV or HTML")
+    checked_boundary(destination.parent, destination, allow_leaf_link=False)
+    if any(part.casefold() == ".file-tree-viewer" for part in destination.parts):
+        raise ValueError("Reports cannot be saved inside recovery storage")
+    if normalized_path(destination) == normalized_path(store.path):
+        raise ValueError("Reports cannot replace operation history")
+    filters = {
+        key: value
+        for key, value in (filters or {}).items()
+        if key not in {"limit", "offset", "cancelled"}
+    }
+    fields = store.fields
+
+    def write(stream):
+        if format == "json":
+            stream.write(
+                '{"format":"file-tree-viewer-operations","version":1,"records":['
+            )
+        elif format == "csv":
+            writer = csv.writer(stream)
+            writer.writerow(fields)
+        else:
+            stream.write(
+                '<!doctype html><html lang="en"><meta charset="utf-8"><title>Operation Audit Report</title><style>body{font:14px system-ui;margin:2rem}table{border-collapse:collapse;width:100%}td,th{border:1px solid #aaa;padding:7px;overflow-wrap:anywhere;white-space:pre-wrap}</style><h1>Operation Audit Report</h1><table><thead><tr>'
+            )
+            stream.write(
+                "".join("<th>" + html.escape(field) + "</th>" for field in fields)
+                + "</tr></thead><tbody>"
+            )
+        iterator = store.iter_rows(cancelled=cancelled, **filters)
+        try:
+            for position, row in enumerate(iterator):
+                check_cancelled(cancelled)
+                if format == "json":
+                    if position:
+                        stream.write(",")
+                    stream.write(json.dumps(row, ensure_ascii=False))
+                elif format == "csv":
+                    writer.writerow(csv_value(row[field]) for field in fields)
+                else:
+                    stream.write(
+                        "<tr>"
+                        + "".join(
+                            "<td>" + html.escape(str(row[field])) + "</td>"
+                            for field in fields
+                        )
+                        + "</tr>"
+                    )
+        finally:
+            iterator.close()
+        stream.write(
+            "]}\n"
+            if format == "json"
+            else "</tbody></table></html>\n"
+            if format == "html"
+            else ""
+        )
+        check_cancelled(cancelled)
+
+    atomic_text_write(destination, write, overwrite=False)
+    return destination

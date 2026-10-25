@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QHBoxLayout,
     QLineEdit,
     QPlainTextEdit,
@@ -20,6 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from operation_history import HistoryStore
+from reports import export_operation_report
+from snapshot import SnapshotCancelled
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -27,14 +30,28 @@ from ui.widgets import PlainLabel
 class HistoryQueryWorker(CancellableWorker):
     finished = Signal(object, str)
 
-    def __init__(self, store, filters):
+    def __init__(self, store, filters, export_path=None):
         super().__init__()
         self.store, self.filters = store, filters
+        self.export_path = export_path
 
     @Slot()
     def run(self):
         try:
-            rows = self.store.rows(**self.filters)
+            if self.export_path is not None:
+                rows = str(
+                    export_operation_report(
+                        self.store,
+                        self.export_path,
+                        format=self.export_path.suffix.lower().lstrip("."),
+                        filters=self.filters,
+                        cancelled=self._cancelled,
+                    )
+                )
+            else:
+                rows = self.store.rows(**self.filters, cancelled=self._cancelled)
+        except SnapshotCancelled:
+            self.finished.emit([], "History task cancelled")
         except (OSError, ValueError, sqlite3.Error) as error:
             self.finished.emit([], str(error))
         else:
@@ -52,6 +69,7 @@ class HistoryDialog(QDialog):
         self.close_requested = False
         self.rows = []
         self.offset = 0
+        self.exporting = False
         self.setWindowTitle("Operation History")
         self.resize(1100, 750)
         self.layout = QVBoxLayout(self)
@@ -83,6 +101,8 @@ class HistoryDialog(QDialog):
         self.search.setPlaceholderText("Path or action")
         self.refresh_button = QPushButton("Search / Refresh")
         self.refresh_button.clicked.connect(lambda: self.refresh(reset=True))
+        self.export_button = QPushButton("Export Filtered Report…")
+        self.export_button.clicked.connect(self.export_report)
         self.controls = [
             self.category,
             self.status,
@@ -90,6 +110,7 @@ class HistoryDialog(QDialog):
             self.until,
             self.search,
             self.refresh_button,
+            self.export_button,
         ]
         for control in self.controls:
             filters.addWidget(control)
@@ -187,6 +208,38 @@ class HistoryDialog(QDialog):
         )
         self.thread.start()
 
+    def export_report(self):
+        if self.thread is not None:
+            return
+        try:
+            filters = self.filters()
+        except (ValueError, OverflowError) as error:
+            self.summary.setText(str(error))
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Operation Report",
+            "operations.json",
+            "JSON (*.json);;CSV (*.csv);;HTML (*.html)",
+        )
+        if not path:
+            return
+        self.exporting = True
+        for control in [
+            *self.controls,
+            self.previous_button,
+            self.next_button,
+            self.reveal_button,
+        ]:
+            control.setEnabled(False)
+        self.summary.setText("Exporting all events matching the current filters…")
+        self.worker = HistoryQueryWorker(self.store, filters, Path(path))
+        self.worker.finished.connect(self.receive)
+        self.thread = prepare_worker_thread(
+            self, self.worker, on_finished=self.thread_finished
+        )
+        self.thread.start()
+
     def receive(self, rows, error):
         self.outcome = rows, error
 
@@ -197,6 +250,15 @@ class HistoryDialog(QDialog):
         self.outcome = None
         if self.close_requested:
             self.done(QDialog.DialogCode.Rejected)
+            return
+        if self.exporting:
+            self.exporting = False
+            for control in self.controls:
+                control.setEnabled(True)
+            self.previous_button.setEnabled(self.offset > 0)
+            self.next_button.setEnabled(len(self.rows) == 250)
+            self.select_row()
+            self.summary.setText(error or f"Exported filtered history: {rows}")
             return
         self.next_button.setEnabled(len(rows) > 250)
         self.previous_button.setEnabled(self.offset > 0)
@@ -262,6 +324,7 @@ class HistoryDialog(QDialog):
     def done(self, result):
         if self.thread is not None:
             self.close_requested = True
+            self.worker.cancel()
             return
         super().done(result)
 

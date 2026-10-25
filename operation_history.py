@@ -73,7 +73,10 @@ class HistoryStore:
         finally:
             database.close()
 
-    def rows(
+    def rows(self, *, limit=250, **filters):
+        return list(self.iter_rows(limit=limit, **filters))
+
+    def iter_rows(
         self,
         *,
         category="",
@@ -81,10 +84,11 @@ class HistoryStore:
         since="",
         until="",
         text="",
-        limit=250,
+        limit=None,
         offset=0,
+        cancelled=None,
     ):
-        if not 0 < limit <= 4096 or offset < 0:
+        if (limit is not None and not 0 < limit <= 4096) or offset < 0:
             raise ValueError("Invalid history page")
         clauses, values = [], []
         for column, value in (("category", category), ("status", status)):
@@ -104,14 +108,25 @@ class HistoryStore:
             values.extend([text] * 3)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         database = self.connect()
+        if cancelled is not None:
+            database.set_progress_handler(lambda: int(cancelled.is_set()), 10000)
         try:
             rows = database.execute(
                 "SELECT * FROM events"
                 + where
                 + " ORDER BY time DESC,id DESC LIMIT ? OFFSET ?",
-                (*values, limit, offset),
-            ).fetchall()
-            return [dict(zip(self.fields, row, strict=True)) for row in rows]
+                (*values, -1 if limit is None else limit, offset),
+            )
+            for row in rows:
+                from snapshot_store import check_cancelled
+
+                check_cancelled(cancelled)
+                yield dict(zip(self.fields, row, strict=True))
+        except sqlite3.OperationalError:
+            from snapshot_store import check_cancelled
+
+            check_cancelled(cancelled)
+            raise
         finally:
             database.close()
 

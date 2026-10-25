@@ -2402,6 +2402,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("File Tree Viewer")
+        self.disk_dialog = None
         self.folder_comparison_dialog = None
         self.comparison_close_pending = False
         self.resize(1400, 850)
@@ -2443,6 +2444,7 @@ class MainWindow(QMainWindow):
         workspace_menu.addAction("Import Real Root into Plan", self.import_real_root)
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
         workspace_menu.addAction("Compare Folders…", self.compare_folders_dialog)
+        workspace_menu.addAction("Analyze Disk Usage…", self.analyze_disk_usage)
         self.staging = StagingController(self)
         self.plan_page.sync_workspace.filesystem_changed.connect(
             self.sync_filesystem_changed
@@ -2552,6 +2554,24 @@ class MainWindow(QMainWindow):
             self.comparison_close_pending = False
             dialog.deleteLater()
 
+    def analyze_disk_usage(self):
+        from ui.disk_usage import DiskUsageDialog
+
+        if self.disk_dialog is not None:
+            self.disk_dialog.raise_()
+            return
+        root = self.real_page.model.root_path
+        if root is None:
+            root = QFileDialog.getExistingDirectory(self, "Choose analysis root")
+        if not root:
+            return
+        dialog = self.disk_dialog = DiskUsageDialog(root, self)
+        try:
+            dialog.exec()
+        finally:
+            self.disk_dialog = None
+            dialog.deleteLater()
+
     def stage_sync_plan(self, plan):
         if self.staging.busy():
             self.statusBar().showMessage(
@@ -2595,6 +2615,10 @@ class MainWindow(QMainWindow):
         self.real_page.set_root(snapshot.root)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.disk_dialog is not None:
+            self.disk_dialog.reject()
+            event.ignore()
+            return
         if (
             self.folder_comparison_dialog is not None
             and self.folder_comparison_dialog.is_busy

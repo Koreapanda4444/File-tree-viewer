@@ -2566,11 +2566,17 @@ class MainWindow(QMainWindow):
         if not root:
             return
         dialog = self.disk_dialog = DiskUsageDialog(root, self)
+        dialog.reveal_requested.connect(self.reveal_usage_item)
         try:
             dialog.exec()
         finally:
             self.disk_dialog = None
             dialog.deleteLater()
+
+    def reveal_usage_item(self, path):
+        self.tabs.setCurrentWidget(self.real_page)
+        if self.real_page.set_root(path.parent):
+            self.real_page.jump_to_item(str(path))
 
     def stage_sync_plan(self, plan):
         if self.staging.busy():

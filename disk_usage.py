@@ -39,12 +39,14 @@ class DiskUsage:
         rows = self.query("SELECT * FROM entries WHERE path=?", (path,))
         return UsageEntry(*rows[0]) if rows else None
 
-    def children(self, path="", *, limit=400):
+    def children(self, path="", *, limit=400, offset=0):
+        if offset < 0:
+            raise ValueError("Invalid disk usage page")
         return tuple(
             UsageEntry(*row)
             for row in self.query(
-                "SELECT * FROM entries WHERE parent=? AND path<>? ORDER BY logical DESC,path LIMIT ?",
-                (path, path, max(1, min(limit, 4096))),
+                "SELECT * FROM entries WHERE parent=? AND path<>? ORDER BY logical DESC,path LIMIT ? OFFSET ?",
+                (path, path, max(1, min(limit, 4096)), offset),
             )
         )
 

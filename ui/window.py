@@ -98,6 +98,7 @@ from ui.search_options import SearchOptionsDialog
 from ui.search_tools import SearchTools
 from ui.staging import StagingController
 from ui.tasks import prepare_worker_thread
+from ui.theme import ThemeManager
 from ui.widgets import FlowLayout
 from ui.widgets import PlainLabel as QLabel
 from virtual.workspace import (
@@ -2512,6 +2513,7 @@ class MainWindow(QMainWindow):
                 lambda checked=False, a=action: self.staging.request(a),
             )
         self.tabs.setDocumentMode(True)
+        self.theme_manager = ThemeManager(self)
         self.settings = application_settings()
         self.preferences = Preferences.load(self.settings)
         self.apply_preferences(self.preferences)
@@ -2541,6 +2543,7 @@ class MainWindow(QMainWindow):
 
     def apply_preferences(self, preferences: Preferences) -> None:
         self.preferences = preferences
+        self.theme_manager.apply(preferences.theme)
         self.real_page.preferences = preferences
         self.real_page.show_hidden.setChecked(preferences.show_hidden)
         self.plan_page.default_conflict_policy = preferences.conflict_policy

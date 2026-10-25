@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QTextCursor, QTextFormat
+from PySide6.QtGui import QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from file_comparison import TextComparison, compare_text_files
 from file_content import ContentCancelled
 from ui.tasks import CancellableWorker, prepare_worker_thread
+from ui.theme import difference_background
 
 
 class TextComparisonWorker(CancellableWorker):
@@ -116,14 +117,16 @@ class FileComparisonDialog(QDialog):
                 selection.format.setProperty(
                     QTextFormat.Property.FullWidthSelection, True
                 )
-                color = (
-                    "#f6e3b4"
-                    if row[4] == "replace"
-                    else "#f8d7da"
-                    if side == 0
-                    else "#d4edda"
+
+                selection.format.setBackground(
+                    difference_background(
+                        "replace"
+                        if row[4] == "replace"
+                        else "delete"
+                        if side == 0
+                        else "insert"
+                    )
                 )
-                selection.format.setBackground(QColor(color))
                 selections.append(selection)
             editor.setExtraSelections(selections)
         changed = sum(tag != "equal" for tag, *_ in result.opcodes)

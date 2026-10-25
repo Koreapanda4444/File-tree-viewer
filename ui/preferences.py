@@ -50,11 +50,16 @@ class Preferences:
     edit_mib: int = 8
     preview_kib: int = 1024
     conflict_policy: ConflictPolicy = ConflictPolicy.ERROR
+    theme: str = "System"
 
     @classmethod
     def load(cls, settings: QSettings) -> Preferences:
         policy = settings.value("preferences/conflict_policy", "error")
         return cls(
+            theme=settings.value("preferences/theme", "System")
+            if settings.value("preferences/theme", "System")
+            in {"System", "Light", "Dark"}
+            else "System",
             show_hidden=boolean(settings.value("preferences/show_hidden"), False),
             wrap_preview=boolean(settings.value("preferences/wrap_preview"), True),
             preview_font_size=bounded_integer(
@@ -71,6 +76,7 @@ class Preferences:
 
     def save(self, settings: QSettings) -> None:
         for key, value in (
+            ("theme", self.theme),
             ("show_hidden", self.show_hidden),
             ("wrap_preview", self.wrap_preview),
             ("font_size", self.preview_font_size),
@@ -114,6 +120,10 @@ class PreferencesDialog(QDialog):
         self.setWindowTitle("Preferences")
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        self.theme = QComboBox()
+        self.theme.addItems(("System", "Light", "Dark"))
+        self.theme.setCurrentText(preferences.theme)
+        form.addRow("Application theme", self.theme)
         self.hidden = QCheckBox("Show hidden files in Real")
         self.hidden.setChecked(preferences.show_hidden)
         self.wrap = QCheckBox("Wrap preview text")
@@ -155,4 +165,5 @@ class PreferencesDialog(QDialog):
             self.edit_size.value(),
             self.preview_size.value(),
             self.policy.currentData(),
+            self.theme.currentText(),
         )

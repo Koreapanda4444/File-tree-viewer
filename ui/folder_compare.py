@@ -6,7 +6,6 @@ from dataclasses import asdict
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, Qt, Signal
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -33,6 +32,7 @@ from ui.file_compare import FileComparisonDialog
 from ui.snapshot_compare import ComparisonTableModel
 from ui.sync import SyncPlanningWorker, SyncReviewDialog
 from ui.tasks import CancellableWorker, prepare_worker_thread
+from ui.theme import status_color
 from ui.widgets import PlainLabel
 
 INVALID_INDEX = QModelIndex()
@@ -113,15 +113,7 @@ class FolderTableModel(ComparisonTableModel):
         if role == Qt.ItemDataRole.UserRole:
             return entry
         if role == Qt.ItemDataRole.ForegroundRole and index.column() == 0:
-            return QColor(
-                {
-                    FolderStatus.ERROR: "#be123c",
-                    FolderStatus.TYPE_CONFLICT: "#be123c",
-                    FolderStatus.MODIFIED: "#9a6700",
-                    FolderStatus.LEFT_ONLY: "#2563a0",
-                    FolderStatus.RIGHT_ONLY: "#2563a0",
-                }.get(entry.status, "#23703a")
-            )
+            return status_color(entry.status)
         if role == Qt.ItemDataRole.ToolTipRole:
             return entry.details
         return None

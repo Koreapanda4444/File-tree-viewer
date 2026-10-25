@@ -96,12 +96,14 @@ def restore_layout(window, settings: QSettings) -> None:
         state = settings.value("window/" + name)
         if isinstance(state, QByteArray):
             splitter.restoreState(state)
-        splitter.setChildrenCollapsible(False)
+        splitter.setChildrenCollapsible(True)
 
 
 def save_layout(window, settings: QSettings) -> None:
     settings.setValue("window/geometry", window.saveGeometry())
     settings.setValue("window/tab", window.tabs.currentIndex())
+    if hasattr(window, "panel_manager"):
+        window.panel_manager.save()
     for name, splitter in splitters(window):
         settings.setValue("window/" + name, splitter.saveState())
 
@@ -109,6 +111,7 @@ def save_layout(window, settings: QSettings) -> None:
 def splitters(window):
     return (
         ("real_splitter", window.real_page.content_splitter),
+        ("real_navigation_splitter", window.real_page.navigation_splitter),
         ("virtual_splitter", window.virtual_page.content_splitter),
         ("plan_splitter", window.plan_page.workspace_splitter),
     )

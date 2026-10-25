@@ -4,12 +4,13 @@ from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QHBoxLayout,
     QListView,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
+
+from ui.widgets import FlowLayout
 
 
 class FolderViews(QWidget):
@@ -18,12 +19,11 @@ class FolderViews(QWidget):
         self.details = details
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        toolbar = QHBoxLayout()
+        toolbar = FlowLayout()
         self.mode = QComboBox()
         self.mode.addItems(("Details", "List", "Large Icons"))
         self.mode.setToolTip("Folder view mode")
         toolbar.addWidget(self.mode)
-        toolbar.addStretch(1)
         layout.addLayout(toolbar)
         self.toolbar = toolbar
         self.icons = QListView()

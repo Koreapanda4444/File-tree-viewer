@@ -85,6 +85,7 @@ from ui.live_search import LiveSearch
 from ui.locations import LocationsButton, LocationStore
 from ui.navigation_tabs import FolderTabs
 from ui.operation_results import OperationResultsDialog, OperationResultsModel
+from ui.panels import PanelManager
 from ui.plan import PlanExplorerPage
 from ui.preferences import (
     Preferences,
@@ -274,10 +275,10 @@ class ExplorerPage(QWidget):
         preview_group = QGroupBox("Preview")
         preview_layout = QVBoxLayout(preview_group)
 
-        preview_toolbar = QHBoxLayout()
+        preview_toolbar = FlowLayout()
         self.preview_status = QLabel("Select a file to preview it")
         self.preview_status.setWordWrap(True)
-        preview_toolbar.addWidget(self.preview_status, 1)
+        preview_layout.addWidget(self.preview_status)
 
         self.save_file_button = QPushButton("Save")
         self.reload_file_button = QPushButton("Reload")
@@ -431,9 +432,7 @@ class RealExplorerPage(ExplorerPage):
             self.group_field,
             self.folders_first,
         ):
-            self.folder_panel.toolbar.insertWidget(
-                self.folder_panel.toolbar.count() - 1, control
-            )
+            self.folder_panel.toolbar.addWidget(control)
         for control in (self.sort_field, self.sort_order, self.group_field):
             control.currentIndexChanged.connect(self.update_sorting)
         self.folders_first.toggled.connect(self.update_sorting)
@@ -2460,7 +2459,7 @@ class MainWindow(QMainWindow):
         self.folder_comparison_dialog = None
         self.comparison_close_pending = False
         self.resize(1400, 850)
-        self.setMinimumSize(1000, 650)
+        self.setMinimumSize(880, 600)
 
         self.tabs = QTabWidget()
         self.real_page = RealExplorerPage()
@@ -2520,6 +2519,7 @@ class MainWindow(QMainWindow):
         self.preferences = Preferences.load(self.settings)
         self.apply_preferences(self.preferences)
         restore_layout(self, self.settings)
+        self.panel_manager = PanelManager(self, self.settings)
         settings_menu = self.menuBar().addMenu("Settings")
         settings_menu.addAction("Preferences...", self.edit_preferences)
         self.task_monitor = TaskMonitor(self)

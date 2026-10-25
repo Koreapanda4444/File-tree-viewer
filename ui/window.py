@@ -2451,6 +2451,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("File Tree Viewer")
+        self.recovery_history_dialog = None
         self.history_dialog = None
         self.disk_dialog = None
         self.folder_comparison_dialog = None
@@ -2496,6 +2497,7 @@ class MainWindow(QMainWindow):
         workspace_menu.addAction("Compare Folders…", self.compare_folders_dialog)
         workspace_menu.addAction("Analyze Disk Usage…", self.analyze_disk_usage)
         workspace_menu.addAction("Operation History…", self.show_history)
+        workspace_menu.addAction("Recovery History…", self.show_recovery_history)
         self.staging = StagingController(self)
         self.plan_page.sync_workspace.filesystem_changed.connect(
             self.sync_filesystem_changed
@@ -2605,6 +2607,42 @@ class MainWindow(QMainWindow):
             self.comparison_close_pending = False
             dialog.deleteLater()
 
+    def show_recovery_history(self):
+        from ui.recovery_history import RecoveryHistoryDialog
+
+        if self.recovery_history_dialog is not None:
+            self.recovery_history_dialog.raise_()
+            return
+        root = self.real_page.model.root_path
+        if root is None:
+            name = QFileDialog.getExistingDirectory(self, "Choose recovery root")
+            if not name:
+                return
+            root = Path(name)
+        dialog = self.recovery_history_dialog = RecoveryHistoryDialog(root, self)
+        dialog.undo_requested.connect(self.undo_history_transaction)
+        dialog.recover_requested.connect(self.review_history_recovery)
+        try:
+            dialog.exec()
+        finally:
+            self.recovery_history_dialog = None
+            dialog.deleteLater()
+
+    def undo_history_transaction(self, record):
+        if self.staging.busy():
+            self.statusBar().showMessage("Wait for Plan tasks before Undo")
+            return
+        self.tabs.setCurrentWidget(self.plan_page)
+        self.plan_page.start_plan_undo(record)
+
+    def review_history_recovery(self, root):
+        if self.staging.busy():
+            self.statusBar().showMessage("Wait for Plan tasks before recovery")
+            return
+        self.tabs.setCurrentWidget(self.plan_page)
+        self.plan_page.check_recovery(root)
+        self.plan_page.recover_interrupted()
+
     def show_history(self):
         from ui.history import HistoryDialog
 
@@ -2696,6 +2734,10 @@ class MainWindow(QMainWindow):
         self.real_page.set_root(snapshot.root)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.recovery_history_dialog is not None:
+            self.recovery_history_dialog.reject()
+            event.ignore()
+            return
         if self.history_dialog is not None:
             self.history_dialog.reject()
             event.ignore()

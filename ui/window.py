@@ -1164,6 +1164,18 @@ class RealExplorerPage(ExplorerPage):
             self._show_operation_error("Cannot save file", error)
             return False
 
+        record_events(
+            [
+                {
+                    "category": "real",
+                    "action": "edit_text",
+                    "status": "success",
+                    "source": path,
+                    "target": path,
+                    "root": self.model.root_path,
+                }
+            ]
+        )
         self.current_preview_result = replace(
             result,
             text=self.preview.toPlainText(),
@@ -2454,6 +2466,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.appearance = install_appearance()
         self.setWindowTitle("File Tree Viewer")
+        self.auxiliary_close_pending = False
+        self.command_palette_dialog = None
         self.recovery_history_dialog = None
         self.history_dialog = None
         self.disk_dialog = None
@@ -2635,17 +2649,20 @@ class MainWindow(QMainWindow):
         finally:
             self.recovery_history_dialog = None
             dialog.deleteLater()
+            self.finish_auxiliary_close()
 
     def undo_history_transaction(self, record):
-        if self.staging.busy():
-            self.statusBar().showMessage("Wait for Plan tasks before Undo")
+        if self.staging.busy() or self.real_page.operation_is_running:
+            self.statusBar().showMessage("Wait for Real and Plan tasks before Undo")
+            return
+        if len(self.plan_page.plan) and not self.plan_page._confirm_plan_replacement():
             return
         self.tabs.setCurrentWidget(self.plan_page)
         self.plan_page.start_plan_undo(record)
 
     def review_history_recovery(self, root):
-        if self.staging.busy():
-            self.statusBar().showMessage("Wait for Plan tasks before recovery")
+        if self.staging.busy() or self.real_page.operation_is_running:
+            self.statusBar().showMessage("Wait for Real and Plan tasks before recovery")
             return
         self.tabs.setCurrentWidget(self.plan_page)
         self.plan_page.check_recovery(root)
@@ -2664,6 +2681,7 @@ class MainWindow(QMainWindow):
         finally:
             self.history_dialog = None
             dialog.deleteLater()
+            self.finish_auxiliary_close()
 
     def analyze_disk_usage(self):
         from ui.disk_usage import DiskUsageDialog
@@ -2684,6 +2702,7 @@ class MainWindow(QMainWindow):
         finally:
             self.disk_dialog = None
             dialog.deleteLater()
+            self.finish_auxiliary_close()
 
     def reveal_usage_item(self, path):
         self.tabs.setCurrentWidget(self.real_page)
@@ -2741,19 +2760,23 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.real_page)
         self.real_page.set_root(snapshot.root)
 
+    def finish_auxiliary_close(self):
+        if self.auxiliary_close_pending:
+            self.auxiliary_close_pending = False
+            QTimer.singleShot(0, self.close)
+
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self.recovery_history_dialog is not None:
-            self.recovery_history_dialog.reject()
-            event.ignore()
-            return
-        if self.history_dialog is not None:
-            self.history_dialog.reject()
-            event.ignore()
-            return
-        if self.disk_dialog is not None:
-            self.disk_dialog.reject()
-            event.ignore()
-            return
+        for dialog in (
+            self.recovery_history_dialog,
+            self.history_dialog,
+            self.disk_dialog,
+            self.command_palette_dialog,
+        ):
+            if dialog is not None:
+                self.auxiliary_close_pending = True
+                dialog.reject()
+                event.ignore()
+                return
         if (
             self.folder_comparison_dialog is not None
             and self.folder_comparison_dialog.is_busy

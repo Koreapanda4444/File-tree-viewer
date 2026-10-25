@@ -167,7 +167,10 @@ class CommandPalette(QDialog):
             os.path.isabs(os.path.expandvars(query)) or query.startswith("~")
         ):
             path = Path(os.path.expandvars(query)).expanduser()
-            if "\x00" not in str(path):
+            if "\x00" not in str(path) and not any(
+                command.key == "folder:" + str(path)
+                for command in self.visible_commands
+            ):
                 self.visible_commands.insert(
                     0,
                     Command(
@@ -257,9 +260,16 @@ def install_command_palette(window):
     action.setShortcut("Ctrl+P")
 
     def show():
-        dialog = CommandPalette(window)
-        dialog.exec()
-        dialog.deleteLater()
+        if window.command_palette_dialog is not None:
+            window.command_palette_dialog.raise_()
+            return
+        dialog = window.command_palette_dialog = CommandPalette(window)
+        try:
+            dialog.exec()
+        finally:
+            window.command_palette_dialog = None
+            dialog.deleteLater()
+            window.finish_auxiliary_close()
 
     action.triggered.connect(show)
     window.addAction(action)

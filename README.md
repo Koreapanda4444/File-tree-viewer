@@ -1,5 +1,7 @@
 # File Tree Viewer
 
+[English documentation](README_EN.md)
+
 Python과 PySide6로 만든 로컬 파일 탐색·분석·작업 계획 앱입니다. 기존 Real·Virtual·Plan 작업공간을 유지하며, Snapshot을 기준으로 변경을 검토하고 실제 파일에 적용합니다.
 
 ## 실행
@@ -22,6 +24,14 @@ python main.py
 `Workspace` 메뉴와 **Ctrl+1 / Ctrl+2 / Ctrl+3**으로 전환합니다. **Import Real Root into Plan**은 Real 루트의 Snapshot을 만들고, **Open Snapshot Root in Real**은 현재 Snapshot의 실제 폴더를 엽니다. 좁은 창에서는 작업 버튼이 다음 줄로 배치됩니다.
 
 `Settings → Preferences`에서 숨김 파일 표시, 미리보기 줄바꿈·글꼴 크기, 편집 가능한 파일 크기(1~8 MiB), 큰 파일의 미리보기 범위(64~2048 KiB), 새 수동 Plan 작업의 기본 충돌 정책(중단·건너뛰기)을 설정합니다. 창 크기·위치, 패널 비율, 선택 탭도 복원합니다. 기존 Plan의 명시적 충돌 정책은 유지합니다.
+
+## 주소창과 파일 작업
+
+Real 주소창은 직접 경로·상대 경로 입력과 백그라운드 폴더 자동완성을 지원합니다. **Alt+D / Ctrl+L**로 편집하고 Breadcrumb으로 상위 폴더에 이동합니다. **Alt+Left / Alt+Right / Alt+Up**은 뒤로·앞으로·상위 폴더 이동입니다. 최근 위치·즐겨찾기·빠른 접근과 폴더 탭을 사용할 수 있습니다. 탭마다 위치·탐색 기록·보기 모드를 유지합니다.
+
+현재 폴더는 Details·List·Large Icons로 보고 이름·유형·크기·수정일 정렬과 유형·날짜·크기 그룹 표시를 선택합니다. 정렬·그룹화는 현재 로딩된 항목을 기준으로 합니다. **Jump to file or folder**는 현재 폴더에서 이름 후보를 찾아 선택합니다. 폴더 자동완성은 최대 128개 후보·50,000개 항목 조회 상한을 사용합니다.
+
+파일 목록의 **Ctrl+C/X/V**, **F2**, **Delete**, **Ctrl+A**, **Ctrl+F**, **F5**와 우클릭 메뉴·드래그 앤 드롭은 같은 내부 파일 명령을 사용합니다. 편집기에서는 텍스트 단축키가 유지됩니다. 충돌은 새 이름·건너뛰기·중단 정책으로 처리하고 **Last Operation**에서 항목별 성공·실패·취소를 확인합니다. Real 작업 취소는 현재 항목을 마친 뒤 적용됩니다.
 
 ## 검색과 작업공간 연결
 
@@ -101,6 +111,32 @@ Snapshot 트리에서 **New File / New Folder / Rename / Copy / Move / Delete**�
 
 Real의 개별 파일 작업은 생성·이름 변경·복사·이동·휴지통 삭제를 지원합니다. Undo 가능 여부는 작업 종류와 외부 변경 상태에 따라 달라집니다. 휴지통 삭제는 Real Undo 대상이 아닙니다.
 
+## 디스크 사용량과 정리
+
+**Workspace → Analyze Disk Usage**는 현재 Real 루트를 읽기 전용으로 분석합니다. 루트가 없으면 폴더를 선택합니다. 폴더 합계, 큰 파일, Treemap, 경로 선택·상위 이동, 파일 상세 정보와 Real 위치 이동을 제공합니다. 표는 400개 단위로 모든 직접 하위 항목을 탐색하며, Treemap은 큰 항목 400개와 나머지 묶음을 표시합니다. 빈 항목은 표에 표시하지만 Treemap 면적은 차지하지 않습니다.
+
+Logical은 모든 파일 경로의 크기 합계이며 Unique는 파일 식별자가 같은 하드 링크를 한 번만 집계합니다. 하드 링크 용량은 처음 만난 경로에 배정됩니다. 할당량은 OS가 제공하는 블록 수를 사용하고 지원하지 않으면 논리 크기로 추정합니다. 압축·중복 제거·원격 저장장치의 실제 디스크 점유율과는 다를 수 있습니다. 링크·Reparse Point·특수 파일·접근 오류는 표시하고 건너뛰며 `.file-tree-viewer` 복구 자료는 스캔에서 제외합니다. 스캔 중 외부 변경까지 원자적으로 고정하는 기능은 아닙니다.
+
+**Largest 100 Files**와 **Add Selected to Plan**으로 정리할 파일을 준비합니다. 삭제를 선택해도 이 단계에서는 원본이 변경되지 않습니다. Plan Snapshot과 경로를 다시 검사하며, 실제 적용은 기존 Diff·확인·트랜잭션 절차를 따릅니다.
+
+## 작업 기록과 복구 기록
+
+**Workspace → Operation History**는 앱이 실행한 Real 파일 작업·텍스트 저장, Plan 적용·Undo·복구와 동기화 결과를 조회합니다. 새 기능 설치 전의 개별 Real 작업이나 앱 밖에서 수행한 작업을 소급 수집하지 않습니다. 날짜(UTC)·유형·상태·경로/명령 필터와 250개 단위 조회, 상세 정보·파일 위치 이동을 제공합니다. 기록은 Qt의 앱별 로컬 데이터 위치에 `operation-history.sqlite3`로 저장됩니다. 저장 위치의 권한·용량 문제는 로그에 남기며 파일 작업 결과를 되돌리지는 않습니다.
+
+**Export Filtered Report**는 현재 필터에 해당하는 전체 기록을 JSON·CSV·HTML로 내보냅니다. Plan·동기화는 거래 요약과 파일 변경별 원본·대상, Journal 위치를 포함합니다. 출력은 새 파일명만 허용하며 복구 자료와 기록 DB를 덮어쓰지 않습니다. HTML·CSV 문자열을 처리하고 취소된 출력은 폐기합니다.
+
+**Workspace → Recovery History**는 선택 루트의 기존 Journal을 읽어 최대 1,000개 거래와 오류·복구 실패 정보를 표시합니다. **Check Selected Undo Safety**로 원본 경계·외부 변경과 동기화의 모든 참여 루트를 검사한 뒤 **Undo Verified Transaction**을 사용할 수 있습니다. 실행 시 다시 검증합니다. 미완료 거래는 **Review Interrupted Recovery in Plan**으로 기존 복구 절차에 연결합니다. 이 화면은 백업을 삭제하지 않습니다. 전체 파일 내용 검사 중에는 안전한 완료를 기다릴 수 있습니다.
+
+영구 작업 기록은 감사용 색인입니다. 실제 복구는 각 루트의 Journal·Mutation 로그·백업을 사용합니다. Real의 개별 작업 Undo 기록은 현재 앱 세션에만 유지되고, 휴지통 삭제는 Real Undo 대상이 아닙니다.
+
+## 테마·패널·빠른 명령
+
+**Settings → Preferences**에서 Light·Dark·System을 선택합니다. System은 OS가 Qt에 제공하는 색 구성 변경을 따릅니다. 비교 화면의 상태 색과 파일 차이 배경도 테마에 맞춥니다. 작업 아이콘과 배율 처리는 Qt를 사용합니다.
+
+**View**에서 Real·Virtual·Plan 패널을 접고 펼치며, 분할선으로 크기를 조절합니다. 창·패널 배치와 표시 상태는 다음 실행에 복원됩니다. **Restore All Panels**로 되돌릴 수 있습니다. 각 분할 영역에서 마지막 패널을 숨기는 동작은 차단합니다. 좁은 창에서는 파일 보기 도구와 작업 버튼이 줄바꿈됩니다.
+
+**Ctrl+P / Settings → Quick Commands**는 메뉴와 현재 작업공간의 명령을 검색합니다. 방향키·Enter로 실행하고 최근 명령·즐겨찾기를 저장합니다. 절대 폴더 경로를 입력해 Real로 이동하거나 폴더 명령을 즐겨찾기에 저장할 수 있습니다. 비활성 명령은 실행되지 않으며 위험한 명령은 확인 후 기존 작업 절차를 따릅니다.
+
 ## 성능과 구조
 
 Snapshot·검색·Snapshot 비교는 SQLite와 페이지 캐시를 사용합니다. 트리는 필요한 하위 항목만 읽고, 대량 경로 조회는 배치로 처리합니다. 스캔·검색·미리보기·파일 비교·분석·저장·Diff·적용은 Worker에서 실행되며 안전한 종료를 기다립니다.
@@ -113,6 +149,8 @@ Snapshot·검색·Snapshot 비교는 SQLite와 페이지 캐시를 사용합니�
 | `plan_apply.py`, `journal.py`, `recovery.py` | 트랜잭션·Rollback·Undo·복구 |
 | `file_content.py`, `file_preview.py`, `file_comparison.py`, `file_metadata.py` | 안전한 파일 읽기·미리보기·비교·속성 |
 | `analysis.py`, `diagnostics.py`, `duplicate_management.py`, `reports.py` | 구조·문제·중복 분석과 보고서 |
+| `disk_usage.py`, `operation_history.py`, `recovery_history.py` | 디스크 집계·영구 감사 기록·기존 복구 자료 검토 |
+| `folder_compare.py`, `sync_plan.py`, `sync_apply.py`, `sync_baseline.py`, `sync_preview.py` | 폴더 비교·다중 루트 동기화·이력·전후 트리 |
 | `ui/`, `real/`, `virtual/` | 화면·Worker·탐색 모델·가상 작업공간 |
 
 ## Windows 실행 파일

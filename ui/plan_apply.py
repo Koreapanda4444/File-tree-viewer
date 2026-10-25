@@ -42,9 +42,7 @@ class PlanApplyWorker(CancellableWorker):
             )
             self.finished.emit(None, str(error))
         else:
-            record_result(
-                "apply" if isinstance(self, PlanApplyWorker) else "undo", record
-            )
+            record_result("apply", record)
             self.finished.emit(record, "")
 
 
@@ -81,9 +79,7 @@ class PlanUndoWorker(QObject):
             )
             self.finished.emit(None, str(error))
         else:
-            record_result(
-                "apply" if isinstance(self, PlanApplyWorker) else "undo", record
-            )
+            record_result("undo", record)
             self.finished.emit(record, "")
 
 

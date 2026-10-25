@@ -39,13 +39,17 @@ class HistoryStore:
     def connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         database = sqlite3.connect(self.path, timeout=5)
-        database.execute("PRAGMA journal_mode=WAL")
-        database.execute(
-            "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,time TEXT NOT NULL,category TEXT NOT NULL,action TEXT NOT NULL,status TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,root TEXT NOT NULL,transaction_id TEXT NOT NULL,journal TEXT NOT NULL,details TEXT NOT NULL)"
-        )
-        database.execute(
-            "CREATE INDEX IF NOT EXISTS history_time ON events(time DESC,id DESC)"
-        )
+        try:
+            database.execute("PRAGMA journal_mode=WAL")
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,time TEXT NOT NULL,category TEXT NOT NULL,action TEXT NOT NULL,status TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,root TEXT NOT NULL,transaction_id TEXT NOT NULL,journal TEXT NOT NULL,details TEXT NOT NULL)"
+            )
+            database.execute(
+                "CREATE INDEX IF NOT EXISTS history_time ON events(time DESC,id DESC)"
+            )
+        except BaseException:
+            database.close()
+            raise
         return database
 
     def append(self, events):
@@ -140,42 +144,71 @@ def record_events(events):
         )
 
 
+def transaction_events(action, record, category):
+    common = {
+        "category": category,
+        "status": record.status.value,
+        "root": record.root,
+        "transaction_id": record.transaction_id,
+        "journal": record.journal_path,
+    }
+    yield {**common, "action": action, "details": record.as_dict()}
+    for mutation in record.mutations:
+        yield {
+            **common,
+            "action": action + ":" + mutation.kind.value,
+            "source": mutation.source,
+            "target": mutation.target,
+            "details": {
+                "operation_id": mutation.operation_id,
+                "mutation_id": mutation.key,
+            },
+        }
+
+
 def record_result(action, result, *, category="plan"):
     if hasattr(result, "journal_path"):
-        record_events(
-            [
-                {
-                    "category": category,
-                    "action": action,
-                    "status": result.status.value,
-                    "root": result.root,
-                    "transaction_id": result.transaction_id,
-                    "journal": result.journal_path,
-                    "details": result.as_dict(),
-                }
-            ]
-        )
+        record_events(transaction_events(action, result, category))
     elif hasattr(result, "journals"):
-        record_events(
-            [
-                {
+
+        def events():
+            for index, root in enumerate(result.roots):
+                journal = (
+                    result.journals[index] if index < len(result.journals) else None
+                )
+                yield {
                     "category": "sync",
                     "action": action,
                     "status": result.status,
                     "root": root,
                     "transaction_id": result.transaction_id,
-                    "journal": result.journals[index]
-                    if index < len(result.journals)
-                    else "",
+                    "journal": journal,
                     "details": {
                         "error": result.error,
                         "recovery_errors": result.recovery_errors,
                         "completed": result.completed,
                     },
                 }
-                for index, root in enumerate(result.roots)
-            ]
-        )
+                if journal is not None:
+                    from plan_apply import load_application_record
+
+                    try:
+                        record = load_application_record(journal)
+                    except (OSError, ValueError, TypeError, KeyError) as error:
+                        yield {
+                            "category": "sync",
+                            "action": action + ":journal",
+                            "status": "failed",
+                            "root": root,
+                            "journal": journal,
+                            "details": {"error": str(error)},
+                        }
+                    else:
+                        for event in transaction_events(action, record, "sync"):
+                            if event["action"] != action:
+                                yield event
+
+        record_events(events())
     else:
         record_events(
             [

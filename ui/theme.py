@@ -35,7 +35,6 @@ class ThemeManager(QObject):
         super().__init__(parent)
         self.mode = "System"
         self.app = QApplication.instance()
-        self.system_palette = QPalette(self.app.palette())
         self.app.styleHints().colorSchemeChanged.connect(self.system_changed)
 
     def system_changed(self, scheme):
@@ -48,37 +47,34 @@ class ThemeManager(QObject):
             self.mode == "System"
             and self.app.styleHints().colorScheme() == Qt.ColorScheme.Dark
         )
-        if self.mode == "System" and not dark:
-            palette = QPalette(self.system_palette)
-        else:
-            palette = QPalette()
-            colors = {
-                QPalette.ColorRole.Window: "#20242b" if dark else "#f4f6f9",
-                QPalette.ColorRole.WindowText: "#e4e9f1" if dark else "#17243a",
-                QPalette.ColorRole.Base: "#171b21" if dark else "#ffffff",
-                QPalette.ColorRole.AlternateBase: "#252b34" if dark else "#edf1f7",
-                QPalette.ColorRole.Text: "#e4e9f1" if dark else "#17243a",
-                QPalette.ColorRole.Button: "#303743" if dark else "#e8edf5",
-                QPalette.ColorRole.ButtonText: "#e4e9f1" if dark else "#17243a",
-                QPalette.ColorRole.Highlight: "#315c91" if dark else "#bdd6fa",
-                QPalette.ColorRole.HighlightedText: "#ffffff" if dark else "#102844",
-                QPalette.ColorRole.ToolTipBase: "#303743" if dark else "#ffffff",
-                QPalette.ColorRole.ToolTipText: "#e4e9f1" if dark else "#17243a",
-                QPalette.ColorRole.Link: "#91c4ff" if dark else "#225c99",
-                QPalette.ColorRole.PlaceholderText: "#a2abba" if dark else "#68778a",
-            }
-            for role, color in colors.items():
-                palette.setColor(role, QColor(color))
-            for role in (
-                QPalette.ColorRole.Text,
-                QPalette.ColorRole.WindowText,
-                QPalette.ColorRole.ButtonText,
-            ):
-                palette.setColor(
-                    QPalette.ColorGroup.Disabled,
-                    role,
-                    QColor("#87909d" if dark else "#7c8794"),
-                )
+        palette = QPalette()
+        colors = {
+            QPalette.ColorRole.Window: "#20242b" if dark else "#f4f6f9",
+            QPalette.ColorRole.WindowText: "#e4e9f1" if dark else "#17243a",
+            QPalette.ColorRole.Base: "#171b21" if dark else "#ffffff",
+            QPalette.ColorRole.AlternateBase: "#252b34" if dark else "#edf1f7",
+            QPalette.ColorRole.Text: "#e4e9f1" if dark else "#17243a",
+            QPalette.ColorRole.Button: "#303743" if dark else "#e8edf5",
+            QPalette.ColorRole.ButtonText: "#e4e9f1" if dark else "#17243a",
+            QPalette.ColorRole.Highlight: "#315c91" if dark else "#bdd6fa",
+            QPalette.ColorRole.HighlightedText: "#ffffff" if dark else "#102844",
+            QPalette.ColorRole.ToolTipBase: "#303743" if dark else "#ffffff",
+            QPalette.ColorRole.ToolTipText: "#e4e9f1" if dark else "#17243a",
+            QPalette.ColorRole.Link: "#91c4ff" if dark else "#225c99",
+            QPalette.ColorRole.PlaceholderText: "#a2abba" if dark else "#68778a",
+        }
+        for role, color in colors.items():
+            palette.setColor(role, QColor(color))
+        for role in (
+            QPalette.ColorRole.Text,
+            QPalette.ColorRole.WindowText,
+            QPalette.ColorRole.ButtonText,
+        ):
+            palette.setColor(
+                QPalette.ColorGroup.Disabled,
+                role,
+                QColor("#87909d" if dark else "#7c8794"),
+            )
         self.app.setPalette(palette)
         for widget in self.app.topLevelWidgets():
             widget.update()

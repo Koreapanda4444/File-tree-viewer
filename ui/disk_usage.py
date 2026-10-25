@@ -96,7 +96,7 @@ class DiskUsageDialog(QDialog):
         self.treemap = UsageTreemap()
         self.layout.addWidget(self.treemap, 2)
         self.treemap.activated.connect(self.activate_entry)
-        self.treemap.selected.connect(self.select_entry)
+        self.treemap.selected.connect(self.select_map_entry)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
             ("Path", "Logical size", "Unique bytes", "Status")
@@ -213,6 +213,12 @@ class DiskUsageDialog(QDialog):
     def table_selection(self):
         row = self.table.currentRow()
         self.select_entry(self.entries[row] if 0 <= row < len(self.entries) else None)
+
+    def select_map_entry(self, entry):
+        self.table.blockSignals(True)
+        self.table.clearSelection()
+        self.table.blockSignals(False)
+        self.select_entry(entry)
 
     def select_entry(self, entry):
         self.selected_entry = entry

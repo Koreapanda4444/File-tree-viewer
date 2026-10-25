@@ -32,8 +32,11 @@ class DiskUsage:
     def query(self, sql, parameters=()):
         if self.closed:
             raise ValueError("Disk analysis is closed")
-        with sqlite3.connect(self.database_path) as database:
+        database = sqlite3.connect(self.database_path)
+        try:
             return database.execute(sql, parameters).fetchall()
+        finally:
+            database.close()
 
     def entry(self, path=""):
         rows = self.query("SELECT * FROM entries WHERE path=?", (path,))
@@ -85,7 +88,7 @@ def scan_disk_usage(root, *, cancelled=None, progress=None):
         )
         database.execute("CREATE INDEX usage_parent ON entries(parent,logical DESC)")
         database.execute(
-            "CREATE TABLE seen(device INTEGER,inode INTEGER,PRIMARY KEY(device,inode)) WITHOUT ROWID"
+            "CREATE TABLE seen(device TEXT,inode TEXT,PRIMARY KEY(device,inode)) WITHOUT ROWID"
         )
         database.execute("INSERT INTO entries VALUES ('','',1,0,0,0,'')")
         stack = [(root, False)]
@@ -129,7 +132,7 @@ def scan_disk_usage(root, *, cancelled=None, progress=None):
                                 if details.st_ino:
                                     cursor = database.execute(
                                         "INSERT OR IGNORE INTO seen VALUES (?,?)",
-                                        (details.st_dev, details.st_ino),
+                                        (str(details.st_dev), str(details.st_ino)),
                                     )
                                     fresh = cursor.rowcount == 1
                                 if fresh:

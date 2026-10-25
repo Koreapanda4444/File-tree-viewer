@@ -72,6 +72,7 @@ from search_matching import NameMatcher, SearchPatternError
 from search_options import SearchOptions
 from ui.address import AddressBar
 from ui.appearance import install_appearance
+from ui.command_palette import install_command_palette
 from ui.completion import PathCompletion
 from ui.feedback import TaskMonitor, show_error
 from ui.file_commands import FileCommands
@@ -2522,6 +2523,8 @@ class MainWindow(QMainWindow):
         self.panel_manager = PanelManager(self, self.settings)
         settings_menu = self.menuBar().addMenu("Settings")
         settings_menu.addAction("Preferences...", self.edit_preferences)
+        self.command_action = install_command_palette(self)
+        settings_menu.addAction(self.command_action)
         self.task_monitor = TaskMonitor(self)
         self.statusBar().addPermanentWidget(self.task_monitor)
         for page in (self.real_page, self.virtual_page, self.plan_page):

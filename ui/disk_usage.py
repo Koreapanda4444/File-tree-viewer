@@ -15,6 +15,7 @@ from disk_usage import scan_disk_usage
 from snapshot import SnapshotCancelled
 from ui.analysis import format_size
 from ui.tasks import CancellableWorker, prepare_worker_thread
+from ui.treemap import UsageTreemap
 from ui.widgets import PlainLabel
 
 
@@ -52,7 +53,10 @@ class DiskUsageDialog(QDialog):
         self.layout = QVBoxLayout(self)
         self.summary = PlainLabel(f"Scanning {root}…")
         self.summary.setWordWrap(True)
+        self.summary.setMinimumHeight(58)
         self.layout.addWidget(self.summary)
+        self.treemap = UsageTreemap()
+        self.layout.addWidget(self.treemap, 2)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
             ("Path", "Logical size", "Unique bytes", "Status")
@@ -97,7 +101,9 @@ class DiskUsageDialog(QDialog):
             self.summary.setText(
                 f"{self.usage.root}\nLogical: {format_size(root.logical)} · Unique: {format_size(root.unique)} · Allocated estimate: {format_size(root.allocated)} · Skipped/errors: {self.usage.error_count:,}"
             )
-            self.show_entries(self.usage.children())
+            entries = self.usage.children()
+            self.show_entries(entries)
+            self.treemap.set_entries(entries, root.logical)
 
     def show_entries(self, entries):
         self.entries = entries

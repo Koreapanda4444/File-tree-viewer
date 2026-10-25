@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+from PySide6.QtCore import QStandardPaths
+
+
+class HistoryStore:
+    fields = (
+        "id",
+        "time",
+        "category",
+        "action",
+        "status",
+        "source",
+        "target",
+        "root",
+        "transaction_id",
+        "journal",
+        "details",
+    )
+
+    def __init__(self, path=None):
+        self.path = (
+            Path(path)
+            if path is not None
+            else Path(
+                QStandardPaths.writableLocation(
+                    QStandardPaths.StandardLocation.AppLocalDataLocation
+                )
+            )
+            / "operation-history.sqlite3"
+        )
+
+    def connect(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        database = sqlite3.connect(self.path, timeout=5)
+        database.execute("PRAGMA journal_mode=WAL")
+        database.execute(
+            "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,time TEXT NOT NULL,category TEXT NOT NULL,action TEXT NOT NULL,status TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,root TEXT NOT NULL,transaction_id TEXT NOT NULL,journal TEXT NOT NULL,details TEXT NOT NULL)"
+        )
+        database.execute(
+            "CREATE INDEX IF NOT EXISTS history_time ON events(time DESC,id DESC)"
+        )
+        return database
+
+    def append(self, events):
+        database = self.connect()
+        try:
+            with database:
+                database.executemany(
+                    "INSERT INTO events(time,category,action,status,source,target,root,transaction_id,journal,details) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        (
+                            event.get("time") or datetime.now(timezone.utc).isoformat(),
+                            *(
+                                str(event.get(field) or "")
+                                for field in self.fields[2:-1]
+                            ),
+                            json.dumps(
+                                event.get("details", {}),
+                                ensure_ascii=False,
+                                default=str,
+                            ),
+                        )
+                        for event in events
+                    ),
+                )
+        finally:
+            database.close()
+
+    def rows(
+        self,
+        *,
+        category="",
+        status="",
+        since="",
+        until="",
+        text="",
+        limit=250,
+        offset=0,
+    ):
+        if not 0 < limit <= 4096 or offset < 0:
+            raise ValueError("Invalid history page")
+        clauses, values = [], []
+        for column, value in (("category", category), ("status", status)):
+            if value:
+                clauses.append(column + "=?")
+                values.append(value)
+        if since:
+            clauses.append("time>=?")
+            values.append(since)
+        if until:
+            clauses.append("time<?")
+            values.append(until)
+        if text:
+            clauses.append(
+                "(instr(lower(source),lower(?))>0 OR instr(lower(target),lower(?))>0 OR instr(lower(action),lower(?))>0)"
+            )
+            values.extend([text] * 3)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        database = self.connect()
+        try:
+            rows = database.execute(
+                "SELECT * FROM events"
+                + where
+                + " ORDER BY time DESC,id DESC LIMIT ? OFFSET ?",
+                (*values, limit, offset),
+            ).fetchall()
+            return [dict(zip(self.fields, row, strict=True)) for row in rows]
+        finally:
+            database.close()
+
+
+def record_events(events):
+    try:
+        HistoryStore().append(events)
+    except (OSError, sqlite3.Error) as error:
+        logging.getLogger(__name__).warning(
+            "Operation history could not be saved: %s", error
+        )
+
+
+def record_result(action, result, *, category="plan"):
+    if hasattr(result, "journal_path"):
+        record_events(
+            [
+                {
+                    "category": category,
+                    "action": action,
+                    "status": result.status.value,
+                    "root": result.root,
+                    "transaction_id": result.transaction_id,
+                    "journal": result.journal_path,
+                    "details": result.as_dict(),
+                }
+            ]
+        )
+    elif hasattr(result, "journals"):
+        record_events(
+            [
+                {
+                    "category": "sync",
+                    "action": action,
+                    "status": result.status,
+                    "root": root,
+                    "transaction_id": result.transaction_id,
+                    "journal": result.journals[index]
+                    if index < len(result.journals)
+                    else "",
+                    "details": {
+                        "error": result.error,
+                        "recovery_errors": result.recovery_errors,
+                        "completed": result.completed,
+                    },
+                }
+                for index, root in enumerate(result.roots)
+            ]
+        )
+    else:
+        record_events(
+            [
+                {
+                    "category": category,
+                    "action": action,
+                    "status": "failed" if result.errors else "recovered",
+                    "root": result.root,
+                    "details": {"recovered": result.recovered, "errors": result.errors},
+                }
+            ]
+        )

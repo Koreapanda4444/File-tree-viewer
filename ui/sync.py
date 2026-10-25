@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from operation_history import record_events, record_result
 from snapshot import SnapshotCancelled
 from sync_plan import plan_bidirectional_sync, plan_one_way_sync
 from ui.preferences import application_settings
@@ -383,6 +384,9 @@ class SyncExecutionWorker(CancellableWorker):
                 )
             )
         except SnapshotCancelled:
+            record_events(
+                [{"category": "sync", "action": self.action, "status": "cancelled"}]
+            )
             self.finished.emit(None, "Synchronization cancelled before changes")
         except (
             OSError,
@@ -392,6 +396,17 @@ class SyncExecutionWorker(CancellableWorker):
             KeyError,
             sqlite3.Error,
         ) as error:
+            record_events(
+                [
+                    {
+                        "category": "sync",
+                        "action": self.action,
+                        "status": "failed",
+                        "details": {"error": str(error)},
+                    }
+                ]
+            )
             self.finished.emit(None, str(error))
         else:
+            record_result(self.action, result)
             self.finished.emit(result, "")

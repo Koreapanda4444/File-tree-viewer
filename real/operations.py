@@ -16,6 +16,7 @@ from file_operations import (
     unique_destination,
 )
 from fs_paths import validate_name
+from operation_history import record_events
 
 
 class FileOperationWorker(QObject):
@@ -57,6 +58,31 @@ class FileOperationWorker(QObject):
             changes, errors = [], [str(error)]
         if batch:
             self.items_ready.emit(list(batch))
+        outcomes = self.task.outcomes if self.task is not None else []
+        events = [
+            {
+                "category": "real",
+                "action": self.action,
+                "status": item.status,
+                "source": item.source,
+                "target": item.target,
+                "root": (item.source or item.target).parent
+                if (item.source or item.target)
+                else "",
+                "details": {"message": item.message},
+            }
+            for item in outcomes
+        ]
+        if not outcomes and errors:
+            events.append(
+                {
+                    "category": "real",
+                    "action": self.action,
+                    "status": "failed",
+                    "details": {"errors": errors},
+                }
+            )
+        record_events(events)
         self.finished.emit(self.action, changes, errors)
 
 

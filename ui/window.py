@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
 
 from file_metadata import format_timestamp, inspect_file_metadata
 from fs_ops import file_signature
+from operation_history import record_events
 from real.navigation import NavigationHistory
 from real.operations import (
     FileChange,
@@ -1392,9 +1393,33 @@ class RealExplorerPage(ExplorerPage):
         try:
             record = create_item(parent, name, directory=directory)
         except (OSError, ValueError) as error:
+            record_events(
+                [
+                    {
+                        "category": "real",
+                        "action": "create_" + label,
+                        "status": "failed",
+                        "root": parent,
+                        "details": {"error": str(error)},
+                    }
+                ]
+            )
             self._show_operation_error(f"Cannot create {label}", error)
             return
 
+        record_events(
+            [
+                {
+                    "category": "real",
+                    "action": record.action,
+                    "status": "success",
+                    "source": change.source,
+                    "target": change.target,
+                    "root": self.model.root_path,
+                }
+                for change in record.changes
+            ]
+        )
         self.undo_stack.append(record)
         self._refresh_after_operation()
         self.status_changed.emit(f"Created {record.changes[0].target}")
@@ -1418,9 +1443,33 @@ class RealExplorerPage(ExplorerPage):
         try:
             record = rename_item(source, new_name)
         except (OSError, ValueError) as error:
+            record_events(
+                [
+                    {
+                        "category": "real",
+                        "action": "rename",
+                        "status": "failed",
+                        "source": source,
+                        "details": {"error": str(error)},
+                    }
+                ]
+            )
             self._show_operation_error("Cannot rename item", error)
             return
 
+        record_events(
+            [
+                {
+                    "category": "real",
+                    "action": record.action,
+                    "status": "success",
+                    "source": change.source,
+                    "target": change.target,
+                    "root": self.model.root_path,
+                }
+                for change in record.changes
+            ]
+        )
         self.undo_stack.append(record)
         self._refresh_after_operation()
         self.status_changed.emit(f"Renamed to {record.changes[0].target.name}")

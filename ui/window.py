@@ -2567,6 +2567,7 @@ class MainWindow(QMainWindow):
             return
         dialog = self.disk_dialog = DiskUsageDialog(root, self)
         dialog.reveal_requested.connect(self.reveal_usage_item)
+        dialog.stage_requested.connect(self.stage_usage_items)
         try:
             dialog.exec()
         finally:
@@ -2577,6 +2578,15 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.real_page)
         if self.real_page.set_root(path.parent):
             self.real_page.jump_to_item(str(path))
+
+    def stage_usage_items(self, action, root, paths):
+        if self.staging.busy():
+            self.statusBar().showMessage(
+                "Wait for Plan tasks before staging analysis items"
+            )
+            return
+        if self.real_page.set_root(root):
+            self.staging.request(action, paths)
 
     def stage_sync_plan(self, plan):
         if self.staging.busy():

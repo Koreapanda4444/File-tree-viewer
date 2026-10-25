@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
+    QInputDialog,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -48,6 +49,7 @@ class DiskUsageWorker(CancellableWorker):
 class DiskUsageDialog(QDialog):
     status_changed = Signal(str)
     reveal_requested = Signal(object)
+    stage_requested = Signal(str, object, object)
 
     def __init__(self, root, parent=None):
         super().__init__(parent)
@@ -117,6 +119,16 @@ class DiskUsageDialog(QDialog):
         self.reveal_button.setEnabled(False)
         self.reveal_button.clicked.connect(self.reveal_selected)
         self.layout.addWidget(self.reveal_button)
+        actions = QHBoxLayout()
+        self.largest_button = QPushButton("Largest 100 Files")
+        self.largest_button.clicked.connect(self.show_largest)
+        self.largest_button.setEnabled(False)
+        self.stage_button = QPushButton("Add Selected to Plan…")
+        self.stage_button.setEnabled(False)
+        self.stage_button.clicked.connect(self.stage_selected)
+        actions.addWidget(self.largest_button)
+        actions.addWidget(self.stage_button)
+        self.layout.addLayout(actions)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.buttons.rejected.connect(self.reject)
         self.layout.addWidget(self.buttons)
@@ -149,6 +161,7 @@ class DiskUsageDialog(QDialog):
         elif self.usage is None:
             self.summary.setText(error)
         else:
+            self.largest_button.setEnabled(True)
             root = self.usage.entry()
             self.summary.setText(
                 f"{self.usage.root}\nLogical: {format_size(root.logical)} · Unique: {format_size(root.unique)} · Allocated estimate: {format_size(root.allocated)} · Skipped/errors: {self.usage.error_count:,}"
@@ -204,6 +217,7 @@ class DiskUsageDialog(QDialog):
     def select_entry(self, entry):
         self.selected_entry = entry
         self.reveal_button.setEnabled(entry is not None)
+        self.stage_button.setEnabled(entry is not None)
         self.details.setText(
             f"{entry.path} · Logical {format_size(entry.logical)} · Unique {format_size(entry.unique)} · {entry.error or 'Scanned metadata; files may have changed'}"
             if entry is not None
@@ -215,6 +229,38 @@ class DiskUsageDialog(QDialog):
             path = self.usage.root / self.selected_entry.path
             self.accept()
             self.reveal_requested.emit(path)
+
+    def show_largest(self):
+        if self.usage is None:
+            return
+        self.navigate("")
+        self.show_entries(self.usage.largest())
+        self.details.setText(
+            "Largest 100 files across the scanned root. Select items to prepare a reviewed Plan."
+        )
+
+    def stage_selected(self):
+        if self.usage is None or self.selected_entry is None:
+            return
+        entries = [
+            self.entries[index.row()]
+            for index in self.table.selectionModel().selectedRows()
+        ]
+        if not entries:
+            entries = [self.selected_entry]
+        action, accepted = QInputDialog.getItem(
+            self,
+            "Prepare File Plan",
+            "Stage operation (files remain unchanged until Plan Apply):",
+            ("Move", "Copy", "Rename", "Delete"),
+            0,
+            False,
+        )
+        if accepted:
+            root = self.usage.root
+            paths = [root / entry.path for entry in entries]
+            self.accept()
+            self.stage_requested.emit(action.lower(), root, paths)
 
     def show_entries(self, entries):
         self.table.blockSignals(True)

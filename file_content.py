@@ -27,10 +27,9 @@ def stat_identity(details):
     return (
         details.st_dev,
         details.st_ino,
-        details.st_mode,
+        stat.S_IFMT(details.st_mode),
         details.st_size,
         details.st_mtime_ns,
-        details.st_ctime_ns,
     )
 
 

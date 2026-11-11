@@ -9,9 +9,12 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from file_content import read_file_bytes
 from file_operations import FileOperationTask, create_item, rename_item
 from folder_compare import compare_folders
 from fs_ops import OperationCancelled, copy_exclusive, transaction_lock
@@ -94,6 +97,29 @@ class FilesystemChecks(unittest.TestCase):
             copy_exclusive(source, self.root / "copy.txt", cancelled=event)
         self.assertTrue(source.exists())
         self.assertFalse((self.root / "copy.txt").exists())
+
+    def test_handle_permission_and_creation_metadata_do_not_change_identity(self):
+        source = self.file("metadata.txt", "content")
+        original = os.fstat
+        def metadata(descriptor):
+            details = original(descriptor)
+            return SimpleNamespace(st_dev=details.st_dev, st_ino=details.st_ino,
+                st_mode=details.st_mode ^ 0o100, st_size=details.st_size,
+                st_mtime_ns=details.st_mtime_ns, st_ctime_ns=details.st_ctime_ns + 100)
+        with patch("file_content.os.fstat", side_effect=metadata):
+            self.assertEqual(read_file_bytes(source, limit=1024).data, b"content")
+
+    def test_replaced_file_handle_is_rejected(self):
+        source = self.file("identity.txt")
+        original = os.fstat
+        def metadata(descriptor):
+            details = original(descriptor)
+            return SimpleNamespace(st_dev=details.st_dev, st_ino=details.st_ino + 1,
+                st_mode=details.st_mode, st_size=details.st_size,
+                st_mtime_ns=details.st_mtime_ns, st_ctime_ns=details.st_ctime_ns)
+        with patch("file_content.os.fstat", side_effect=metadata):
+            with self.assertRaises(FileExistsError):
+                read_file_bytes(source, limit=1024)
 
     def test_modified_copy_cannot_be_undone(self):
         source = self.file("source/nested/item.txt", "original")

@@ -42,3 +42,9 @@ jobs:
 
       - name: Check workspace startup and shutdown
         run: python main.py --smoke-test
+
+      - name: Verify file operations and recovery
+        run: python scripts/verify_core.py
+
+      - name: Verify asynchronous explorer and tree export
+        run: python scripts/verify_gui.py

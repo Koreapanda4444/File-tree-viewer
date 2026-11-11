@@ -236,7 +236,7 @@ class FileOperationTask:
     def _copy(self, source: Path) -> FileChange:
         destination = self._checked_destination(source, moving=False)
         target = self._transfer_target(destination, source)
-        copy_exclusive(source, target)
+        copy_exclusive(source, target, cancelled=self._cancelled)
         return record_change(source, target)
 
     def _move(self, source: Path) -> FileChange:
@@ -244,7 +244,7 @@ class FileOperationTask:
         target = self._transfer_target(destination, source)
         if target.exists() or target.is_symlink():
             raise FileExistsError(target)
-        move_no_replace(source, target)
+        move_no_replace(source, target, cancelled=self._cancelled)
         return record_change(source, target)
 
     def _checked_destination(self, source: Path, *, moving: bool) -> Path:
@@ -280,7 +280,10 @@ class FileOperationTask:
         if change.target is not None and change.fingerprint is not None:
             if not change.target.exists() and not change.target.is_symlink():
                 raise FileNotFoundError(change.target)
-            if tree_fingerprint(change.target) != change.fingerprint:
+            if (
+                tree_fingerprint(change.target, hash_contents=True)
+                != change.fingerprint
+            ):
                 raise FileExistsError(
                     f"Undo target changed externally: {change.target}"
                 )
@@ -335,5 +338,7 @@ def unique_destination(destination: Path, source: Path) -> Path:
 
 def record_change(source: Path | None, target: Path | None) -> FileChange:
     return FileChange(
-        source, target, tree_fingerprint(target) if target is not None else None
+        source,
+        target,
+        tree_fingerprint(target, hash_contents=True) if target is not None else None,
     )

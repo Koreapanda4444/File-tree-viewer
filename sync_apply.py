@@ -333,7 +333,7 @@ def apply_sync_plan(plan, *, cancelled=None, progress=None):
                     / "assets"
                     / f"{index:032x}"
                 )
-                copy_exclusive(source, payload)
+                copy_exclusive(source, payload, cancelled=cancelled)
                 if (
                     hash_payload(payload, cancelled=cancelled)
                     != operation.source["digest"]

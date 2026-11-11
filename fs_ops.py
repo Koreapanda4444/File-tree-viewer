@@ -19,6 +19,15 @@ def path_exists(path: Path) -> bool:
     return os.path.lexists(path)
 
 
+class OperationCancelled(RuntimeError):
+    pass
+
+
+def check_operation_cancelled(cancelled):
+    if cancelled is not None and cancelled.is_set():
+        raise OperationCancelled("Operation cancelled; any partial copy was preserved")
+
+
 def create_exclusive(target: Path, *, directory: bool) -> None:
     checked_boundary(target.parent, target, allow_leaf_link=False)
     if directory:
@@ -28,7 +37,8 @@ def create_exclusive(target: Path, *, directory: bool) -> None:
             pass
 
 
-def copy_exclusive(source: Path, target: Path) -> None:
+def copy_exclusive(source: Path, target: Path, *, cancelled=None) -> None:
+    check_operation_cancelled(cancelled)
     checked_boundary(source.parent, source)
     checked_boundary(target.parent, target, allow_leaf_link=False)
     expected = file_signature(source)
@@ -45,6 +55,7 @@ def copy_exclusive(source: Path, target: Path) -> None:
 
             def check_entries(directory, names):
                 for name in names:
+                    check_operation_cancelled(cancelled)
                     entry = (Path(directory) / name).lstat()
                     if is_link_stat(entry) and not stat.S_ISLNK(entry.st_mode):
                         raise ValueError(
@@ -52,11 +63,20 @@ def copy_exclusive(source: Path, target: Path) -> None:
                         )
                 return ()
 
+            def copy_file(source, destination):
+                copy_exclusive(Path(source), Path(destination), cancelled=cancelled)
+                return destination
+
             shutil.copytree(
-                source, target, symlinks=True, dirs_exist_ok=True, ignore=check_entries
+                source,
+                target,
+                symlinks=True,
+                dirs_exist_ok=True,
+                ignore=check_entries,
+                copy_function=copy_file,
             )
             require_unchanged(source, expected)
-        except (OSError, ValueError, shutil.Error) as error:
+        except (OSError, RuntimeError, ValueError, shutil.Error) as error:
             raise OSError(f"Incomplete copy preserved at {target}: {error}") from error
     elif stat.S_ISREG(details.st_mode):
         created = False
@@ -69,10 +89,15 @@ def copy_exclusive(source: Path, target: Path) -> None:
                     expected["st_ino"],
                 ):
                     raise FileExistsError("Source replaced while opening")
-                shutil.copyfileobj(reader, writer, length=1_024 * 1_024)
+                while True:
+                    check_operation_cancelled(cancelled)
+                    block = reader.read(1_024 * 1_024)
+                    if not block:
+                        break
+                    writer.write(block)
             require_unchanged(source, expected)
             shutil.copystat(source, target, follow_symlinks=False)
-        except (OSError, ValueError, shutil.Error) as error:
+        except (OSError, RuntimeError, ValueError, shutil.Error) as error:
             if created:
                 raise OSError(
                     f"Incomplete copy preserved at {target}: {error}"
@@ -83,8 +108,9 @@ def copy_exclusive(source: Path, target: Path) -> None:
 
 
 def move_no_replace(
-    source: Path, target: Path, *, allow_cross_device: bool = True
+    source: Path, target: Path, *, allow_cross_device: bool = True, cancelled=None
 ) -> None:
+    check_operation_cancelled(cancelled)
     checked_boundary(source.parent, source)
     checked_boundary(target.parent, target, allow_leaf_link=False)
     expected = file_signature(source)
@@ -123,8 +149,9 @@ def move_no_replace(
     except OSError as error:
         if error.errno != errno.EXDEV or not allow_cross_device:
             raise
-        copy_exclusive(source, target)
+        copy_exclusive(source, target, cancelled=cancelled)
         require_unchanged(source, expected)
+        check_operation_cancelled(cancelled)
         try:
             if source.is_dir() and not source.is_symlink():
                 shutil.rmtree(source)
@@ -199,10 +226,11 @@ def transaction_lock(root: Path):
             pass
 
 
-def tree_fingerprint(path: Path) -> str:
+def tree_fingerprint(path: Path, *, cancelled=None, hash_contents=False) -> str:
     digest = hashlib.sha256()
     stack = [(path, "")]
     while stack:
+        check_operation_cancelled(cancelled)
         item, relative = stack.pop()
         checked_boundary(path.parent, item)
         details = item.lstat()
@@ -219,13 +247,14 @@ def tree_fingerprint(path: Path) -> str:
                 children = sorted(iterator, key=lambda entry: entry.name, reverse=True)
             for child in children:
                 stack.append((Path(child.path), f"{relative}/{child.name}"))
-        elif not relative and stat.S_ISREG(details.st_mode):
+        elif stat.S_ISREG(details.st_mode) and (not relative or hash_contents):
             before = file_signature(item)
             with item.open("rb") as stream:
                 opened = os.fstat(stream.fileno())
                 if (opened.st_dev, opened.st_ino) != (details.st_dev, details.st_ino):
                     raise FileExistsError(f"Item changed during verification: {item}")
                 while block := stream.read(1_048_576):
+                    check_operation_cancelled(cancelled)
                     digest.update(block)
             require_unchanged(item, before)
     return digest.hexdigest()

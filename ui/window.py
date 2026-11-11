@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
 from file_metadata import format_timestamp, inspect_file_metadata
 from fs_ops import file_signature
 from operation_history import record_events
+from real.monitor import DirectoryMonitor
 from real.navigation import NavigationHistory
 from real.operations import (
     FileChange,
@@ -528,6 +529,45 @@ class RealExplorerPage(ExplorerPage):
         self.search_filters_button.clicked.connect(self.edit_search_options)
         self.search_tools = SearchTools(self)
         self.search_context = None
+        self.directory_monitor = DirectoryMonitor(self.model)
+        self.directory_monitor.changed.connect(self.external_directories_changed)
+        self.directory_monitor.warning.connect(self.status_changed)
+        self.pending_directory_changes = set()
+        self.external_refresh_timer = QTimer(self)
+        self.external_refresh_timer.setInterval(500)
+        self.external_refresh_timer.timeout.connect(self.refresh_external_changes)
+
+    def external_directories_changed(self, paths):
+        self.pending_directory_changes.update(paths)
+        self.external_refresh_timer.start()
+        self.refresh_external_changes()
+
+    def refresh_external_changes(self):
+        if self.close_requested:
+            self.external_refresh_timer.stop()
+            return
+        if (
+            self.search_is_running
+            or self.operation_is_running
+            or self.search_view_active
+        ):
+            return
+        # External refresh must never discard unsaved editor contents.
+        if self.preview.document().isModified() or self.preview_is_running:
+            return
+        self.external_refresh_timer.stop()
+        paths, self.pending_directory_changes = self.pending_directory_changes, set()
+        for path in sorted(paths, key=lambda item: len(item.parts), reverse=True):
+            index = self.model.index_for_path(path)
+            visible = self.browse_model.mapFromSource(index)
+            expanded = self.tree.isExpanded(visible)
+            self.model.refresh_directory(path)
+            if expanded:
+                self.tree.expand(
+                    self.browse_model.mapFromSource(self.model.index_for_path(path))
+                )
+        if paths:
+            self.status_changed.emit("External file changes refreshed")
 
     @property
     def search_is_running(self) -> bool:
@@ -1760,6 +1800,8 @@ class RealExplorerPage(ExplorerPage):
         self.quick_access.closed = False
 
     def finalize_close(self) -> None:
+        self.directory_monitor.clear()
+        self.external_refresh_timer.stop()
         self.file_commands.dispose()
         self.model.close()
         self.search_results.close()

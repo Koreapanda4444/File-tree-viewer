@@ -118,6 +118,26 @@ class FileTreeModel(QAbstractItemModel):
         if self.root is not None:
             self.set_root(self.root.path)
 
+    def index_for_path(self, path: Path) -> QModelIndex:
+        if self.root is None:
+            return QModelIndex()
+        stack = [self.root]
+        while stack:
+            node = stack.pop()
+            if node.path == path:
+                return self.createIndex(node.row, 0, node)
+            if node.is_directory and path.is_relative_to(node.path):
+                stack.extend(node.children)
+        return QModelIndex()
+
+    def refresh_directory(self, path: Path) -> None:
+        index = self.index_for_path(path)
+        node = self.node_from_index(index)
+        if node is None or not node.is_directory:
+            return
+        self.release_children(index)
+        self.fetchMore(index)
+
     def set_show_hidden(self, enabled: bool) -> None:
         if self.show_hidden == enabled:
             return

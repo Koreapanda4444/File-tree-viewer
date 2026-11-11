@@ -168,7 +168,7 @@ def save_sync_baseline(comparison):
                     )
         database.commit()
         database.close()
-        with temporary.open("rb") as stream:
+        with temporary.open("r+b") as stream:
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         sync_directory(path.parent)

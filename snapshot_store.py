@@ -82,7 +82,7 @@ def save_snapshot(
         database.commit()
         database.close()
         check_cancelled(cancelled)
-        with temporary.open("rb") as stream:
+        with temporary.open("r+b") as stream:
             os.fsync(stream.fileno())
         checked_boundary(destination.parent, destination, allow_leaf_link=False)
         os.replace(temporary, destination)

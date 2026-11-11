@@ -22,6 +22,7 @@ from plan_apply import ApplicationStatus, apply_plan, undo_application
 from planning import FilePlan
 from recovery import inspect_recovery
 from snapshot import SnapshotCancelled, build_snapshot
+from snapshot_store import load_snapshot, save_snapshot
 from sync_apply import apply_sync_plan, recover_sync_group
 from sync_plan import plan_bidirectional_sync, plan_one_way_sync
 from tree_export import (
@@ -155,6 +156,16 @@ class FilesystemChecks(unittest.TestCase):
         self.assertFalse(undone)
         self.assertTrue(errors)
         self.assertEqual(changed.read_text(), "external")
+
+    def test_snapshot_save_and_load(self):
+        self.file("saved/item.txt", "contents")
+        snapshot = self.snapshot()
+        destination = self.root / "snapshot.sqlite3"
+        save_snapshot(snapshot, destination, name="Snapshot")
+        loaded = load_snapshot(destination)
+        self.addCleanup(loaded.close)
+        self.assertEqual(loaded.entry_count, snapshot.entry_count)
+        self.assertEqual(loaded.entry("saved/item.txt").size, 8)
 
     def test_plan_apply_and_undo_preserve_journal(self):
         self.file("rename.txt", "rename")

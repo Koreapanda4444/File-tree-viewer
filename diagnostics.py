@@ -363,7 +363,7 @@ def hash_snapshot_file(
     except RuntimeError as error:
         raise FileChangedError("The path can no longer be resolved safely") from error
     try:
-        resolved.relative_to(root)
+        resolved.relative_to(root.resolve(strict=True))
     except ValueError as error:
         raise FileChangedError(
             "The path now resolves outside the Snapshot root"

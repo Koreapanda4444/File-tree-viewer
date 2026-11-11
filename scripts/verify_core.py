@@ -186,6 +186,7 @@ class FilesystemChecks(unittest.TestCase):
         comparison = self.comparison()
         plan = plan_one_way_sync(comparison)
         self.addCleanup(plan.close)
+        self.assertTrue(plan.can_apply, plan.issues)
         result = apply_sync_plan(plan)
         self.assertEqual(result.status, "completed")
         self.assertEqual((self.root / "right/item.txt").read_text(), "left")

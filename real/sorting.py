@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 from PySide6.QtGui import QColor
 
 from fs_paths import normalized_path
+from real.directory_index import entry_group, entry_key
 
 GROUP_ROLE = int(Qt.ItemDataRole.UserRole) + 8
 
@@ -29,48 +28,14 @@ class FileSortModel(QSortFilterProxyModel):
     def group(self, node):
         if node is None or node.parent is None or self.grouping == "None":
             return None
-        if self.grouping == "Type":
-            return (
-                "Folders"
-                if node.is_directory
-                else node.path.suffix.casefold() or "No extension"
-            )
-        node.load_details()
-        if self.grouping == "Date":
-            try:
-                return (
-                    datetime.fromtimestamp(node.modified).astimezone().strftime("%Y-%m")
-                    if node.modified is not None
-                    else "Unknown date"
-                )
-            except (ValueError, OverflowError, OSError):
-                return "Unknown date"
-        if node.is_directory:
-            return "Folders"
-        size = node.size
-        return (
-            "Unknown size"
-            if size is None
-            else "Empty"
-            if size == 0
-            else "Small (<1 MiB)"
-            if size < 1024**2
-            else "Medium (<100 MiB)"
-            if size < 100 * 1024**2
-            else "Large (>=100 MiB)"
-        )
+        if self.grouping in ("Date", "Size"):
+            node.load_details()
+        return entry_group(node, self.grouping)
 
     def key(self, node, column):
-        if column == 1:
-            return (
-                "" if node.is_directory else node.path.suffix.casefold(),
-                node.name.casefold(),
-            )
         if column in (2, 3):
             node.load_details()
-            value = node.size if column == 2 else node.modified
-            return (value if value is not None else -1, node.name.casefold())
-        return node.name.casefold()
+        return entry_key(node, column)
 
     def lessThan(self, left, right):
         a, b = self.node(left), self.node(right)

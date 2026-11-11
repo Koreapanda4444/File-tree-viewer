@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,18 +10,17 @@ from PySide6.QtCore import (
     QAbstractItemModel,
     QModelIndex,
     QObject,
-    QPersistentModelIndex,
     Qt,
-    QTimer,
+    QThreadPool,
     Signal,
+    Slot,
 )
 
-from fs_paths import is_hidden, is_reparse_point
+from real.directory_index import DirectoryIndexJob
 from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
 
 PAGE_SIZE = 256
-SCAN_BATCH_SIZE = 1_024
 INVALID_INDEX = QModelIndex()
 
 
@@ -35,7 +33,8 @@ class FileNode:
     is_link: bool = False
     row: int = 0
     children: list[FileNode] = field(default_factory=list)
-    iterator: Iterator[os.DirEntry[str]] | None = None
+    entries: list | None = None
+    job: DirectoryIndexJob | None = None
     fully_loaded: bool = False
     details_loaded: bool = False
     size: int | None = None
@@ -57,15 +56,15 @@ class FileNode:
         self.details_loaded = True
 
     def close_iterator(self) -> None:
-        iterator = self.iterator
-        self.iterator = None
-        close = getattr(iterator, "close", None)
-        if callable(close):
-            close()
+        if self.job is not None:
+            self.job.cancelled.set()
+            self.job = None
+        self.entries = None
 
 
 class FileTreeModel(QAbstractItemModel):
     directory_error = Signal(str)
+    directory_loaded = Signal(object)
     headers = ("Name", "Type", "Size", "Modified")
 
     def __init__(
@@ -81,6 +80,9 @@ class FileTreeModel(QAbstractItemModel):
         self.show_hidden = False
         self.root: FileNode | None = None
         self.icons = FileIconCache()
+        self.index_pool = QThreadPool(self)
+        self.index_pool.setMaxThreadCount(2)
+        self.sort_options = (0, False, "None", True)
 
     @property
     def root_path(self) -> Path | None:
@@ -245,86 +247,64 @@ class FileTreeModel(QAbstractItemModel):
         ):
             return
 
-        if node.iterator is None:
-            try:
-                node.iterator = os.scandir(node.path)
-            except OSError as error:
-                node.fully_loaded = True
-                self.directory_error.emit(f"Cannot read {node.path}: {error}")
-                return
-
-        children: list[FileNode] = []
-        scanned = 0
-        assert node.iterator is not None
-
-        while len(children) < self.page_size and scanned < SCAN_BATCH_SIZE:
-            try:
-                entry = next(node.iterator)
-            except StopIteration:
-                node.close_iterator()
-                node.fully_loaded = True
-                break
-            except OSError as error:
-                node.close_iterator()
-                node.fully_loaded = True
-                self.directory_error.emit(f"Cannot finish reading {node.path}: {error}")
-                break
-
-            scanned += 1
-            if not self.show_hidden and is_hidden(entry):
-                continue
-
-            try:
-                is_directory = entry.is_dir(follow_symlinks=False)
-            except OSError:
-                continue
-            is_link = is_reparse_point(entry)
-            if is_link:
-                is_directory = False
-
-            children.append(
-                FileNode(
-                    path=Path(entry.path),
-                    name=entry.name,
-                    is_directory=is_directory,
-                    parent=node,
-                    is_link=is_link,
-                )
+        if node.entries is None:
+            node.fetch_pending = True
+            job = DirectoryIndexJob(
+                node, node.load_generation, self.show_hidden, self.sort_options
             )
-
-        if not children:
-            if not node.fully_loaded:
-                node.fetch_pending = True
-                generation = node.load_generation
-                persistent = QPersistentModelIndex(parent)
-                QTimer.singleShot(
-                    0,
-                    lambda: self._continue_fetch(persistent, generation),
-                )
+            node.job = job
+            job.signals.finished.connect(self._index_finished)
+            self.index_pool.start(job)
             return
 
-        first = len(node.children)
-        last = first + len(children) - 1
-        self.beginInsertRows(parent, first, last)
-        for row, child in enumerate(children, start=first):
-            child.row = row
-            node.children.append(child)
-        self.endInsertRows()
+        self._publish_page(node, parent)
 
-    def _continue_fetch(
-        self,
-        parent: QPersistentModelIndex,
-        generation: int,
-    ) -> None:
-        if not parent.isValid():
+    @Slot(object, int, object, str)
+    def _index_finished(self, node, generation, entries, error):
+        if node.load_generation != generation or node.job is None:
             return
-        index = QModelIndex(parent)
-        node = self.node_from_index(index)
-        if node is None or node.load_generation != generation:
+        index = self.index_for_path(node.path)
+        if self.node_from_index(index) is not node:
             return
+        node.job = None
         node.fetch_pending = False
-        if self.canFetchMore(index):
-            self.fetchMore(index)
+        if entries is None:
+            return
+        node.entries = entries
+        if error:
+            self.directory_error.emit(f"Cannot read {node.path}: {error}")
+        self._publish_page(node, index)
+        self.directory_loaded.emit(node.path)
+
+    def _publish_page(self, node, parent):
+        first = len(node.children)
+        entries = node.entries[first : first + self.page_size]
+        if entries:
+            self.beginInsertRows(parent, first, first + len(entries) - 1)
+            for row, entry in enumerate(entries, first):
+                node.children.append(
+                    FileNode(
+                        path=entry.path,
+                        name=entry.name,
+                        is_directory=entry.is_directory,
+                        parent=node,
+                        is_link=entry.is_link,
+                        row=row,
+                        size=entry.size,
+                        modified=entry.modified,
+                        details_loaded=entry.details_loaded,
+                    )
+                )
+            self.endInsertRows()
+        node.fully_loaded = len(node.children) == len(node.entries)
+        if node.fully_loaded:
+            node.entries = []
+
+    def set_sort_options(self, column, descending, grouping, folders_first):
+        options = (column, descending, grouping, folders_first)
+        if options != self.sort_options:
+            self.sort_options = options
+            self.refresh()
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         node = self.node_from_index(index)

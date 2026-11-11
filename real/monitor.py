@@ -26,6 +26,7 @@ class DirectoryMonitor(QObject):
         self.watcher.directoryChanged.connect(self.queue)
         model.modelAboutToBeReset.connect(self.clear)
         model.modelReset.connect(self.sync)
+        model.directory_loaded.connect(self.sync)
         model.rowsInserted.connect(self.sync)
         model.rowsRemoved.connect(self.sync)
 

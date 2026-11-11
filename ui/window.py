@@ -75,6 +75,7 @@ from ui.address import AddressBar
 from ui.appearance import install_appearance
 from ui.command_palette import install_command_palette
 from ui.completion import PathCompletion
+from ui.explorer_state import ExplorerState
 from ui.feedback import TaskMonitor, show_error
 from ui.file_commands import FileCommands
 from ui.file_compare import FileComparisonDialog
@@ -424,7 +425,7 @@ class RealExplorerPage(ExplorerPage):
         self.group_field = QComboBox()
         self.group_field.addItems(("None", "Type", "Date", "Size"))
         self.group_field.setToolTip(
-            "Group loaded items; scroll to load additional pages"
+            "Group all directory entries before loading display pages"
         )
         self.folders_first = QCheckBox("Folders first")
         self.folders_first.setChecked(True)
@@ -529,6 +530,7 @@ class RealExplorerPage(ExplorerPage):
         self.search_filters_button.clicked.connect(self.edit_search_options)
         self.search_tools = SearchTools(self)
         self.search_context = None
+        self.explorer_state = ExplorerState(self)
         self.directory_monitor = DirectoryMonitor(self.model)
         self.directory_monitor.changed.connect(self.external_directories_changed)
         self.directory_monitor.warning.connect(self.status_changed)
@@ -557,6 +559,7 @@ class RealExplorerPage(ExplorerPage):
             return
         self.external_refresh_timer.stop()
         paths, self.pending_directory_changes = self.pending_directory_changes, set()
+        self.explorer_state.capture()
         for path in sorted(paths, key=lambda item: len(item.parts), reverse=True):
             index = self.model.index_for_path(path)
             visible = self.browse_model.mapFromSource(index)
@@ -691,6 +694,13 @@ class RealExplorerPage(ExplorerPage):
             if self.sort_order.currentIndex()
             else Qt.SortOrder.AscendingOrder
         )
+        self.model.set_sort_options(
+            self.sort_field.currentIndex(),
+            bool(self.sort_order.currentIndex()),
+            self.group_field.currentText(),
+            self.folders_first.isChecked(),
+        )
+        self._expand_root()
         self.browse_model.sort(self.sort_field.currentIndex(), order)
         self.folder_view.header().setSortIndicator(
             self.sort_field.currentIndex(), order
@@ -779,6 +789,7 @@ class RealExplorerPage(ExplorerPage):
             return
         if not self._confirm_editor_transition():
             return
+        self.explorer_state.capture()
         self.clear_search()
         try:
             self.model.refresh()
@@ -1475,6 +1486,9 @@ class RealExplorerPage(ExplorerPage):
             ]
         )
         self.undo_stack.append(record)
+        self.explorer_state.select_after_refresh(
+            [change.target for change in record.changes if change.target is not None]
+        )
         self._refresh_after_operation()
         self.status_changed.emit(f"Created {record.changes[0].target}")
 
@@ -1525,6 +1539,9 @@ class RealExplorerPage(ExplorerPage):
             ]
         )
         self.undo_stack.append(record)
+        self.explorer_state.select_after_refresh(
+            [change.target for change in record.changes if change.target is not None]
+        )
         self._refresh_after_operation()
         self.status_changed.emit(f"Renamed to {record.changes[0].target.name}")
 
@@ -1685,6 +1702,14 @@ class RealExplorerPage(ExplorerPage):
                 self.undo_stack.pop()
 
         if changes:
+            self.explorer_state.select_after_refresh(
+                [
+                    change.source if action == "undo" else change.target
+                    for change in changes
+                    if (change.source if action == "undo" else change.target)
+                    is not None
+                ]
+            )
             self._refresh_after_operation()
         self.transfer_completed.emit(action, changes)
 
@@ -1710,6 +1735,7 @@ class RealExplorerPage(ExplorerPage):
         self.update_action_buttons()
 
     def _refresh_after_operation(self) -> None:
+        self.explorer_state.capture()
         self.search_view_active = False
         self.search_input.clear()
         self.search_results.clear()
@@ -1802,6 +1828,7 @@ class RealExplorerPage(ExplorerPage):
     def finalize_close(self) -> None:
         self.directory_monitor.clear()
         self.external_refresh_timer.stop()
+        self.explorer_state.stop()
         self.file_commands.dispose()
         self.model.close()
         self.search_results.close()
@@ -2591,6 +2618,9 @@ class MainWindow(QMainWindow):
                 )
             )
         self.statusBar().showMessage("Ready")
+        QTimer.singleShot(
+            0, lambda: self.real_page.explorer_state.load_session(self.settings)
+        )
 
     def show_task_error(self, message: str) -> None:
         if self.isEnabled():
@@ -2636,6 +2666,7 @@ class MainWindow(QMainWindow):
         dialog.deleteLater()
 
     def save_preferences(self) -> None:
+        self.real_page.explorer_state.save_session(self.settings)
         self.preferences = replace(
             self.preferences, show_hidden=self.real_page.show_hidden.isChecked()
         )

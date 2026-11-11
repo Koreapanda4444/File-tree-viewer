@@ -107,6 +107,7 @@ from ui.search_tools import SearchTools
 from ui.staging import StagingController
 from ui.tasks import prepare_worker_thread
 from ui.theme import ThemeManager
+from ui.tree_export import TreeExportDialog
 from ui.widgets import FlowLayout
 from ui.widgets import PlainLabel as QLabel
 from virtual.workspace import (
@@ -377,6 +378,8 @@ class ExplorerPage(QWidget):
             row.addWidget(self.operation_results_button)
             self.compare_files_button = QPushButton("Compare Files")
             row.addWidget(self.compare_files_button)
+        self.tree_export_button = QPushButton("Export Tree…")
+        row.addWidget(self.tree_export_button)
         self.delete_button.setProperty("danger", True)
         return row
 
@@ -2617,6 +2620,9 @@ class MainWindow(QMainWindow):
         workspace_menu.addSeparator()
         workspace_menu.addAction("Import Real Root into Plan", self.import_real_root)
         workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
+        workspace_menu.addAction("Export Folder Tree…", self.export_folder_tree)
+        self.real_page.tree_export_button.clicked.connect(self.export_folder_tree)
+        self.virtual_page.tree_export_button.clicked.connect(self.export_folder_tree)
         workspace_menu.addAction("Compare Folders…", self.compare_folders_dialog)
         workspace_menu.addAction("Analyze Disk Usage…", self.analyze_disk_usage)
         workspace_menu.addAction("Operation History…", self.show_history)
@@ -2658,6 +2664,35 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(
             0, lambda: self.real_page.explorer_state.load_session(self.settings)
         )
+
+    def export_folder_tree(self):
+        page = self.tabs.currentWidget()
+        if page is self.real_page:
+            if page.operation_is_running:
+                return
+            source, kind = page._selected_directory(), "real"
+        elif page is self.virtual_page:
+            if page.task_is_running:
+                return
+            source, kind = page._selected_directory(), "virtual"
+        else:
+            if any(
+                getattr(page, name)
+                for name in (
+                    "scan_is_running",
+                    "apply_is_running",
+                    "undo_is_running",
+                    "plan_io_is_running",
+                )
+            ):
+                return
+            source, kind = page.snapshot, "snapshot"
+        if source is None:
+            self.statusBar().showMessage("Select a folder or load a snapshot first")
+            return
+        dialog = TreeExportDialog(source, kind, self)
+        dialog.exec()
+        dialog.deleteLater()
 
     def show_task_error(self, message: str) -> None:
         if self.isEnabled():

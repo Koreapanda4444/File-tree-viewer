@@ -10,7 +10,9 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
+from branding import set_windows_application_id
 from ui.window import MainWindow
+from version import __version__
 
 
 def main() -> int:
@@ -26,7 +28,9 @@ def main() -> int:
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
+    set_windows_application_id()
     app = QApplication([sys.argv[0], *qt_arguments])
+    app.setApplicationVersion(__version__)
     app.setApplicationName("FileTreeViewer")
     app.setOrganizationName("FileTreeViewer")
     if options.smoke_test:

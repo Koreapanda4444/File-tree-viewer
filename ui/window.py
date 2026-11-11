@@ -111,6 +111,7 @@ from ui.theme import ThemeManager
 from ui.tree_export import TreeExportDialog
 from ui.widgets import FlowLayout
 from ui.widgets import PlainLabel as QLabel
+from version import __version__
 from virtual.workspace import (
     VirtualNode,
     VirtualTaskWorker,
@@ -2635,7 +2636,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         set_language(Preferences.load(application_settings()).language)
         self.appearance = install_appearance()
-        self.setWindowTitle(tr("File Tree Viewer"))
+        self.setWindowTitle(tr("File Tree Viewer") + " " + __version__)
         self.auxiliary_close_pending = False
         self.command_palette_dialog = None
         self.recovery_history_dialog = None
@@ -2732,9 +2733,21 @@ class MainWindow(QMainWindow):
                     p, message, completed, total
                 )
             )
+        help_menu = self.menuBar().addMenu(tr("Help"))
+        help_menu.addAction(tr("About File Tree Viewer"), self.show_about)
         self.statusBar().showMessage(tr("Ready"))
         QTimer.singleShot(
             0, lambda: self.real_page.explorer_state.load_session(self.settings)
+        )
+
+    def show_about(self):
+        QMessageBox.about(
+            self,
+            tr("About File Tree Viewer"),
+            tr(
+                "File Tree Viewer {version}\n\nExplore actual files, design virtual folders and review file changes before applying them.\nWindows portable edition.",
+                version=__version__,
+            ),
         )
 
     def export_folder_tree(self):

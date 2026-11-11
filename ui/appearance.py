@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QStyle,
 )
 
+from branding import application_icon
 from ui.i18n import source_text
 
 ICONS = {
@@ -70,7 +71,5 @@ def install_appearance():
         controller = AppearanceController(app)
         app.file_tree_appearance = controller
         app.installEventFilter(controller)
-        app.setWindowIcon(
-            app.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
-        )
+        app.setWindowIcon(application_icon())
     return app.file_tree_appearance

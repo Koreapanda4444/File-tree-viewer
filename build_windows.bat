@@ -31,6 +31,8 @@ if errorlevel 1 goto failed
   --onefile ^
   --windowed ^
   --name FileTreeViewer ^
+  --icon assets/app-icon.ico ^
+  --add-data "assets/app-icon.png:assets" ^
   --add-data "ui/translations:ui/translations" ^
   --collect-submodules send2trash ^
   --distpath release ^

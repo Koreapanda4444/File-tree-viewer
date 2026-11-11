@@ -48,3 +48,6 @@ jobs:
 
       - name: Verify asynchronous explorer and tree export
         run: python scripts/verify_gui.py
+
+      - name: Verify portable data and migration
+        run: python scripts/verify_portable.py

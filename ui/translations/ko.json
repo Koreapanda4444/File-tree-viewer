@@ -633,5 +633,13 @@
   "{action}: {done:,}/{total:,} items reviewed · {counts} · {elapsed:.1f}s": "{action}: {done:,}/{total:,}개 확인 · {counts} · {elapsed:.1f}초",
   "Help": "도움말",
   "About File Tree Viewer": "File Tree Viewer 정보",
-  "File Tree Viewer {version}\n\nExplore actual files, design virtual folders and review file changes before applying them.\nWindows portable edition.": "File Tree Viewer {version}\n\n실제 파일을 탐색하고 가상 폴더를 설계하며, 적용 전에 변경 사항을 검토할 수 있습니다.\nWindows 포터블 버전."
+  "File Tree Viewer {version}\n\nExplore actual files, design virtual folders and review file changes before applying them.\nWindows portable edition.": "File Tree Viewer {version}\n\n실제 파일을 탐색하고 가상 폴더를 설계하며, 적용 전에 변경 사항을 검토할 수 있습니다.\nWindows 포터블 버전.",
+  "Import Previous Data": "이전 데이터 가져오기",
+  "Import Previous Data…": "이전 데이터 가져오기…",
+  "No previous settings or history were found.": "이전 설정이나 작업 기록을 찾지 못했습니다.",
+  "Copy previous settings and operation history into this portable folder? Existing portable values and history will be preserved. Original data and transaction recovery files will not be removed.": "이전 설정과 작업 기록을 현재 포터블 폴더로 복사할까요? 현재 포터블 설정과 기록은 덮어쓰지 않습니다. 원본 데이터와 트랜잭션 복구 파일도 유지합니다.",
+  "Data Import Failed": "데이터 가져오기 실패",
+  "Previous data was preserved. Check permissions and try again.": "이전 데이터는 보존했습니다. 쓰기 권한을 확인한 뒤 다시 시도하세요.",
+  "Data Import Complete": "데이터 가져오기 완료",
+  "Settings were imported. Restart the application to use imported preferences. Existing portable history was preserved unless a new history database was copied.": "설정을 가져왔습니다. 가져온 환경설정은 프로그램을 다시 시작하면 적용됩니다. 기존 포터블 기록은 유지하며, 기록 파일이 없을 때만 이전 기록을 복사했습니다."
 }

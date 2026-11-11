@@ -80,6 +80,8 @@ class FileTreeModel(QAbstractItemModel):
         self.page_size = page_size
         self.show_hidden = False
         self.root: FileNode | None = None
+        self.nodes_by_path = {}
+        self.directory_nodes = {}
         self.icons = FileIconCache()
         self.index_pool = QThreadPool(self)
         self.index_pool.setMaxThreadCount(2)
@@ -105,6 +107,8 @@ class FileTreeModel(QAbstractItemModel):
             is_directory=True,
             parent=None,
         )
+        self.nodes_by_path[root_path] = self.root
+        self.directory_nodes[root_path] = self.root
         self.endResetModel()
 
     def clear(self) -> None:
@@ -122,16 +126,10 @@ class FileTreeModel(QAbstractItemModel):
             self.set_root(self.root.path)
 
     def index_for_path(self, path: Path) -> QModelIndex:
-        if self.root is None:
-            return QModelIndex()
-        stack = [self.root]
-        while stack:
-            node = stack.pop()
-            if node.path == path:
-                return self.createIndex(node.row, 0, node)
-            if node.is_directory and path.is_relative_to(node.path):
-                stack.extend(node.children)
-        return QModelIndex()
+        node = self.nodes_by_path.get(path)
+        return (
+            self.createIndex(node.row, 0, node) if node is not None else QModelIndex()
+        )
 
     def refresh_directory(self, path: Path) -> None:
         index = self.index_for_path(path)
@@ -283,19 +281,21 @@ class FileTreeModel(QAbstractItemModel):
         if entries:
             self.beginInsertRows(parent, first, first + len(entries) - 1)
             for row, entry in enumerate(entries, first):
-                node.children.append(
-                    FileNode(
-                        path=entry.path,
-                        name=entry.name,
-                        is_directory=entry.is_directory,
-                        parent=node,
-                        is_link=entry.is_link,
-                        row=row,
-                        size=entry.size,
-                        modified=entry.modified,
-                        details_loaded=entry.details_loaded,
-                    )
+                child = FileNode(
+                    path=entry.path,
+                    name=entry.name,
+                    is_directory=entry.is_directory,
+                    parent=node,
+                    is_link=entry.is_link,
+                    row=row,
+                    size=entry.size,
+                    modified=entry.modified,
+                    details_loaded=entry.details_loaded,
                 )
+                node.children.append(child)
+                self.nodes_by_path[child.path] = child
+                if child.is_directory:
+                    self.directory_nodes[child.path] = child
             self.endInsertRows()
         node.fully_loaded = len(node.children) == len(node.entries)
         if node.fully_loaded:
@@ -371,12 +371,13 @@ class FileTreeModel(QAbstractItemModel):
         if self.root is not None:
             self._close_subtree(self.root)
 
-    @staticmethod
-    def _close_subtree(root: FileNode) -> None:
+    def _close_subtree(self, root: FileNode) -> None:
         stack = [root]
         while stack:
             node = stack.pop()
             node.close_iterator()
+            self.nodes_by_path.pop(node.path, None)
+            self.directory_nodes.pop(node.path, None)
             stack.extend(node.children)
 
 

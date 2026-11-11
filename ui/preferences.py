@@ -13,17 +13,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from application_paths import settings_path
 from planning import ConflictPolicy
 from ui.i18n import add_choice, add_choices, choice_text, set_choice_text, tr
 
 
 def application_settings() -> QSettings:
-    return QSettings(
-        QSettings.defaultFormat(),
-        QSettings.Scope.UserScope,
-        "FileTreeViewer",
-        "FileTreeViewer",
-    )
+    settings = QSettings(str(settings_path()), QSettings.Format.IniFormat)
+    settings.setAtomicSyncRequired(True)
+    settings.setFallbacksEnabled(False)
+    return settings
 
 
 def bounded_integer(value, default: int, minimum: int, maximum: int) -> int:

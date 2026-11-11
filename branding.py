@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import ctypes
 import os
-import sys
-from pathlib import Path
 
 from PySide6.QtGui import QIcon
 
+from application_paths import resource_path
+
 
 def application_icon():
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return QIcon(str(base / "assets" / "app-icon.png"))
+    return QIcon(str(resource_path("assets", "app-icon.png")))
 
 
 def set_windows_application_id():

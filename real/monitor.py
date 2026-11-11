@@ -33,13 +33,11 @@ class DirectoryMonitor(QObject):
     def directories(self):
         if self.model.root is None:
             return set()
-        result, stack = {self.model.root.path}, [self.model.root]
-        while stack:
-            node = stack.pop()
-            if node.is_directory and (node.children or node.fully_loaded):
-                result.add(node.path)
-                stack.extend(node.children)
-        return result
+        return {self.model.root.path} | {
+            node.path
+            for node in self.model.directory_nodes.values()
+            if node.children or node.fully_loaded
+        }
 
     def sync(self, *args):
         desired = self.directories()

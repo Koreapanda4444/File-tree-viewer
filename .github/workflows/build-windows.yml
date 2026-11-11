@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -14,7 +13,6 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 20
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -28,44 +26,80 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install "pyinstaller>=6.14,<7"
+          python -m pip install -r requirements.txt "pyinstaller>=6.14,<7" "ruff==0.16.6"
 
-      - name: Check application startup
-        run: python main.py --smoke-test
+      - name: Verify source and data safety
+        run: |
+          ruff format --check .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ruff check .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verify_core.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verify_portable.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verify_gui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python main.py --smoke-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build executable
-        run: >-
-          python -m PyInstaller
-          --noconfirm
-          --clean
-          --onefile
-          --windowed
-          --name FileTreeViewer
-          --icon assets/app-icon.ico
-          --add-data "assets/app-icon.png:assets"
-          --add-data "ui/translations:ui/translations"
-          --collect-submodules send2trash
-          main.py
+      - name: Build portable application
+        run: python scripts/build_windows.py
 
-      - name: Verify executable startup and checksum
+      - name: Verify executable and portable relocation
+        run: python scripts/verify_windows.py dist/FileTreeViewer
+
+      - name: Package ZIP and checksum
+        run: python scripts/package_windows.py dist/FileTreeViewer
+
+      - name: Verify extracted release ZIP
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath '.\dist\FileTreeViewer.exe' -ArgumentList '--smoke-test' -PassThru
-          if (-not $process.WaitForExit(60000)) {
-            Stop-Process -Id $process.Id -Force
-            throw 'Executable startup verification timed out'
-          }
-          if ($process.ExitCode -ne 0) { throw "Executable exited with $($process.ExitCode)" }
-          $hash = (Get-FileHash 'dist/FileTreeViewer.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  FileTreeViewer.exe" | Set-Content 'dist/SHA256.txt' -Encoding ascii
+          $archive = (Get-ChildItem release/FileTreeViewer-*-windows-x64.zip).FullName
+          python scripts/verify_windows.py $archive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Upload executable
+      - name: Upload portable distribution
         uses: actions/upload-artifact@v7
         with:
           name: FileTreeViewer-windows-x64
           path: |
-            dist/FileTreeViewer.exe
-            dist/SHA256.txt
+            release/FileTreeViewer-*-windows-x64.zip
+            release/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish 1.0.0')
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out verified source
+        uses: actions/checkout@v7
+
+      - name: Download verified distribution
+        uses: actions/download-artifact@v7
+        with:
+          name: FileTreeViewer-windows-x64
+          path: release
+
+      - name: Publish first official release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = python -c "from version import __version__; print(__version__)"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read application version' }
+          $tag = "v$version"
+          $head = gh api "repos/$env:GITHUB_REPOSITORY/commits/main" --jq '.sha'
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:GITHUB_SHA) { throw 'main changed after this build; refusing release' }
+          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'This release already exists; refusing overwrite' }
+          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'This tag already exists; refusing overwrite' }
+          $archive = (Get-ChildItem release/FileTreeViewer-*-windows-x64.zip).FullName
+          gh release create $tag $archive release/SHA256SUMS --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "File Tree Viewer $version" --notes-file docs/RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

@@ -78,6 +78,7 @@ from ui.appearance import install_appearance
 from ui.chrome import WorkspaceHeader
 from ui.command_palette import install_command_palette
 from ui.completion import PathCompletion
+from ui.data_migration import import_previous_data
 from ui.explorer_state import ExplorerState
 from ui.feedback import TaskMonitor, show_error
 from ui.file_commands import FileCommands
@@ -2722,6 +2723,9 @@ class MainWindow(QMainWindow):
         self.panel_manager = PanelManager(self, self.settings)
         settings_menu = self.menuBar().addMenu(tr("Settings"))
         settings_menu.addAction(tr("Preferences..."), self.edit_preferences)
+        settings_menu.addAction(
+            tr("Import Previous Data…"), lambda: import_previous_data(self)
+        )
         self.command_action = install_command_palette(self)
         settings_menu.addAction(self.command_action)
         self.task_monitor = TaskMonitor(self)

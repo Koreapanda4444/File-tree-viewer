@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths
+from application_paths import history_path
 
 
 class HistoryStore:
@@ -25,16 +25,7 @@ class HistoryStore:
     )
 
     def __init__(self, path=None):
-        self.path = (
-            Path(path)
-            if path is not None
-            else Path(
-                QStandardPaths.writableLocation(
-                    QStandardPaths.StandardLocation.AppLocalDataLocation
-                )
-            )
-            / "operation-history.sqlite3"
-        )
+        self.path = Path(path) if path is not None else history_path()
 
     def connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, QSettings
 from PySide6.QtWidgets import QApplication
 
+from application_paths import configure_data_directory
 from real.search import SearchWorker
 from real.tree import FileTreeModel
 from ui.tree_export import TreeExportDialog
@@ -33,6 +34,7 @@ def wait_for(app, condition, timeout=15):
 def main():
     app = QApplication([])
     with tempfile.TemporaryDirectory(prefix="ftv-gui-check-") as temporary:
+        configure_data_directory(Path(temporary) / "data")
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
         QSettings.setPath(
             QSettings.Format.IniFormat, QSettings.Scope.UserScope, temporary
@@ -123,6 +125,7 @@ def main():
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         app.processEvents()
         print("PASS: tree preview worker and clipboard")
+    configure_data_directory()
     return 0
 
 

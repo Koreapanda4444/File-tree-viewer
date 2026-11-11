@@ -39,6 +39,7 @@ def main():
         )
         root = Path(temporary) / "files"
         root.mkdir()
+        root = root.resolve(strict=True)
         for number in range(1024):
             (root / f"{1023 - number:05d}.txt").write_bytes(b"x" * (number % 31))
         model = FileTreeModel(page_size=19)

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QMenu
 
 from fs_ops import require_unchanged
 from real.file_clipboard import read_file_mime
+from ui.i18n import tr
 
 
 class PlanDropController(QObject):
@@ -55,11 +56,11 @@ class PlanDropController(QObject):
     def choose_operation(self, viewport, point, paths):
         menu = QMenu(self.staging.window)
         for action in ("copy", "move", "rename", "delete"):
-            item = menu.addAction(f"Stage {action.title()}…")
+            item = menu.addAction(tr("Stage {value0}…", value0=action.title()))
             item.setData(action)
             item.setEnabled(action != "rename" or len(paths) == 1)
         menu.addSeparator()
-        menu.addAction("Cancel")
+        menu.addAction(tr("Cancel"))
         selected = menu.exec(viewport.mapToGlobal(point))
         operation = selected.data() if selected is not None else None
         menu.deleteLater()

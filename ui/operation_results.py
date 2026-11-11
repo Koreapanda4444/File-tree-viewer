@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ui.i18n import add_choices, choice_text, tr
 from ui.widgets import PlainLabel
 
 INVALID_INDEX = QModelIndex()
@@ -60,7 +61,7 @@ class OperationResultsModel(QAbstractTableModel):
 
     def summary(self):
         counts = ", ".join(
-            f"{self.counts[status]:,} {status}"
+            f"{self.counts[status]:,} {tr(status)}"
             for status in ("success", "failed", "skipped", "cancelled")
         )
         elapsed = (
@@ -68,7 +69,14 @@ class OperationResultsModel(QAbstractTableModel):
             if self.elapsed is not None
             else time.monotonic() - self.started
         )
-        return f"{self.action.title()}: {len(self.items):,}/{self.total:,} items reviewed · {counts} · {elapsed:.1f}s"
+        return tr(
+            "{action}: {done:,}/{total:,} items reviewed · {counts} · {elapsed:.1f}s",
+            action=tr(self.action.title()),
+            done=len(self.items),
+            total=self.total,
+            counts=counts,
+            elapsed=elapsed,
+        )
 
     def rowCount(self, parent=INVALID_INDEX):
         return 0 if parent.isValid() else len(self.items)
@@ -80,9 +88,11 @@ class OperationResultsModel(QAbstractTableModel):
         if not index.isValid() or not 0 <= index.row() < len(self.items):
             return None
         item = self.items[index.row()]
+        if role == Qt.ItemDataRole.UserRole and index.column() == 0:
+            return item.status
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return (
-                item.status,
+                tr(item.status),
                 str(item.source or ""),
                 str(item.target or ""),
                 item.message,
@@ -95,7 +105,7 @@ class OperationResultsModel(QAbstractTableModel):
             and orientation == Qt.Orientation.Horizontal
             and 0 <= section < len(self.headers)
         ):
-            return self.headers[section]
+            return tr(self.headers[section])
         return None
 
 
@@ -103,22 +113,24 @@ class OperationResultsDialog(QDialog):
     def __init__(self, page):
         super().__init__(page)
         self.page = page
-        self.setWindowTitle("File Operation Results")
+        self.setWindowTitle(tr("File Operation Results"))
         self.resize(1100, 650)
         layout = QVBoxLayout(self)
         self.summary = PlainLabel()
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         note = PlainLabel(
-            "Cancellation takes effect between selected items. Completed copies and moves can be undone. Failed partial copies are preserved; review their target paths."
+            tr(
+                "Cancellation takes effect between selected items. Completed copies and moves can be undone. Failed partial copies are preserved; review their target paths."
+            )
         )
         note.setWordWrap(True)
         layout.addWidget(note)
         row = QHBoxLayout()
         self.filter = QComboBox()
-        self.filter.addItems(("All", "success", "failed", "skipped", "cancelled"))
+        add_choices(self.filter, ("All", "success", "failed", "skipped", "cancelled"))
         row.addWidget(self.filter)
-        self.cancel = QPushButton("Cancel After Current Item")
+        self.cancel = QPushButton(tr("Cancel After Current Item"))
         self.cancel.clicked.connect(self.cancel_operation)
         row.addWidget(self.cancel)
         row.addStretch(1)
@@ -126,8 +138,11 @@ class OperationResultsDialog(QDialog):
         self.proxy = QSortFilterProxyModel(self)
         self.proxy.setSourceModel(page.operation_results)
         self.proxy.setFilterKeyColumn(0)
-        self.filter.currentTextChanged.connect(
-            lambda text: self.proxy.setFilterFixedString("" if text == "All" else text)
+        self.proxy.setFilterRole(Qt.ItemDataRole.UserRole)
+        self.filter.currentIndexChanged.connect(
+            lambda: self.proxy.setFilterFixedString(
+                "" if choice_text(self.filter) == "All" else choice_text(self.filter)
+            )
         )
         self.table = QTableView()
         self.table.setModel(self.proxy)
@@ -156,8 +171,10 @@ class OperationResultsDialog(QDialog):
         if worker is not None:
             worker.cancel()
             self.cancelling = True
-            self.cancel.setText("Cancellation requested…")
+            self.cancel.setText(tr("Cancellation requested…"))
             self.page.status_changed.emit(
-                "Finishing the current item safely; remaining items will be cancelled"
+                tr(
+                    "Finishing the current item safely; remaining items will be cancelled"
+                )
             )
             self.refresh()

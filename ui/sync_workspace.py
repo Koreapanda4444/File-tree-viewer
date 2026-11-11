@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ui.i18n import tr
 from ui.sync import SyncReviewDialog
 from ui.widgets import PlainLabel
 
@@ -22,13 +23,13 @@ class SyncWorkspace(QGroupBox):
         self.plan = self.result = self.dialog = None
         layout = QVBoxLayout(self)
         self.summary = PlainLabel(
-            "Compare folders to stage a separate synchronization plan here."
+            tr("Compare folders to stage a separate synchronization plan here.")
         )
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         controls = QHBoxLayout()
-        self.review_button = QPushButton("Review Synchronization…")
-        self.discard_button = QPushButton("Discard Synchronization")
+        self.review_button = QPushButton(tr("Review Synchronization…"))
+        self.discard_button = QPushButton(tr("Discard Synchronization"))
         self.review_button.clicked.connect(self.review)
         self.discard_button.clicked.connect(self.discard)
         controls.addWidget(self.review_button)
@@ -45,12 +46,19 @@ class SyncWorkspace(QGroupBox):
                 f"; execution: {self.result.status}" if self.result else "; not applied"
             )
             self.summary.setText(
-                f"{self.plan.direction}: {self.plan.count:,} changes, {self.plan.issue_count:,} blocking issues{status}\n"
-                f"{self.plan.roots[0]}\n{self.plan.roots[1]}"
+                tr(
+                    "{value0}: {value1:,} changes, {value2:,} blocking issues{value3}\n{value4}\n{value5}",
+                    value0=self.plan.direction,
+                    value1=self.plan.count,
+                    value2=self.plan.issue_count,
+                    value3=status,
+                    value4=self.plan.roots[0],
+                    value5=self.plan.roots[1],
+                )
             )
         else:
             self.summary.setText(
-                "Compare folders to stage a separate synchronization plan here."
+                tr("Compare folders to stage a separate synchronization plan here.")
             )
 
     def confirm_discard(self):
@@ -58,8 +66,10 @@ class SyncWorkspace(QGroupBox):
             self.plan is None
             or QMessageBox.question(
                 self,
-                "Discard synchronization plan",
-                "Discard the staged synchronization plan? Transaction recovery records will remain available.",
+                tr("Discard synchronization plan"),
+                tr(
+                    "Discard the staged synchronization plan? Transaction recovery records will remain available."
+                ),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -90,7 +100,7 @@ class SyncWorkspace(QGroupBox):
             )
         ):
             self.page.status_changed.emit(
-                "Wait for Plan tasks to finish before reviewing synchronization"
+                tr("Wait for Plan tasks to finish before reviewing synchronization")
             )
             return
         dialog = self.dialog = SyncReviewDialog(

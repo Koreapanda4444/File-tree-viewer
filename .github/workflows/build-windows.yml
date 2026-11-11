@@ -42,6 +42,7 @@ jobs:
           --onefile
           --windowed
           --name FileTreeViewer
+          --add-data "ui/translations:ui/translations"
           --collect-submodules send2trash
           main.py
 

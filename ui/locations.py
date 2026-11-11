@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QMenu, QToolButton
 
 from fs_paths import normalized_path
+from ui.i18n import tr
 from ui.preferences import application_settings
 
 
@@ -75,7 +76,7 @@ class LocationsButton(QToolButton):
     def __init__(self, page):
         super().__init__()
         self.page = page
-        self.setText("Locations")
+        self.setText(tr("Locations"))
         self.location_menu = QMenu(self)
         self.setMenu(self.location_menu)
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -85,21 +86,21 @@ class LocationsButton(QToolButton):
         self.location_menu.clear()
         root = self.page.model.root_path
         store = self.page.locations
-        action = self.location_menu.addAction("Toggle Current Favorite")
+        action = self.location_menu.addAction(tr("Toggle Current Favorite"))
         action.setEnabled(root is not None)
         action.triggered.connect(lambda: self.page.toggle_favorite(root))
         for title, values in (
             ("Favorites", store.favorites),
             ("Recent Locations", store.recent),
         ):
-            submenu = self.location_menu.addMenu(title)
+            submenu = self.location_menu.addMenu(tr(title))
             submenu.setEnabled(bool(values))
             for value in values:
                 action = submenu.addAction(value.replace("&", "&&"))
                 action.triggered.connect(
                     lambda checked=False, p=value: self.page.set_root(Path(p))
                 )
-        remove = self.location_menu.addMenu("Remove Favorite")
+        remove = self.location_menu.addMenu(tr("Remove Favorite"))
         remove.setEnabled(bool(store.favorites))
         for value in store.favorites:
             action = remove.addAction(value.replace("&", "&&"))

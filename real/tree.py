@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 from real.directory_index import DirectoryIndexJob
 from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
+from ui.i18n import tr
 
 PAGE_SIZE = 256
 INVALID_INDEX = QModelIndex()
@@ -315,7 +316,7 @@ class FileTreeModel(QAbstractItemModel):
             if index.column() == 0:
                 return node.name
             if index.column() == 1:
-                return _file_type(node)
+                return tr(_file_type(node))
 
             node.load_details()
             if index.column() == 2:
@@ -344,7 +345,7 @@ class FileTreeModel(QAbstractItemModel):
             and role == Qt.ItemDataRole.DisplayRole
             and 0 <= section < len(self.headers)
         ):
-            return self.headers[section]
+            return tr(self.headers[section])
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:

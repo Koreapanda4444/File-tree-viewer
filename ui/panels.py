@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtGui import QAction
 
+from ui.i18n import tr
 from ui.preferences import boolean
 
 
@@ -34,14 +35,14 @@ class PanelManager:
     def __init__(self, window, settings):
         self.window, self.settings = window, settings
         self.groups = []
-        menu = window.menuBar().addMenu("View")
+        menu = window.menuBar().addMenu(tr("View"))
         for key, splitter, names in panel_splitters(window):
             splitter.setChildrenCollapsible(True)
             group = []
             submenu = menu.addMenu(key.replace("_", " ").title())
             for index, name in enumerate(names):
                 widget = splitter.widget(index)
-                action = QAction(name, window, checkable=True)
+                action = QAction(tr(name), window, checkable=True)
                 shown = boolean(
                     settings.value("panels/" + key + "/" + str(index)), True
                 )
@@ -58,7 +59,7 @@ class PanelManager:
                 group[0].setChecked(True)
             self.groups.append((key, splitter, group))
         menu.addSeparator()
-        menu.addAction("Restore All Panels", self.restore)
+        menu.addAction(tr("Restore All Panels"), self.restore)
 
     def toggle(self, splitter, index, group, checked):
         if not checked and not any(action.isChecked() for action in group):

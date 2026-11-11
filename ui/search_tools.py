@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QFileDialog, QInputDialog, QMenu
 from search_export import export_search
 from search_history import SearchHistory, SearchRequest
 from snapshot import SnapshotCancelled
+from ui.i18n import tr
 from ui.preferences import application_settings
 from ui.tasks import CancellableWorker, prepare_worker_thread
 
@@ -70,7 +71,7 @@ class SearchTools(QObject):
             and not page.operation_is_running
             and page.search_export_thread is None
         )
-        recent = menu.addMenu("Recent searches")
+        recent = menu.addMenu(tr("Recent searches"))
         for item in self.history.recent:
             action = recent.addAction(self.label(item))
             action.setEnabled(ready)
@@ -78,8 +79,8 @@ class SearchTools(QObject):
                 lambda checked=False, request=item: self.restore(request)
             )
         recent.setEnabled(bool(self.history.recent))
-        presets = menu.addMenu("Presets")
-        remove = menu.addMenu("Remove preset")
+        presets = menu.addMenu(tr("Presets"))
+        remove = menu.addMenu(tr("Remove preset"))
         for name, item in sorted(self.history.presets.items()):
             action = presets.addAction(name)
             action.setEnabled(ready)
@@ -89,14 +90,16 @@ class SearchTools(QObject):
             remove.addAction(name, lambda key=name: self.remove_preset(key))
         presets.setEnabled(bool(self.history.presets))
         remove.setEnabled(bool(self.history.presets))
-        save = menu.addAction("Save current conditions as preset…", self.save_preset)
+        save = menu.addAction(
+            tr("Save current conditions as preset…"), self.save_preset
+        )
         save.setEnabled(page.has_search_request())
         menu.addSeparator()
-        action = menu.addAction("Open selected result location", self.open_location)
+        action = menu.addAction(tr("Open selected result location"), self.open_location)
         action.setEnabled(
             ready and page.search_view_active and len(page.selected_paths()) == 1
         )
-        action = menu.addAction("Export results…", self.export_results)
+        action = menu.addAction(tr("Export results…"), self.export_results)
         action.setEnabled(
             ready and page.search_view_active and page.search_results.total_count > 0
         )
@@ -140,7 +143,7 @@ class SearchTools(QObject):
 
     def save_preset(self):
         name, accepted = QInputDialog.getText(
-            self.page, "Save Search Preset", "Preset name:"
+            self.page, tr("Save Search Preset"), tr("Preset name:")
         )
         if accepted:
             try:
@@ -155,7 +158,7 @@ class SearchTools(QObject):
     def remove_preset(self, name):
         self.history.presets.pop(name, None)
         if not self.history.save():
-            self.page.status_changed.emit("Could not save preset changes")
+            self.page.status_changed.emit(tr("Could not save preset changes"))
 
     def open_location(self):
         paths = self.page.selected_paths()
@@ -172,7 +175,7 @@ class SearchTools(QObject):
             return
         destination, selected = QFileDialog.getSaveFileName(
             page,
-            "Export Search Results to a New File",
+            tr("Export Search Results to a New File"),
             "search-results.json",
             "JSON (*.json);;CSV (*.csv)",
         )
@@ -187,7 +190,7 @@ class SearchTools(QObject):
         worker.finished.connect(self.receive)
         worker.progress.connect(
             lambda count: page.task_progress.emit(
-                "Exporting search results", count, page.search_results.total_count
+                tr("Exporting search results"), count, page.search_results.total_count
             )
         )
         page.search_export_thread = prepare_worker_thread(

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from disk_usage import scan_disk_usage
 from snapshot import SnapshotCancelled
 from ui.analysis import format_size
+from ui.i18n import tr
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.treemap import UsageTreemap
 from ui.widgets import PlainLabel
@@ -58,15 +59,15 @@ class DiskUsageDialog(QDialog):
         self.current_path = ""
         self.offset = 0
         self.selected_entry = None
-        self.setWindowTitle("Disk Usage Analysis")
+        self.setWindowTitle(tr("Disk Usage Analysis"))
         self.resize(1000, 720)
         self.layout = QVBoxLayout(self)
-        self.summary = PlainLabel(f"Scanning {root}…")
+        self.summary = PlainLabel(tr("Scanning {value0}…", value0=root))
         self.summary.setWordWrap(True)
         self.summary.setMinimumHeight(58)
         self.layout.addWidget(self.summary)
         navigation = QHBoxLayout()
-        self.up_button = QPushButton("Up")
+        self.up_button = QPushButton(tr("Up"))
         self.up_button.clicked.connect(self.go_up)
         self.breadcrumb = QComboBox()
         self.breadcrumb.setMinimumContentsLength(20)
@@ -76,8 +77,8 @@ class DiskUsageDialog(QDialog):
         self.breadcrumb.activated.connect(
             lambda index: self.navigate(self.breadcrumb.itemData(index))
         )
-        self.previous_button = QPushButton("Previous 400")
-        self.next_button = QPushButton("Next 400")
+        self.previous_button = QPushButton(tr("Previous 400"))
+        self.next_button = QPushButton(tr("Next 400"))
         self.previous_button.clicked.connect(
             lambda: self.navigate(self.current_path, max(0, self.offset - 400))
         )
@@ -99,7 +100,7 @@ class DiskUsageDialog(QDialog):
         self.treemap.selected.connect(self.select_map_entry)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
-            ("Path", "Logical size", "Unique bytes", "Status")
+            (tr("Path"), tr("Logical size"), tr("Unique bytes"), tr("Status"))
         )
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -110,20 +111,20 @@ class DiskUsageDialog(QDialog):
         self.table.itemSelectionChanged.connect(self.table_selection)
         self.layout.addWidget(self.table, 1)
         self.details = PlainLabel(
-            "Select an item for details. Double-click a folder to explore."
+            tr("Select an item for details. Double-click a folder to explore.")
         )
         self.details.setWordWrap(True)
         self.details.setMinimumHeight(45)
         self.layout.addWidget(self.details)
-        self.reveal_button = QPushButton("Show Selected in Real")
+        self.reveal_button = QPushButton(tr("Show Selected in Real"))
         self.reveal_button.setEnabled(False)
         self.reveal_button.clicked.connect(self.reveal_selected)
         self.layout.addWidget(self.reveal_button)
         actions = QHBoxLayout()
-        self.largest_button = QPushButton("Largest 100 Files")
+        self.largest_button = QPushButton(tr("Largest 100 Files"))
         self.largest_button.clicked.connect(self.show_largest)
         self.largest_button.setEnabled(False)
-        self.stage_button = QPushButton("Add Selected to Plan…")
+        self.stage_button = QPushButton(tr("Add Selected to Plan…"))
         self.stage_button.setEnabled(False)
         self.stage_button.clicked.connect(self.stage_selected)
         actions.addWidget(self.largest_button)
@@ -143,7 +144,9 @@ class DiskUsageDialog(QDialog):
 
     @Slot(str, int)
     def progress(self, phase, count):
-        self.summary.setText(f"{phase}: {count:,} entries")
+        self.summary.setText(
+            tr("{value0}: {value1:,} entries", value0=phase, value1=count)
+        )
 
     def receive(self, result, error):
         self.outcome = result, error
@@ -164,7 +167,14 @@ class DiskUsageDialog(QDialog):
             self.largest_button.setEnabled(True)
             root = self.usage.entry()
             self.summary.setText(
-                f"{self.usage.root}\nLogical: {format_size(root.logical)} · Unique: {format_size(root.unique)} · Allocated estimate: {format_size(root.allocated)} · Skipped/errors: {self.usage.error_count:,}"
+                tr(
+                    "{value0}\nLogical: {value1} · Unique: {value2} · Allocated estimate: {value3} · Skipped/errors: {value4:,}",
+                    value0=self.usage.root,
+                    value1=format_size(root.logical),
+                    value2=format_size(root.unique),
+                    value3=format_size(root.allocated),
+                    value4=self.usage.error_count,
+                )
             )
             self.navigate("")
 
@@ -242,7 +252,9 @@ class DiskUsageDialog(QDialog):
         self.navigate("")
         self.show_entries(self.usage.largest())
         self.details.setText(
-            "Largest 100 files across the scanned root. Select items to prepare a reviewed Plan."
+            tr(
+                "Largest 100 files across the scanned root. Select items to prepare a reviewed Plan."
+            )
         )
 
     def stage_selected(self):
@@ -256,8 +268,8 @@ class DiskUsageDialog(QDialog):
             entries = [self.selected_entry]
         action, accepted = QInputDialog.getItem(
             self,
-            "Prepare File Plan",
-            "Stage operation (files remain unchanged until Plan Apply):",
+            tr("Prepare File Plan"),
+            tr("Stage operation (files remain unchanged until Plan Apply):"),
             ("Move", "Copy", "Rename", "Delete"),
             0,
             False,

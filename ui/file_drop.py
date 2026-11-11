@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QAbstractItemView, QMenu
 
 from fs_ops import require_unchanged
 from real.file_clipboard import read_file_mime
+from ui.i18n import tr
 
 
 class FileDropController(QObject):
@@ -64,11 +65,11 @@ class FileDropController(QObject):
                 "move" if event.possibleActions() & Qt.DropAction.MoveAction else None
             )
         menu = QMenu(view)
-        copy = menu.addAction("Copy Here")
-        move = menu.addAction("Move Here")
+        copy = menu.addAction(tr("Copy Here"))
+        move = menu.addAction(tr("Move Here"))
         move.setEnabled(bool(event.possibleActions() & Qt.DropAction.MoveAction))
         menu.addSeparator()
-        menu.addAction("Cancel")
+        menu.addAction(tr("Cancel"))
         chosen = menu.exec(view.viewport().mapToGlobal(event.position().toPoint()))
         return "copy" if chosen is copy else "move" if chosen is move else None
 

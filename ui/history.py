@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from operation_history import HistoryStore
 from reports import export_operation_report
 from snapshot import SnapshotCancelled
+from ui.i18n import add_choices, choice_text, tr
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -70,14 +71,15 @@ class HistoryDialog(QDialog):
         self.rows = []
         self.offset = 0
         self.exporting = False
-        self.setWindowTitle("Operation History")
+        self.setWindowTitle(tr("Operation History"))
         self.resize(1100, 750)
         self.layout = QVBoxLayout(self)
         filters = QHBoxLayout()
         self.category = QComboBox()
-        self.category.addItems(("All types", "real", "plan", "sync"))
+        add_choices(self.category, ("All types", "real", "plan", "sync"))
         self.status = QComboBox()
-        self.status.addItems(
+        add_choices(
+            self.status,
             (
                 "All statuses",
                 "success",
@@ -91,17 +93,17 @@ class HistoryDialog(QDialog):
                 "undo_failed",
                 "recovered",
                 "recovery_failed",
-            )
+            ),
         )
         self.since = QLineEdit()
-        self.since.setPlaceholderText("From UTC YYYY-MM-DD")
+        self.since.setPlaceholderText(tr("From UTC YYYY-MM-DD"))
         self.until = QLineEdit()
-        self.until.setPlaceholderText("Through UTC YYYY-MM-DD")
+        self.until.setPlaceholderText(tr("Through UTC YYYY-MM-DD"))
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Path or action")
-        self.refresh_button = QPushButton("Search / Refresh")
+        self.search.setPlaceholderText(tr("Path or action"))
+        self.refresh_button = QPushButton(tr("Search / Refresh"))
         self.refresh_button.clicked.connect(lambda: self.refresh(reset=True))
-        self.export_button = QPushButton("Export Filtered Report…")
+        self.export_button = QPushButton(tr("Export Filtered Report…"))
         self.export_button.clicked.connect(self.export_report)
         self.controls = [
             self.category,
@@ -115,19 +117,19 @@ class HistoryDialog(QDialog):
         for control in self.controls:
             filters.addWidget(control)
         self.layout.addLayout(filters)
-        self.summary = PlainLabel("Loading operation history…")
+        self.summary = PlainLabel(tr("Loading operation history…"))
         self.summary.setWordWrap(True)
         self.layout.addWidget(self.summary)
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
             (
-                "Time (UTC)",
-                "Type",
-                "Action",
-                "Status",
-                "Source",
-                "Target",
-                "Transaction",
+                tr("Time (UTC)"),
+                tr("Type"),
+                tr("Action"),
+                tr("Status"),
+                tr("Source"),
+                tr("Target"),
+                tr("Transaction"),
             )
         )
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -143,9 +145,9 @@ class HistoryDialog(QDialog):
         self.details.setMaximumHeight(170)
         self.layout.addWidget(self.details)
         actions = QHBoxLayout()
-        self.previous_button = QPushButton("Previous 250")
-        self.next_button = QPushButton("Next 250")
-        self.reveal_button = QPushButton("Show File Location")
+        self.previous_button = QPushButton(tr("Previous 250"))
+        self.next_button = QPushButton(tr("Next 250"))
+        self.reveal_button = QPushButton(tr("Show File Location"))
         self.previous_button.clicked.connect(lambda: self.change_page(-250))
         self.next_button.clicked.connect(lambda: self.change_page(250))
         self.reveal_button.clicked.connect(self.reveal)
@@ -172,10 +174,10 @@ class HistoryDialog(QDialog):
         if since and until and since >= until:
             raise ValueError("The start date must not be after the end date")
         return {
-            "category": self.category.currentText()
+            "category": choice_text(self.category)
             if self.category.currentIndex()
             else "",
-            "status": self.status.currentText() if self.status.currentIndex() else "",
+            "status": choice_text(self.status) if self.status.currentIndex() else "",
             "since": since,
             "until": until,
             "text": self.search.text(),
@@ -200,7 +202,7 @@ class HistoryDialog(QDialog):
             self.reveal_button,
         ]:
             control.setEnabled(False)
-        self.summary.setText("Loading operation history…")
+        self.summary.setText(tr("Loading operation history…"))
         self.worker = HistoryQueryWorker(self.store, filters)
         self.worker.finished.connect(self.receive)
         self.thread = prepare_worker_thread(
@@ -218,7 +220,7 @@ class HistoryDialog(QDialog):
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Operation Report",
+            tr("Export Operation Report"),
             "operations.json",
             "JSON (*.json);;CSV (*.csv);;HTML (*.html)",
         )
@@ -232,7 +234,7 @@ class HistoryDialog(QDialog):
             self.reveal_button,
         ]:
             control.setEnabled(False)
-        self.summary.setText("Exporting all events matching the current filters…")
+        self.summary.setText(tr("Exporting all events matching the current filters…"))
         self.worker = HistoryQueryWorker(self.store, filters, Path(path))
         self.worker.finished.connect(self.receive)
         self.thread = prepare_worker_thread(
@@ -319,7 +321,7 @@ class HistoryDialog(QDialog):
                     self.accept()
                     self.reveal_requested.emit(path)
                     return
-            self.summary.setText("Recorded locations are no longer available")
+            self.summary.setText(tr("Recorded locations are no longer available"))
 
     def done(self, result):
         if self.thread is not None:

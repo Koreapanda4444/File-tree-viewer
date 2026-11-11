@@ -35,6 +35,7 @@ from duplicate_management import (
 )
 from snapshot import FileSnapshot, SnapshotCancelled
 from ui.analysis import format_size
+from ui.i18n import add_choice, tr
 from ui.tasks import CancellableWorker
 
 
@@ -70,18 +71,31 @@ class DiagnosticDialog(QDialog):
         self.report = report
         self.already_deleted = already_deleted
         self._staged_delete_paths = ()
-        self.setWindowTitle("Duplicate and Problem Files")
+        self.setWindowTitle(tr("Duplicate and Problem Files"))
         self.resize(1_050, 720)
         layout = QVBoxLayout(self)
 
         summary = QWidget()
         form = QFormLayout(summary)
-        form.addRow("Duplicate groups", QLabel(f"{len(report.duplicate_groups):,}"))
-        form.addRow("Duplicate files", QLabel(f"{report.duplicate_file_count:,}"))
-        form.addRow("Potential savings", QLabel(format_size(report.reclaimable_size)))
-        form.addRow("Files hashed", QLabel(f"{report.hashed_file_count:,}"))
-        form.addRow("Bytes hashed", QLabel(format_size(report.hashed_bytes)))
-        form.addRow("Other problems", QLabel(f"{report.problem_count:,}"))
+        form.addRow(
+            tr("Duplicate groups"),
+            QLabel(tr("{value0:,}", value0=len(report.duplicate_groups))),
+        )
+        form.addRow(
+            tr("Duplicate files"),
+            QLabel(tr("{value0:,}", value0=report.duplicate_file_count)),
+        )
+        form.addRow(
+            tr("Potential savings"), QLabel(format_size(report.reclaimable_size))
+        )
+        form.addRow(
+            tr("Files hashed"),
+            QLabel(tr("{value0:,}", value0=report.hashed_file_count)),
+        )
+        form.addRow(tr("Bytes hashed"), QLabel(format_size(report.hashed_bytes)))
+        form.addRow(
+            tr("Other problems"), QLabel(tr("{value0:,}", value0=report.problem_count))
+        )
         layout.addWidget(summary)
 
         tools = QHBoxLayout()
@@ -92,10 +106,10 @@ class DiagnosticDialog(QDialog):
             ("Copy count", "copies"),
             ("Path", "path"),
         ):
-            self.order.addItem(label, value)
-        keep = QPushButton("Select All Except One per Group")
-        clear = QPushButton("Clear Selection")
-        self.selection_summary = QLabel("No duplicate candidates selected")
+            add_choice(self.order, label, value)
+        keep = QPushButton(tr("Select All Except One per Group"))
+        clear = QPushButton(tr("Clear Selection"))
+        self.selection_summary = QLabel(tr("No duplicate candidates selected"))
         tools.addWidget(self.order)
         tools.addWidget(keep)
         tools.addWidget(clear)
@@ -105,39 +119,41 @@ class DiagnosticDialog(QDialog):
         self.duplicates = duplicate_tree(report)
         tabs.addTab(
             self.duplicates,
-            f"Duplicates ({len(report.duplicate_groups):,})",
+            tr("Duplicates ({value0:,})", value0=len(report.duplicate_groups)),
         )
         tabs.addTab(
             path_table(report.empty_folders),
-            f"Empty Folders ({len(report.empty_folders):,})",
+            tr("Empty Folders ({value0:,})", value0=len(report.empty_folders)),
         )
         tabs.addTab(
             collision_tree(report),
-            f"Name Collisions ({len(report.name_collisions):,})",
+            tr("Name Collisions ({value0:,})", value0=len(report.name_collisions)),
         )
         tabs.addTab(
             problem_table(report.long_paths),
-            f"Long Paths ({len(report.long_paths):,})",
+            tr("Long Paths ({value0:,})", value0=len(report.long_paths)),
         )
         tabs.addTab(
             problem_table(report.inaccessible_items),
-            f"Inaccessible ({len(report.inaccessible_items):,})",
+            tr("Inaccessible ({value0:,})", value0=len(report.inaccessible_items)),
         )
         tabs.addTab(
             problem_table(report.broken_links),
-            f"Broken Links ({len(report.broken_links):,})",
+            tr("Broken Links ({value0:,})", value0=len(report.broken_links)),
         )
         tabs.addTab(
             problem_table(report.changed_items),
-            f"Changed / Missing ({len(report.changed_items):,})",
+            tr("Changed / Missing ({value0:,})", value0=len(report.changed_items)),
         )
         layout.addWidget(tabs, 1)
 
         note = QLabel(
-            "Duplicate groups are confirmed with SHA-256 after size filtering. "
-            "Select duplicate file rows to stage DELETE operations; nothing is "
-            "deleted until Apply All. Changed files are excluded from duplicate "
-            "results. Long paths use the 260-character compatibility threshold."
+            tr(
+                "Duplicate groups are confirmed with SHA-256 after size filtering. "
+                "Select duplicate file rows to stage DELETE operations; nothing is "
+                "deleted until Apply All. Changed files are excluded from duplicate "
+                "results. Long paths use the 260-character compatibility threshold."
+            )
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -172,7 +188,10 @@ class DiagnosticDialog(QDialog):
         else:
             self.stage_button.setEnabled(bool(paths))
             self.selection_summary.setText(
-                f"{len(paths):,} candidate(s) selected; contents and retained copies will be rechecked before staging"
+                tr(
+                    "{value0:,} candidate(s) selected; contents and retained copies will be rechecked before staging",
+                    value0=len(paths),
+                )
             )
 
     def selected_duplicate_paths(self):
@@ -221,12 +240,15 @@ class DiagnosticDialog(QDialog):
                 self.report, paths, already_deleted=self.already_deleted
             )
         except ValueError as error:
-            QMessageBox.warning(self, "Invalid duplicate selection", str(error))
+            QMessageBox.warning(self, tr("Invalid duplicate selection"), str(error))
             return
         answer = QMessageBox.question(
             self,
-            "Review Duplicate Deletes",
-            f"Recheck and stage {len(paths):,} DELETE operation(s)? At least one matching copy must remain in each group. Files change only when the Plan is applied.",
+            tr("Review Duplicate Deletes"),
+            tr(
+                "Recheck and stage {value0:,} DELETE operation(s)? At least one matching copy must remain in each group. Files change only when the Plan is applied.",
+                value0=len(paths),
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -298,7 +320,7 @@ def collision_tree(report: DiagnosticReport) -> QTreeWidget:
 
 def path_table(paths) -> QTableWidget:
     table = QTableWidget(len(paths), 1)
-    table.setHorizontalHeaderLabels(("Path",))
+    table.setHorizontalHeaderLabels((tr("Path"),))
     for row, path in enumerate(paths):
         set_item(table, row, 0, path.as_posix())
     configure_table(table)
@@ -307,7 +329,7 @@ def path_table(paths) -> QTableWidget:
 
 def problem_table(problems) -> QTableWidget:
     table = QTableWidget(len(problems), 2)
-    table.setHorizontalHeaderLabels(("Path", "Details"))
+    table.setHorizontalHeaderLabels((tr("Path"), tr("Details")))
     for row, problem in enumerate(problems):
         path = (
             problem.path.as_posix() if problem.path is not None else "(Snapshot root)"

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui.i18n import add_choices, choice_text, set_choice_text, tr
 from ui.widgets import FlowLayout
 
 
@@ -21,8 +22,8 @@ class FolderViews(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         toolbar = FlowLayout()
         self.mode = QComboBox()
-        self.mode.addItems(("Details", "List", "Large Icons"))
-        self.mode.setToolTip("Folder view mode")
+        add_choices(self.mode, ("Details", "List", "Large Icons"))
+        self.mode.setToolTip(tr("Folder view mode"))
         toolbar.addWidget(self.mode)
         layout.addLayout(toolbar)
         self.toolbar = toolbar
@@ -36,7 +37,9 @@ class FolderViews(QWidget):
         self.stack.addWidget(details)
         self.stack.addWidget(self.icons)
         layout.addWidget(self.stack)
-        self.mode.currentTextChanged.connect(self.set_mode)
+        self.mode.currentIndexChanged.connect(
+            lambda: self.set_mode(choice_text(self.mode))
+        )
 
     @property
     def active_view(self):
@@ -45,8 +48,8 @@ class FolderViews(QWidget):
     def set_mode(self, mode):
         if mode not in ("Details", "List", "Large Icons"):
             mode = "Details"
-        if self.mode.currentText() != mode:
-            self.mode.setCurrentText(mode)
+        if choice_text(self.mode) != mode:
+            set_choice_text(self.mode, mode)
             return
         if mode == "Details":
             self.stack.setCurrentWidget(self.details)

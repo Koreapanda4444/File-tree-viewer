@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QMenu
 from fs_ops import require_unchanged
 from fs_paths import normalized_path
 from real.file_clipboard import file_mime, read_file_mime
+from ui.i18n import tr
 
 
 class FileCommands(QObject):
@@ -77,7 +78,11 @@ class FileCommands(QObject):
             return
         QApplication.clipboard().setMimeData(data)
         self.page.status_changed.emit(
-            f"{'Cut' if cut else 'Copied'} {len(paths):,} file reference(s); paste to transfer"
+            tr(
+                "{value0} {value1:,} file reference(s); paste to transfer",
+                value0="Cut" if cut else "Copied",
+                value1=len(paths),
+            )
         )
 
     def paste(self, destination=None):
@@ -170,7 +175,9 @@ class FileCommands(QObject):
         paths = self.page.selected_paths()
         if paths:
             QApplication.clipboard().setText("\n".join(str(path) for path in paths))
-            self.page.status_changed.emit(f"Copied {len(paths):,} path(s)")
+            self.page.status_changed.emit(
+                tr("Copied {value0:,} path(s)", value0=len(paths))
+            )
 
     def inspect_selected(self):
         paths = self.page.selected_paths()
@@ -228,7 +235,7 @@ class FileCommands(QObject):
         add("Move To…", lambda: page.transfer_selected("move"), ready and bool(mutable))
         add("Rename", page.rename_selected, ready and len(mutable) == 1)
         add("Delete", page.delete_selected, ready and bool(mutable))
-        staged = menu.addMenu("Add to Plan")
+        staged = menu.addMenu(tr("Add to Plan"))
         for operation in ("copy", "move", "rename", "delete"):
             action = staged.addAction(operation.title() + "…")
             action.setEnabled(
@@ -286,7 +293,7 @@ class FileCommands(QObject):
             return
         if self.page.model.root_path is not None:
             self.page.status_changed.emit(
-                "Loading the current folder before selecting all items…"
+                tr("Loading the current folder before selecting all items…")
             )
             self.selection_timer.start()
 
@@ -304,7 +311,9 @@ class FileCommands(QObject):
         elif not node.fetch_pending:
             self.stop()
             page.folder_panel.active_view.selectAll()
-            page.status_changed.emit(f"Selected {len(page.selected_paths()):,} item(s)")
+            page.status_changed.emit(
+                tr("Selected {value0:,} item(s)", value0=len(page.selected_paths()))
+            )
 
     def stop(self):
         self.selection_timer.stop()

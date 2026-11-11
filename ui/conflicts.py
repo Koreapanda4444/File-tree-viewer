@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from conflicts import ResolutionChoice, resolution_options
 from plan_diff import PlanSimulation
 from planning import FilePlan
+from ui.i18n import add_choice, tr
 
 
 class ConflictResolutionDialog(QDialog):
@@ -26,16 +27,18 @@ class ConflictResolutionDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Resolve Plan Problems")
+        self.setWindowTitle(tr("Resolve Plan Problems"))
         self.resize(1_100, 620)
         self.rows: list[tuple[str, QComboBox]] = []
 
         layout = QVBoxLayout(self)
         help_text = QLabel(
-            "Choose how to handle every blocked operation. Auto Rename finds the "
-            "next available numbered name; Skip keeps the operation in the Plan "
-            "but excludes it from Apply. Overwrite is offered only for an existing "
-            "target."
+            tr(
+                "Choose how to handle every blocked operation. Auto Rename finds the "
+                "next available numbered name; Skip keeps the operation in the Plan "
+                "but excludes it from Apply. Overwrite is offered only for an existing "
+                "target."
+            )
         )
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
@@ -49,7 +52,7 @@ class ConflictResolutionDialog(QDialog):
 
         self.table = QTableWidget(len(grouped), 5)
         self.table.setHorizontalHeaderLabels(
-            ("Action", "Source", "Target", "Problem", "Resolution")
+            (tr("Action"), tr("Source"), tr("Target"), tr("Problem"), tr("Resolution"))
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -74,7 +77,7 @@ class ConflictResolutionDialog(QDialog):
                 self.table.setItem(row, column, item)
 
             combo = QComboBox()
-            combo.addItem("Choose…", None)
+            add_choice(combo, "Choose…", None)
             for option in resolution_options(issues):
                 combo.addItem(resolution_label(option), option.value)
             combo.currentIndexChanged.connect(self.update_apply_button)
@@ -85,7 +88,7 @@ class ConflictResolutionDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self.apply_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
-        self.apply_button.setText("Apply Resolutions")
+        self.apply_button.setText(tr("Apply Resolutions"))
         self.apply_button.setEnabled(False)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)

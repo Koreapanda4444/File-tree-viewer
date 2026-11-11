@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from operation_history import record_events, record_result
 from snapshot import SnapshotCancelled
 from sync_plan import plan_bidirectional_sync, plan_one_way_sync
+from ui.i18n import tr
 from ui.preferences import application_settings
 from ui.sync_preview import SyncPreviewDialog
 from ui.tasks import CancellableWorker, prepare_worker_thread
@@ -139,11 +140,18 @@ class SyncReviewDialog(QDialog):
         self.close_requested = False
         self.action = ""
         self.preview_dialog = None
-        self.setWindowTitle("Staged Multi-root Synchronization Plan")
+        self.setWindowTitle(tr("Staged Multi-root Synchronization Plan"))
         self.resize(1100, 720)
         layout = QVBoxLayout(self)
         self.summary = PlainLabel(
-            f"{plan.direction}\n{plan.roots[0]}\n{plan.roots[1]}\n{plan.count:,} planned changes; {plan.issue_count:,} blocking issues"
+            tr(
+                "{value0}\n{value1}\n{value2}\n{value3:,} planned changes; {value4:,} blocking issues",
+                value0=plan.direction,
+                value1=plan.roots[0],
+                value2=plan.roots[1],
+                value3=plan.count,
+                value4=plan.issue_count,
+            )
         )
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
@@ -162,16 +170,16 @@ class SyncReviewDialog(QDialog):
         self.details.setMaximumHeight(160)
         layout.addWidget(self.details)
         self.reviewed = QCheckBox(
-            "I reviewed creates, overwrites and deletions on BOTH roots"
+            tr("I reviewed creates, overwrites and deletions on BOTH roots")
         )
         layout.addWidget(self.reviewed)
         controls = QHBoxLayout()
-        self.preview_button = QPushButton("Preview Both Folder Trees…")
+        self.preview_button = QPushButton(tr("Preview Both Folder Trees…"))
         self.preview_button.setEnabled(plan.can_apply)
         self.preview_button.clicked.connect(self.show_preview)
         controls.addWidget(self.preview_button)
         self.apply_button = QPushButton(
-            "Apply Synchronization…" if plan.count else "Commit Verified Baseline…"
+            tr("Apply Synchronization…" if plan.count else "Commit Verified Baseline…")
         )
         self.apply_button.setEnabled(False)
         self.reviewed.toggled.connect(
@@ -183,9 +191,9 @@ class SyncReviewDialog(QDialog):
             )
         )
         self.apply_button.clicked.connect(lambda: self.start_execution("apply"))
-        self.undo_button = QPushButton("Undo Both Roots…")
-        self.recover_button = QPushButton("Recover Both Roots…")
-        self.cancel_button = QPushButton("Cancel after current step")
+        self.undo_button = QPushButton(tr("Undo Both Roots…"))
+        self.recover_button = QPushButton(tr("Recover Both Roots…"))
+        self.cancel_button = QPushButton(tr("Cancel after current step"))
         for button in (self.undo_button, self.recover_button, self.cancel_button):
             button.setEnabled(False)
         if application_result is not None:
@@ -193,7 +201,11 @@ class SyncReviewDialog(QDialog):
             self.undo_button.setEnabled(application_result.status == "completed")
             self.recover_button.setEnabled(bool(application_result.recovery_errors))
             self.summary.setText(
-                f"Synchronization {application_result.status}: {application_result.completed:,} processed item(s)"
+                tr(
+                    "Synchronization {value0}: {value1:,} processed item(s)",
+                    value0=application_result.status,
+                    value1=application_result.completed,
+                )
             )
         self.undo_button.clicked.connect(lambda: self.start_execution("undo"))
         self.recover_button.clicked.connect(lambda: self.start_execution("recover"))
@@ -248,7 +260,12 @@ class SyncReviewDialog(QDialog):
             "Confirm synchronization"
             if action == "apply"
             else "Confirm coordinated restoration",
-            f"{action.title()} on BOTH roots?\n{self.plan.roots[0]}\n{self.plan.roots[1]}\n\nCopies replace reviewed targets with backups. Deleted items remain in transaction backups. All participants must stay available for recovery.",
+            tr(
+                "{value0} on BOTH roots?\n{value1}\n{value2}\n\nCopies replace reviewed targets with backups. Deleted items remain in transaction backups. All participants must stay available for recovery.",
+                value0=action.title(),
+                value1=self.plan.roots[0],
+                value2=self.plan.roots[1],
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -259,7 +276,9 @@ class SyncReviewDialog(QDialog):
         settings.sync()
         if settings.status() != settings.Status.NoError:
             self.summary.setText(
-                "Cannot save the recovery location. Check application settings permissions before synchronization."
+                tr(
+                    "Cannot save the recovery location. Check application settings permissions before synchronization."
+                )
             )
             return
         marker = (
@@ -294,7 +313,15 @@ class SyncReviewDialog(QDialog):
             self.bar.setValue(completed)
         else:
             self.bar.setRange(0, 0)
-        self.summary.setText(f"{phase}: {completed:,}/{total:,}\n{name}")
+        self.summary.setText(
+            tr(
+                "{value0}: {value1:,}/{value2:,}\n{value3}",
+                value0=phase,
+                value1=completed,
+                value2=total,
+                value3=name,
+            )
+        )
 
     def receive(self, result, error):
         self.outcome = result, error
@@ -337,7 +364,9 @@ class SyncReviewDialog(QDialog):
         if self.worker is not None and self.action == "apply":
             self.worker.cancel()
             self.summary.setText(
-                "Cancelling after the current step, then restoring all participant roots…"
+                tr(
+                    "Cancelling after the current step, then restoring all participant roots…"
+                )
             )
 
     def done(self, result):

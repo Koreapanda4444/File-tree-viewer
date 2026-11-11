@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from analysis import AnalysisCancelled, StructureAnalysis, analyze_snapshot
 from snapshot import FileSnapshot
+from ui.i18n import tr
 from ui.tasks import CancellableWorker
 
 
@@ -47,35 +48,41 @@ class StructureAnalysisWorker(CancellableWorker):
 class StructureAnalysisDialog(QDialog):
     def __init__(self, result: StructureAnalysis, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Folder Structure Analysis")
+        self.setWindowTitle(tr("Folder Structure Analysis"))
         self.resize(900, 700)
         layout = QVBoxLayout(self)
 
         summary = QWidget()
         form = QFormLayout(summary)
-        form.addRow("Files", QLabel(f"{result.file_count:,}"))
-        form.addRow("Folders", QLabel(f"{result.folder_count:,}"))
-        form.addRow("Total size", QLabel(format_size(result.total_size)))
-        form.addRow("Snapshot errors", QLabel(f"{result.error_count:,}"))
-        form.addRow("Maximum depth", QLabel(f"{result.maximum_depth:,}"))
+        form.addRow(tr("Files"), QLabel(tr("{value0:,}", value0=result.file_count)))
+        form.addRow(tr("Folders"), QLabel(tr("{value0:,}", value0=result.folder_count)))
+        form.addRow(tr("Total size"), QLabel(format_size(result.total_size)))
+        form.addRow(
+            tr("Snapshot errors"), QLabel(tr("{value0:,}", value0=result.error_count))
+        )
+        form.addRow(
+            tr("Maximum depth"), QLabel(tr("{value0:,}", value0=result.maximum_depth))
+        )
         deepest = QLabel(
             result.deepest_path.as_posix() if result.deepest_path is not None else "-"
         )
         deepest.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         deepest.setWordWrap(True)
-        form.addRow("Deepest path", deepest)
+        form.addRow(tr("Deepest path"), deepest)
         layout.addWidget(summary)
 
         tabs = QTabWidget()
-        tabs.addTab(extension_table(result), "Extensions")
-        tabs.addTab(path_table(result.largest_files), "Largest Files")
-        tabs.addTab(path_table(result.largest_folders), "Largest Folders")
+        tabs.addTab(extension_table(result), tr("Extensions"))
+        tabs.addTab(path_table(result.largest_files), tr("Largest Files"))
+        tabs.addTab(path_table(result.largest_folders), tr("Largest Folders"))
         layout.addWidget(tabs, 1)
 
         note = QLabel(
-            f"Showing {len(result.extensions):,} of "
-            f"{result.extension_group_count:,} extension groups and the top "
-            "20 largest files and folders. Analysis uses Snapshot metadata only."
+            tr(
+                "Showing {value0:,} of {value1:,} extension groups and the top 20 largest files and folders. Analysis uses Snapshot metadata only.",
+                value0=len(result.extensions),
+                value1=result.extension_group_count,
+            )
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -87,7 +94,7 @@ class StructureAnalysisDialog(QDialog):
 
 def extension_table(result: StructureAnalysis) -> QTableWidget:
     table = QTableWidget(len(result.extensions), 3)
-    table.setHorizontalHeaderLabels(("Extension", "Files", "Total Size"))
+    table.setHorizontalHeaderLabels((tr("Extension"), tr("Files"), tr("Total Size")))
     for row, usage in enumerate(result.extensions):
         set_item(table, row, 0, usage.extension)
         set_item(table, row, 1, f"{usage.file_count:,}")
@@ -98,7 +105,7 @@ def extension_table(result: StructureAnalysis) -> QTableWidget:
 
 def path_table(items) -> QTableWidget:
     table = QTableWidget(len(items), 2)
-    table.setHorizontalHeaderLabels(("Path", "Size"))
+    table.setHorizontalHeaderLabels((tr("Path"), tr("Size")))
     for row, item in enumerate(items):
         set_item(table, row, 0, item.path.as_posix())
         set_item(table, row, 1, format_size(item.size))

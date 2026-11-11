@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from plan_diff import ChangeKind, IssueKind, PlanSimulation
+from ui.i18n import tr
 
 INVALID_INDEX = QModelIndex()
 
@@ -108,7 +109,7 @@ class PlanDiffDialog(QDialog):
     def __init__(self, simulation: PlanSimulation, parent=None) -> None:
         super().__init__(parent)
         self.resolve_requested = False
-        self.setWindowTitle("Plan Diff and Simulation")
+        self.setWindowTitle(tr("Plan Diff and Simulation"))
         self.resize(980, 760)
         layout = QVBoxLayout(self)
 
@@ -116,7 +117,7 @@ class PlanDiffDialog(QDialog):
         summary.setWordWrap(True)
         layout.addWidget(summary)
 
-        changes_group = QGroupBox("Before / After Diff")
+        changes_group = QGroupBox(tr("Before / After Diff"))
         changes_layout = QVBoxLayout(changes_group)
         self.diff_model = PlanDiffModel(simulation, self)
         changes = QTableView()
@@ -128,7 +129,9 @@ class PlanDiffDialog(QDialog):
         changes_layout.addWidget(changes)
         layout.addWidget(changes_group, 2)
 
-        issues_group = QGroupBox(f"Problems ({len(simulation.issues):,})")
+        issues_group = QGroupBox(
+            tr("Problems ({value0:,})", value0=len(simulation.issues))
+        )
         issues_layout = QVBoxLayout(issues_group)
         self.issue_model = IssueModel(simulation, self)
         issues = QTableView()

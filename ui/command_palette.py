@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ui.i18n import add_choice, tr
 from ui.preferences import application_settings
 
 
@@ -124,11 +125,11 @@ class CommandPalette(QDialog):
                     )
                 )
         self.visible_commands = []
-        self.setWindowTitle("Quick Commands")
+        self.setWindowTitle(tr("Quick Commands"))
         self.resize(780, 520)
         layout = QVBoxLayout(self)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search commands or enter a folder path…")
+        self.search.setPlaceholderText(tr("Search commands or enter a folder path…"))
         self.search.installEventFilter(self)
         self.search.textChanged.connect(self.filter_commands)
         self.search.returnPressed.connect(self.run_selected)
@@ -137,9 +138,9 @@ class CommandPalette(QDialog):
         self.list.itemActivated.connect(lambda item: self.run_selected())
         layout.addWidget(self.list, 1)
         controls = QHBoxLayout()
-        self.favorite_button = QPushButton("Toggle Favorite")
+        self.favorite_button = QPushButton(tr("Toggle Favorite"))
         self.favorite_button.clicked.connect(self.toggle_favorite)
-        self.run_button = QPushButton("Run Command")
+        self.run_button = QPushButton(tr("Run Command"))
         self.run_button.clicked.connect(self.run_selected)
         controls.addWidget(self.favorite_button)
         controls.addWidget(self.run_button)
@@ -189,7 +190,7 @@ class CommandPalette(QDialog):
             )
             if not command.available():
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-            self.list.addItem(item)
+            add_choice(self.list, item)
         if self.list.count():
             self.list.setCurrentRow(0)
 
@@ -241,7 +242,7 @@ class CommandPalette(QDialog):
         if command.dangerous:
             answer = QMessageBox.question(
                 self,
-                "Confirm Command",
+                tr("Confirm Command"),
                 command.title
                 + "? Review any following operation dialog before applying changes.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -256,7 +257,7 @@ class CommandPalette(QDialog):
 
 
 def install_command_palette(window):
-    action = QAction("Quick Commands…", window)
+    action = QAction(tr("Quick Commands…"), window)
     action.setShortcut("Ctrl+P")
 
     def show():

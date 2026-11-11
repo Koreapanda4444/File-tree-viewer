@@ -7,6 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QHBoxLayout, QTabBar, QToolButton, QWidget
 
 from real.navigation import NavigationHistory
+from ui.i18n import choice_text, set_choice_text, tr
 
 
 @dataclass(slots=True)
@@ -29,12 +30,12 @@ class FolderTabs(QWidget):
         self.bar.setExpanding(False)
         self.bar.setUsesScrollButtons(True)
         self.active = FolderSession(page.model.root_path, page.history)
-        index = self.bar.addTab("New Tab")
+        index = self.bar.addTab(tr("New Tab"))
         self.bar.setTabData(index, self.active)
         layout.addWidget(self.bar, 1)
         self.add_button = QToolButton()
-        self.add_button.setText("+")
-        self.add_button.setToolTip("New folder tab (Ctrl+T)")
+        self.add_button.setText(tr("+"))
+        self.add_button.setToolTip(tr("New folder tab (Ctrl+T)"))
         self.add_button.clicked.connect(self.new_tab)
         layout.addWidget(self.add_button)
         self.bar.currentChanged.connect(self.switch)
@@ -66,7 +67,7 @@ class FolderTabs(QWidget):
             or page.preview_is_running
         ):
             page.status_changed.emit(
-                "Wait for Real tasks before switching or closing folder tabs"
+                tr("Wait for Real tasks before switching or closing folder tabs")
             )
             return False
         return not confirm or page._confirm_editor_transition()
@@ -74,7 +75,7 @@ class FolderTabs(QWidget):
     def save_active(self):
         self.active.path = self.page.model.root_path
         self.active.history = self.page.history
-        self.active.mode = self.page.folder_panel.mode.currentText()
+        self.active.mode = choice_text(self.page.folder_panel.mode)
 
     def sync(self, path):
         if self.switching:
@@ -86,7 +87,7 @@ class FolderTabs(QWidget):
                 index,
                 (path.name or str(path)).replace("&", "&&")
                 if path is not None
-                else "New Tab",
+                else tr("New Tab"),
             )
             self.bar.setTabToolTip(index, str(path))
 
@@ -98,13 +99,11 @@ class FolderTabs(QWidget):
         history = NavigationHistory()
         if path is not None:
             history.visit(path)
-        session = FolderSession(
-            path, history, self.page.folder_panel.mode.currentText()
-        )
+        session = FolderSession(path, history, choice_text(self.page.folder_panel.mode))
         index = self.bar.addTab(
             (path.name or str(path)).replace("&", "&&")
             if path is not None
-            else "New Tab"
+            else tr("New Tab")
         )
         self.bar.setTabData(index, session)
         self.bar.setCurrentIndex(index)
@@ -128,7 +127,7 @@ class FolderTabs(QWidget):
             self.page.history_navigation = self.switching = False
         if success:
             self.active = target
-            self.page.folder_panel.mode.setCurrentText(target.mode)
+            set_choice_text(self.page.folder_panel.mode, target.mode)
             if target.path is not None:
                 self.sync(target.path)
         else:

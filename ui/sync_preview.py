@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from snapshot import SnapshotCancelled
 from sync_preview import build_sync_preview
+from ui.i18n import tr
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -48,11 +49,13 @@ class SyncPreviewDialog(QDialog):
         self.preview = self.outcome = None
         self.close_requested = False
         self.trees = []
-        self.setWindowTitle("Synchronization Before / After Structure")
+        self.setWindowTitle(tr("Synchronization Before / After Structure"))
         self.resize(1150, 740)
         layout = QVBoxLayout(self)
         self.summary = PlainLabel(
-            "Building preview from the staged comparison. Original files are unchanged. This shows planned structure, not a fresh scan."
+            tr(
+                "Building preview from the staged comparison. Original files are unchanged. This shows planned structure, not a fresh scan."
+            )
         )
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
@@ -72,7 +75,7 @@ class SyncPreviewDialog(QDialog):
 
     @Slot(str, int)
     def progress(self, phase, count):
-        self.summary.setText(f"{phase}: {count:,}")
+        self.summary.setText(tr("{value0}: {value1:,}", value0=phase, value1=count))
 
     def receive(self, result, error):
         self.outcome = result, error
@@ -101,7 +104,15 @@ class SyncPreviewDialog(QDialog):
             ):
                 panel = QWidget()
                 column = QVBoxLayout(panel)
-                column.addWidget(PlainLabel(f"{title}: {snapshot.entry_count:,} items"))
+                column.addWidget(
+                    PlainLabel(
+                        tr(
+                            "{value0}: {value1:,} items",
+                            value0=title,
+                            value1=snapshot.entry_count,
+                        )
+                    )
+                )
                 tree = QTreeView()
                 tree.setUniformRowHeights(True)
                 model = SnapshotTreeModel(snapshot, tree)
@@ -118,7 +129,9 @@ class SyncPreviewDialog(QDialog):
             self.tabs.addTab(split, "Left root" if side == 0 else "Right root")
             self.tabs.setTabToolTip(side, str(self.preview.before[side].root))
         self.summary.setText(
-            "Before / after structure from the staged comparison. Files are unchanged. Apply revalidates both roots before making changes."
+            tr(
+                "Before / after structure from the staged comparison. Files are unchanged. Apply revalidates both roots before making changes."
+            )
         )
 
     def done(self, result):

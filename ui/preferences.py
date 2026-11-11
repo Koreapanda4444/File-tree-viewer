@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from planning import ConflictPolicy
+from ui.i18n import add_choice, add_choices, choice_text, set_choice_text, tr
 
 
 def application_settings() -> QSettings:
@@ -51,11 +52,15 @@ class Preferences:
     preview_kib: int = 1024
     conflict_policy: ConflictPolicy = ConflictPolicy.ERROR
     theme: str = "System"
+    language: str = "en"
 
     @classmethod
     def load(cls, settings: QSettings) -> Preferences:
         policy = settings.value("preferences/conflict_policy", "error")
         return cls(
+            language=settings.value("preferences/language", "en")
+            if settings.value("preferences/language", "en") in {"en", "ko"}
+            else "en",
             theme=settings.value("preferences/theme", "System")
             if settings.value("preferences/theme", "System")
             in {"System", "Light", "Dark"}
@@ -76,6 +81,7 @@ class Preferences:
 
     def save(self, settings: QSettings) -> None:
         for key, value in (
+            ("language", self.language),
             ("theme", self.theme),
             ("show_hidden", self.show_hidden),
             ("wrap_preview", self.wrap_preview),
@@ -120,32 +126,37 @@ def splitters(window):
 class PreferencesDialog(QDialog):
     def __init__(self, preferences: Preferences, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Preferences")
+        self.setWindowTitle(tr("Preferences"))
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        self.language = QComboBox()
+        add_choice(self.language, "English", "en")
+        add_choice(self.language, "한국어", "ko")
+        self.language.setCurrentIndex(1 if preferences.language == "ko" else 0)
+        form.addRow(tr("Language (restart required)"), self.language)
         self.theme = QComboBox()
-        self.theme.addItems(("System", "Light", "Dark"))
-        self.theme.setCurrentText(preferences.theme)
-        form.addRow("Application theme", self.theme)
-        self.hidden = QCheckBox("Show hidden files in Real")
+        add_choices(self.theme, ("System", "Light", "Dark"))
+        set_choice_text(self.theme, preferences.theme)
+        form.addRow(tr("Application theme"), self.theme)
+        self.hidden = QCheckBox(tr("Show hidden files in Real"))
         self.hidden.setChecked(preferences.show_hidden)
-        self.wrap = QCheckBox("Wrap preview text")
+        self.wrap = QCheckBox(tr("Wrap preview text"))
         self.wrap.setChecked(preferences.wrap_preview)
         form.addRow(self.hidden)
         form.addRow(self.wrap)
         self.font_size = self._spin(preferences.preview_font_size, 8, 24)
         self.edit_size = self._spin(preferences.edit_mib, 1, 8)
         self.preview_size = self._spin(preferences.preview_kib, 64, 2048)
-        form.addRow("Preview font size", self.font_size)
-        form.addRow("Editable file limit (MiB)", self.edit_size)
-        form.addRow("Large file prefix (KiB)", self.preview_size)
+        form.addRow(tr("Preview font size"), self.font_size)
+        form.addRow(tr("Editable file limit (MiB)"), self.edit_size)
+        form.addRow(tr("Large file prefix (KiB)"), self.preview_size)
         self.policy = QComboBox()
-        self.policy.addItem("Stop on conflict", ConflictPolicy.ERROR)
-        self.policy.addItem("Skip conflicting operation", ConflictPolicy.SKIP)
+        add_choice(self.policy, "Stop on conflict", ConflictPolicy.ERROR)
+        add_choice(self.policy, "Skip conflicting operation", ConflictPolicy.SKIP)
         self.policy.setCurrentIndex(
             1 if preferences.conflict_policy is ConflictPolicy.SKIP else 0
         )
-        form.addRow("New manual Plan operations", self.policy)
+        form.addRow(tr("New manual Plan operations"), self.policy)
         layout.addLayout(form)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -168,5 +179,6 @@ class PreferencesDialog(QDialog):
             self.edit_size.value(),
             self.preview_size.value(),
             self.policy.currentData(),
-            self.theme.currentText(),
+            choice_text(self.theme),
+            self.language.currentData(),
         )

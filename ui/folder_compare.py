@@ -29,6 +29,7 @@ from folder_compare import FolderStatus, compare_folders
 from snapshot import SnapshotCancelled
 from sync_plan import SyncPlan
 from ui.file_compare import FileComparisonDialog
+from ui.i18n import add_choice, tr
 from ui.snapshot_compare import ComparisonTableModel
 from ui.sync import SyncPlanningWorker, SyncReviewDialog
 from ui.tasks import CancellableWorker, prepare_worker_thread
@@ -127,7 +128,7 @@ class FolderComparisonDialog(QDialog):
 
     def __init__(self, initial=None, parent=None, *, stage_sync=None):
         super().__init__(parent)
-        self.setWindowTitle("Side-by-side Folder Comparison")
+        self.setWindowTitle(tr("Side-by-side Folder Comparison"))
         self.resize(1250, 800)
         self.thread = self.worker = self.outcome = self.comparison = None
         self.close_requested = False
@@ -143,9 +144,9 @@ class FolderComparisonDialog(QDialog):
             column.addWidget(PlainLabel(side + " folder"))
             row = QHBoxLayout()
             edit = QLineEdit(str(initial or "") if side == "Left" else "")
-            edit.setPlaceholderText("Choose a folder, including another drive")
+            edit.setPlaceholderText(tr("Choose a folder, including another drive"))
             self.path_inputs.append(edit)
-            browse = QPushButton("Browse…")
+            browse = QPushButton(tr("Browse…"))
             browse.clicked.connect(lambda checked=False, field=edit: self.browse(field))
             row.addWidget(edit, 1)
             row.addWidget(browse)
@@ -153,14 +154,14 @@ class FolderComparisonDialog(QDialog):
             roots.addLayout(column, 1)
         layout.addLayout(roots)
         controls = QHBoxLayout()
-        self.verify = QCheckBox("Verify all file contents with SHA-256")
-        self.start_button = QPushButton("Compare")
-        self.cancel_button = QPushButton("Cancel")
+        self.verify = QCheckBox(tr("Verify all file contents with SHA-256"))
+        self.start_button = QPushButton(tr("Compare"))
+        self.cancel_button = QPushButton(tr("Cancel"))
         self.cancel_button.setEnabled(False)
         self.start_button.clicked.connect(self.start_compare)
         self.cancel_button.clicked.connect(self.cancel)
         self.filter = QComboBox()
-        self.filter.addItem("All items", None)
+        add_choice(self.filter, "All items", None)
         for status in FolderStatus:
             self.filter.addItem(status.value.replace("_", " ").title(), status)
         self.filter.currentIndexChanged.connect(self.filter_changed)
@@ -168,7 +169,9 @@ class FolderComparisonDialog(QDialog):
             controls.addWidget(widget)
         layout.addLayout(controls)
         self.summary = PlainLabel(
-            "Compare metadata, or enable SHA-256 to verify file contents. Links are shown for review."
+            tr(
+                "Compare metadata, or enable SHA-256 to verify file contents. Links are shown for review."
+            )
         )
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
@@ -189,16 +192,16 @@ class FolderComparisonDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
         row = QHBoxLayout()
-        self.compare_files_button = QPushButton("Compare Selected Files…")
+        self.compare_files_button = QPushButton(tr("Compare Selected Files…"))
         self.compare_files_button.setEnabled(False)
         self.compare_files_button.clicked.connect(self.compare_files)
         row.addWidget(self.compare_files_button)
         self.extra_controls = row
-        self.delete_extra = QCheckBox("Delete destination-only items")
+        self.delete_extra = QCheckBox(tr("Delete destination-only items"))
         self.sync_buttons = []
         row.addWidget(self.delete_extra)
         for side, title in ((0, "Plan Left → Right"), (1, "Plan Right → Left")):
-            button = QPushButton(title)
+            button = QPushButton(tr(title))
             button.setEnabled(False)
             button.clicked.connect(
                 lambda checked=False, source=side: self.start_sync_plan(source)
@@ -217,11 +220,11 @@ class FolderComparisonDialog(QDialog):
             ("Prefer Left", "left"),
             ("Prefer Right", "right"),
         ):
-            self.sync_policy.addItem(label, policy)
+            add_choice(self.sync_policy, label, policy)
         self.initialize_sync = QCheckBox(
-            "Initialize: copy one-sided items; never infer deletions"
+            tr("Initialize: copy one-sided items; never infer deletions")
         )
-        self.bidirectional_button = QPushButton("Plan Bidirectional…")
+        self.bidirectional_button = QPushButton(tr("Plan Bidirectional…"))
         self.bidirectional_button.setEnabled(False)
         self.bidirectional_button.clicked.connect(lambda: self.start_sync_plan(None))
         self.sync_buttons.append(self.bidirectional_button)
@@ -237,7 +240,7 @@ class FolderComparisonDialog(QDialog):
         if self.thread is not None:
             return
         selected = QFileDialog.getExistingDirectory(
-            self, "Compare Folder", field.text()
+            self, tr("Compare Folder"), field.text()
         )
         if selected:
             field.setText(selected)
@@ -258,7 +261,7 @@ class FolderComparisonDialog(QDialog):
         if self.thread is not None:
             return
         if not all(edit.text().strip() for edit in self.path_inputs):
-            self.summary.setText("Choose both folder roots")
+            self.summary.setText(tr("Choose both folder roots"))
             return
         self.worker = FolderComparisonWorker(
             *(Path(edit.text()).expanduser().absolute() for edit in self.path_inputs),
@@ -266,7 +269,9 @@ class FolderComparisonDialog(QDialog):
             self.hash_cache,
         )
         self.worker.progress.connect(
-            lambda message, count: self.summary.setText(f"{message}: {count:,}")
+            lambda message, count: self.summary.setText(
+                tr("{value0}: {value1:,}", value0=message, value1=count)
+            )
         )
         self.worker.finished.connect(self.receive)
         self.thread = prepare_worker_thread(
@@ -274,7 +279,7 @@ class FolderComparisonDialog(QDialog):
         )
         self.outcome = None
         self.set_running(True)
-        self.summary.setText("Scanning both folders…")
+        self.summary.setText(tr("Scanning both folders…"))
         self.thread.start()
 
     def receive(self, result, cancelled, error):
@@ -301,7 +306,9 @@ class FolderComparisonDialog(QDialog):
                 else:
                     result.close()
                     self.summary.setText(
-                        "Synchronization was not staged. Keep the current plan or discard it before trying again."
+                        tr(
+                            "Synchronization was not staged. Keep the current plan or discard it before trying again."
+                        )
                     )
                 return
             try:
@@ -317,7 +324,9 @@ class FolderComparisonDialog(QDialog):
                     for button in self.sync_buttons:
                         button.setEnabled(False)
                     self.summary.setText(
-                        "Synchronization changed the folders. Run Compare again before creating another plan."
+                        tr(
+                            "Synchronization changed the folders. Run Compare again before creating another plan."
+                        )
                     )
                 dialog.deleteLater()
             finally:
@@ -355,7 +364,9 @@ class FolderComparisonDialog(QDialog):
             initialize=self.initialize_sync.isChecked(),
         )
         self.worker.progress.connect(
-            lambda message, count: self.summary.setText(f"{message}: {count:,}")
+            lambda message, count: self.summary.setText(
+                tr("{value0}: {value1:,}", value0=message, value1=count)
+            )
         )
         self.worker.finished.connect(self.receive)
         self.thread = prepare_worker_thread(
@@ -376,7 +387,12 @@ class FolderComparisonDialog(QDialog):
             for status, count in self.comparison.counts.items()
         )
         self.summary.setText(
-            f"{'SHA-256' if self.comparison.hash_verified else 'Metadata'} comparison — {summary}; scan errors: {self.comparison.error_count:,}"
+            tr(
+                "{value0} comparison — {value1}; scan errors: {value2:,}",
+                value0="SHA-256" if self.comparison.hash_verified else "Metadata",
+                value1=summary,
+                value2=self.comparison.error_count,
+            )
         )
 
     def selected(self, current, previous=INVALID_INDEX):
@@ -411,7 +427,7 @@ class FolderComparisonDialog(QDialog):
     def cancel(self):
         if self.worker is not None:
             self.worker.cancel()
-            self.summary.setText("Cancelling comparison…")
+            self.summary.setText(tr("Cancelling comparison…"))
 
     def review_closed(self):
         self.sync_review = None

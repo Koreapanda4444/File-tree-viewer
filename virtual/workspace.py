@@ -16,6 +16,7 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import QApplication, QStyle
 
 from fs_paths import validate_windows_name as validate_name
+from ui.i18n import tr
 from virtual.planning import workspace_plan
 from virtual.storage import (
     VirtualNode,
@@ -128,7 +129,7 @@ class VirtualTreeModel(QAbstractItemModel):
             and role == Qt.ItemDataRole.DisplayRole
             and 0 <= section < len(self.headers)
         ):
-            return self.headers[section]
+            return tr(self.headers[section])
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:

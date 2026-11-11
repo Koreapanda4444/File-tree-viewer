@@ -25,6 +25,7 @@ from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
 from search_matching import NameMatcher, SearchPatternError
 from search_options import SearchOptions
+from ui.i18n import tr
 from ui.tasks import CancellableWorker
 
 RESULT_BATCH_SIZE = 1_024
@@ -403,7 +404,7 @@ class SearchResultsModel(QAbstractItemModel):
             and role == Qt.ItemDataRole.DisplayRole
             and 0 <= section < len(self.headers)
         ):
-            return self.headers[section]
+            return tr(self.headers[section])
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:

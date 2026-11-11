@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from recovery_history import check_history_undo, list_recovery_history
 from snapshot import SnapshotCancelled
+from ui.i18n import tr
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -64,17 +65,25 @@ class RecoveryHistoryDialog(QDialog):
         self.thread = self.worker = self.outcome = None
         self.checking = False
         self.close_requested = False
-        self.setWindowTitle("Transaction Recovery History")
+        self.setWindowTitle(tr("Transaction Recovery History"))
         self.resize(1000, 700)
         layout = QVBoxLayout(self)
         self.summary = PlainLabel(
-            f"{root}\nRecovery files are retained. Undo is revalidated before execution; no backup cleanup is performed here."
+            tr(
+                "{value0}\nRecovery files are retained. Undo is revalidated before execution; no backup cleanup is performed here.",
+                value0=root,
+            )
         )
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
-            ("Started (UTC)", "Transaction", "Status", "Recovery / Errors")
+            (
+                tr("Started (UTC)"),
+                tr("Transaction"),
+                tr("Status"),
+                tr("Recovery / Errors"),
+            )
         )
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -87,13 +96,13 @@ class RecoveryHistoryDialog(QDialog):
         self.details.setReadOnly(True)
         layout.addWidget(self.details)
         actions = QHBoxLayout()
-        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button = QPushButton(tr("Refresh"))
         self.refresh_button.clicked.connect(lambda: self.start())
-        self.check_button = QPushButton("Check Selected Undo Safety")
+        self.check_button = QPushButton(tr("Check Selected Undo Safety"))
         self.check_button.clicked.connect(self.check_selected)
-        self.undo_button = QPushButton("Undo Verified Transaction…")
+        self.undo_button = QPushButton(tr("Undo Verified Transaction…"))
         self.undo_button.clicked.connect(self.undo_selected)
-        self.recover_button = QPushButton("Review Interrupted Recovery in Plan…")
+        self.recover_button = QPushButton(tr("Review Interrupted Recovery in Plan…"))
         self.recover_button.clicked.connect(self.recover)
         for button in (
             self.refresh_button,
@@ -189,8 +198,10 @@ class RecoveryHistoryDialog(QDialog):
             return
         answer = QMessageBox.warning(
             self,
-            "Undo Transaction",
-            "Undo this transaction? For synchronization, BOTH roots are restored together. External changes block restoration.",
+            tr("Undo Transaction"),
+            tr(
+                "Undo this transaction? For synchronization, BOTH roots are restored together. External changes block restoration."
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

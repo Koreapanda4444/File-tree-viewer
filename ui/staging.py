@@ -9,6 +9,7 @@ from fs_paths import checked_boundary, normalized_path, path_is_within, validate
 from plan_staging import prepare_real_items
 from planning import PlanAction
 from ui.feedback import show_error
+from ui.i18n import tr
 from ui.plan_drop import PlanDropController
 
 
@@ -47,7 +48,7 @@ class StagingController(QObject):
         real, page = window.real_page, window.plan_page
         if self.busy() or real.operation_is_running or real.search_is_running:
             window.statusBar().showMessage(
-                "Wait for the current task before staging files"
+                tr("Wait for the current task before staging files")
             )
             return
         if not real._confirm_editor_transition():
@@ -71,8 +72,8 @@ class StagingController(QObject):
         if action in {PlanAction.MOVE, PlanAction.COPY}:
             target, accepted = QInputDialog.getText(
                 window,
-                f"Stage {action.value.title()}",
-                "Destination folder relative to the Plan root (blank = root):",
+                tr("Stage {value0}", value0=action.value.title()),
+                tr("Destination folder relative to the Plan root (blank = root):"),
             )
             if not accepted:
                 return
@@ -81,7 +82,7 @@ class StagingController(QObject):
             if len(paths) != 1:
                 return
             name, accepted = QInputDialog.getText(
-                window, "Stage Rename", "New name:", text=paths[0].name
+                window, tr("Stage Rename"), tr("New name:"), text=paths[0].name
             )
             if not accepted:
                 return
@@ -129,8 +130,10 @@ class StagingController(QObject):
     def show_error(self, error):
         show_error(
             self.window,
-            "Cannot stage files",
-            "No operations were added. Check paths and refresh the snapshot if files changed.",
+            tr("Cannot stage files"),
+            tr(
+                "No operations were added. Check paths and refresh the snapshot if files changed."
+            ),
             str(error),
         )
 
@@ -145,13 +148,15 @@ class StagingController(QObject):
         if page.snapshot is None:
             self.window.tabs.setCurrentWidget(page)
             self.window.statusBar().showMessage(
-                "Import a Plan snapshot to choose the destination root, then add the Virtual workspace"
+                tr(
+                    "Import a Plan snapshot to choose the destination root, then add the Virtual workspace"
+                )
             )
             return
         target, accepted = QInputDialog.getText(
             self.window,
-            "Stage Virtual Workspace",
-            "Destination folder relative to the Plan root:",
+            tr("Stage Virtual Workspace"),
+            tr("Destination folder relative to the Plan root:"),
             text="Virtual Workspace",
         )
         if not accepted:
@@ -181,7 +186,10 @@ class StagingController(QObject):
         page.stage_operations(operations, "Virtual", use_default_policy=False)
         self.window.tabs.setCurrentWidget(page)
         page.status_changed.emit(
-            f"Staged {len(operations):,} Virtual items including text contents; review Diff to resolve destination conflicts"
+            tr(
+                "Staged {value0:,} Virtual items including text contents; review Diff to resolve destination conflicts",
+                value0=len(operations),
+            )
         )
 
     def filesystem_changed(self, root):
@@ -208,7 +216,9 @@ class StagingController(QObject):
         ):
             if real.preview.document().isModified():
                 real.status_changed.emit(
-                    "Plan changed files; save or discard the edited preview, then refresh Real"
+                    tr(
+                        "Plan changed files; save or discard the edited preview, then refresh Real"
+                    )
                 )
             else:
                 real.refresh_root()

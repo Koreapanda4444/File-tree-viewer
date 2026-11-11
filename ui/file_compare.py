@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from file_comparison import TextComparison, compare_text_files
 from file_content import ContentCancelled
+from ui.i18n import tr
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.theme import difference_background
 
@@ -43,14 +44,14 @@ class TextComparisonWorker(CancellableWorker):
 class FileComparisonDialog(QDialog):
     def __init__(self, left, right, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Side-by-side Text Comparison")
+        self.setWindowTitle(tr("Side-by-side Text Comparison"))
         self.resize(1200, 780)
         self.thread = None
         self.worker = TextComparisonWorker(left, right)
         self.outcome = None
         self.close_requested = False
         layout = QVBoxLayout(self)
-        self.summary = QLabel("Comparing files…")
+        self.summary = QLabel(tr("Comparing files…"))
         layout.addWidget(self.summary)
         row = QHBoxLayout()
         self.editors = []
@@ -136,14 +137,20 @@ class FileComparisonDialog(QDialog):
             else ""
         )
         self.summary.setText(
-            f"{changed:,} changed region(s) · {result.left.encoding} / {result.right.encoding}{partial}"
+            tr(
+                "{value0:,} changed region(s) · {value1} / {value2}{value3}",
+                value0=changed,
+                value1=result.left.encoding,
+                value2=result.right.encoding,
+                value3=partial,
+            )
         )
 
     def reject(self) -> None:
         self.close_requested = True
         if self.thread is not None:
             self.worker.cancel()
-            self.summary.setText("Cancelling comparison…")
+            self.summary.setText(tr("Cancelling comparison…"))
             return
         super().reject()
 

@@ -67,6 +67,7 @@ from ui.chrome import action_menu
 from ui.conflicts import ConflictResolutionDialog
 from ui.diagnostics import DiagnosticDialog, DiagnosticWorker, DuplicateReviewWorker
 from ui.feedback import show_error
+from ui.i18n import tr
 from ui.performance import (
     AnalysisReportWorker,
     PlanLoadWorker,
@@ -201,7 +202,7 @@ class SnapshotTreeModel(QAbstractItemModel):
             and role == Qt.ItemDataRole.DisplayRole
             and 0 <= section < len(self.headers)
         ):
-            return self.headers[section]
+            return tr(self.headers[section])
         return None
 
     def hasChildren(self, parent: QModelIndex = INVALID_INDEX) -> bool:
@@ -412,7 +413,7 @@ class PlanListModel(QAbstractItemModel):
             and role == Qt.ItemDataRole.DisplayRole
             and 0 <= section < len(self.headers)
         ):
-            return self.headers[section]
+            return tr(self.headers[section])
         return None
 
     def operation_id(self, row: int) -> str | None:
@@ -499,9 +500,11 @@ class PlanExplorerPage(QWidget):
         self.update_buttons()
         if self.recovery_scan.needs_attention and self._recovery_notified_root != root:
             self._recovery_notified_root = root
-            self.status_changed.emit("Unfinished or damaged transaction records found")
+            self.status_changed.emit(
+                tr("Unfinished or damaged transaction records found")
+            )
             QMessageBox.warning(
-                self, "Filesystem recovery required", self.recovery_scan.summary()
+                self, tr("Filesystem recovery required"), self.recovery_scan.summary()
             )
 
     @property
@@ -536,35 +539,35 @@ class PlanExplorerPage(QWidget):
         layout = QVBoxLayout()
         row = QHBoxLayout()
         layout.addLayout(row)
-        row.addWidget(QLabel("Plan Root"))
+        row.addWidget(QLabel(tr("Plan Root")))
         self.location = QLineEdit()
         self.location.setReadOnly(True)
-        self.location.setPlaceholderText("Import a real folder or drive")
+        self.location.setPlaceholderText(tr("Import a real folder or drive"))
         row.addWidget(self.location, 1)
         row = FlowLayout()
         layout.addLayout(row)
-        self.import_button = QPushButton("Import Snapshot")
-        self.save_snapshot_button = QPushButton("Save Snapshot")
-        self.open_snapshot_button = QPushButton("Open Snapshot")
+        self.import_button = QPushButton(tr("Import Snapshot"))
+        self.save_snapshot_button = QPushButton(tr("Save Snapshot"))
+        self.open_snapshot_button = QPushButton(tr("Open Snapshot"))
         self.save_snapshot_button.clicked.connect(self.save_current_snapshot)
         self.open_snapshot_button.clicked.connect(self.open_saved_snapshot)
         row.addWidget(self.import_button)
         self.import_button.setProperty("primary", True)
         row.addWidget(self.open_snapshot_button)
         row.addWidget(self.save_snapshot_button)
-        self.compare_snapshot_button = QPushButton("Compare Snapshot")
+        self.compare_snapshot_button = QPushButton(tr("Compare Snapshot"))
         self.compare_snapshot_button.clicked.connect(self.compare_saved_snapshot)
 
-        self.export_report_button = QPushButton("Export Report")
+        self.export_report_button = QPushButton(tr("Export Report"))
         self.export_report_button.clicked.connect(self.export_current_report)
 
-        self.recovery_button = QPushButton("Recover Interrupted Plan")
+        self.recovery_button = QPushButton(tr("Recover Interrupted Plan"))
         self.recovery_button.clicked.connect(self.recover_interrupted)
-        self.cancel_button = QPushButton("Cancel")
-        self.progress_label = QLabel("No snapshot loaded")
+        self.cancel_button = QPushButton(tr("Cancel"))
+        self.progress_label = QLabel(tr("No snapshot loaded"))
         row.addWidget(
             action_menu(
-                "Snapshot Tools…",
+                tr("Snapshot Tools…"),
                 (
                     self.compare_snapshot_button,
                     self.export_report_button,
@@ -621,13 +624,13 @@ class PlanExplorerPage(QWidget):
         self.plan_list.horizontalHeader().setStretchLastSection(True)
         right_layout.addWidget(self.plan_list, 1)
         plan_buttons = FlowLayout()
-        self.edit_operation_button = QPushButton("Edit")
-        self.up_operation_button = QPushButton("Move Up")
-        self.down_operation_button = QPushButton("Move Down")
-        self.dependency_button = QPushButton("Review Dependencies")
+        self.edit_operation_button = QPushButton(tr("Edit"))
+        self.up_operation_button = QPushButton(tr("Move Up"))
+        self.down_operation_button = QPushButton(tr("Move Down"))
+        self.dependency_button = QPushButton(tr("Review Dependencies"))
         plan_buttons.addWidget(self.dependency_button)
         self.dependency_button.clicked.connect(self.review_dependencies)
-        self.policy_operation_button = QPushButton("Set Policy")
+        self.policy_operation_button = QPushButton(tr("Set Policy"))
         for button in (
             self.edit_operation_button,
             self.up_operation_button,
@@ -639,10 +642,10 @@ class PlanExplorerPage(QWidget):
         self.up_operation_button.clicked.connect(lambda: self.reorder_selected(-1))
         self.down_operation_button.clicked.connect(lambda: self.reorder_selected(1))
         self.policy_operation_button.clicked.connect(self.change_selected_policy)
-        self.remove_button = QPushButton("Remove Selected")
-        self.clear_button = QPushButton("Clear Plan")
-        self.save_plan_button = QPushButton("Save Plan")
-        self.load_plan_button = QPushButton("Load Plan")
+        self.remove_button = QPushButton(tr("Remove Selected"))
+        self.clear_button = QPushButton(tr("Clear Plan"))
+        self.save_plan_button = QPushButton(tr("Save Plan"))
+        self.load_plan_button = QPushButton(tr("Load Plan"))
         plan_buttons.addWidget(self.remove_button)
         plan_buttons.addWidget(self.clear_button)
         plan_buttons.addWidget(self.save_plan_button)
@@ -660,22 +663,22 @@ class PlanExplorerPage(QWidget):
 
     def _create_action_row(self) -> FlowLayout:
         row = FlowLayout()
-        self.new_file_button = QPushButton("New File")
-        self.new_folder_button = QPushButton("New Folder")
-        self.rename_button = QPushButton("Rename")
-        self.copy_button = QPushButton("Copy")
-        self.move_button = QPushButton("Move")
-        self.delete_button = QPushButton("Delete")
-        self.batch_rename_button = QPushButton("Batch Rename")
-        self.organize_button = QPushButton("Organize Files")
-        self.analysis_button = QPushButton("Analyze Structure")
-        self.diagnostic_button = QPushButton("Find Problems")
-        self.preview_plan_button = QPushButton("Preview Structure")
+        self.new_file_button = QPushButton(tr("New File"))
+        self.new_folder_button = QPushButton(tr("New Folder"))
+        self.rename_button = QPushButton(tr("Rename"))
+        self.copy_button = QPushButton(tr("Copy"))
+        self.move_button = QPushButton(tr("Move"))
+        self.delete_button = QPushButton(tr("Delete"))
+        self.batch_rename_button = QPushButton(tr("Batch Rename"))
+        self.organize_button = QPushButton(tr("Organize Files"))
+        self.analysis_button = QPushButton(tr("Analyze Structure"))
+        self.diagnostic_button = QPushButton(tr("Find Problems"))
+        self.preview_plan_button = QPushButton(tr("Preview Structure"))
         self.preview_plan_button.clicked.connect(self.preview_plan_structure)
-        self.diff_button = QPushButton("Diff / Simulate")
-        self.apply_button = QPushButton("Apply All")
-        self.cancel_apply_button = QPushButton("Cancel Apply")
-        self.undo_plan_button = QPushButton("Undo Last Apply")
+        self.diff_button = QPushButton(tr("Diff / Simulate"))
+        self.apply_button = QPushButton(tr("Apply All"))
+        self.cancel_apply_button = QPushButton(tr("Cancel Apply"))
+        self.undo_plan_button = QPushButton(tr("Undo Last Apply"))
         for button in (
             self.new_file_button,
             self.new_folder_button,
@@ -692,7 +695,7 @@ class PlanExplorerPage(QWidget):
             row.addWidget(button)
         row.addWidget(
             action_menu(
-                "More Tools…",
+                tr("More Tools…"),
                 (
                     self.batch_rename_button,
                     self.organize_button,
@@ -730,7 +733,7 @@ class PlanExplorerPage(QWidget):
             or self.simulation_is_running
         ):
             return
-        directory = QFileDialog.getExistingDirectory(self, "Import Snapshot")
+        directory = QFileDialog.getExistingDirectory(self, tr("Import Snapshot"))
         if not directory:
             return
         if len(self.plan) and not self._confirm_plan_replacement():
@@ -759,20 +762,28 @@ class PlanExplorerPage(QWidget):
         self.scan_worker = worker
         self.scan_outcome = None
         self._set_scanning(True)
-        self.progress_label.setText("Scanning...")
-        self.status_changed.emit(f"Creating snapshot: {root}")
+        self.progress_label.setText(tr("Scanning..."))
+        self.status_changed.emit(tr("Creating snapshot: {value0}", value0=root))
         thread.start()
 
     def cancel_snapshot(self) -> None:
         if self.scan_worker is not None:
             self.scan_worker.cancel()
-            self.progress_label.setText("Cancelling...")
+            self.progress_label.setText(tr("Cancelling..."))
 
     def show_scan_progress(self, scanned: int, errors: int) -> None:
         self.task_progress.emit(
-            f"Snapshot: {scanned:,} items, {errors:,} errors", scanned, 0
+            tr(
+                "Snapshot: {value0:,} items, {value1:,} errors",
+                value0=scanned,
+                value1=errors,
+            ),
+            scanned,
+            0,
         )
-        self.progress_label.setText(f"{scanned:,} items, {errors:,} errors")
+        self.progress_label.setText(
+            tr("{value0:,} items, {value1:,} errors", value0=scanned, value1=errors)
+        )
 
     def receive_scan_result(self, result: object, cancelled: bool, error: str) -> None:
         self.scan_outcome = (result, cancelled, error)
@@ -795,22 +806,24 @@ class PlanExplorerPage(QWidget):
             self.ready_to_close.emit()
             return
         if outcome is None:
-            self.progress_label.setText("Snapshot failed")
+            self.progress_label.setText(tr("Snapshot failed"))
             return
 
         result, cancelled, error = outcome
         if error:
-            self.progress_label.setText("Snapshot failed")
+            self.progress_label.setText(tr("Snapshot failed"))
             show_error(
                 self,
-                "Cannot import snapshot",
-                "The snapshot could not be imported. Check the selected folder and access permissions.",
+                tr("Cannot import snapshot"),
+                tr(
+                    "The snapshot could not be imported. Check the selected folder and access permissions."
+                ),
                 error,
             )
             self.status_changed.emit(error)
         elif cancelled:
-            self.progress_label.setText("Snapshot cancelled")
-            self.status_changed.emit("Snapshot cancelled")
+            self.progress_label.setText(tr("Snapshot cancelled"))
+            self.status_changed.emit(tr("Snapshot cancelled"))
         elif isinstance(result, FileSnapshot):
             self._replace_snapshot(result)
 
@@ -843,7 +856,11 @@ class PlanExplorerPage(QWidget):
             self.last_application = None
         self.location.setText(str(snapshot.root))
         self.progress_label.setText(
-            f"{snapshot.entry_count:,} items, {snapshot.error_count:,} errors"
+            tr(
+                "{value0:,} items, {value1:,} errors",
+                value0=snapshot.entry_count,
+                value1=snapshot.error_count,
+            )
         )
         self._refresh_plan_list()
         self.update_buttons()
@@ -851,7 +868,9 @@ class PlanExplorerPage(QWidget):
             old_model.deleteLater()
         if old_snapshot is not None:
             old_snapshot.close()
-        self.status_changed.emit(f"Snapshot ready: {snapshot.entry_count:,} items")
+        self.status_changed.emit(
+            tr("Snapshot ready: {value0:,} items", value0=snapshot.entry_count)
+        )
         self.snapshot_ready.emit(snapshot)
 
     def stage_create(self, directory: bool) -> None:
@@ -861,8 +880,8 @@ class PlanExplorerPage(QWidget):
         item_type = "Folder" if directory else "File"
         name, accepted = QInputDialog.getText(
             self,
-            f"New Planned {item_type}",
-            f"{item_type} name:",
+            tr("New Planned {value0}", value0=item_type),
+            tr("{value0} name:", value0=item_type),
         )
         if not accepted:
             return
@@ -886,8 +905,8 @@ class PlanExplorerPage(QWidget):
         entry = entries[0]
         name, accepted = QInputDialog.getText(
             self,
-            "Plan Rename",
-            "New name:",
+            tr("Plan Rename"),
+            tr("New name:"),
             text=entry.name,
         )
         if not accepted:
@@ -931,7 +950,9 @@ class PlanExplorerPage(QWidget):
             added += 1
         if added:
             self._refresh_plan_list()
-            self.status_changed.emit(f"Staged {added} delete operation(s)")
+            self.status_changed.emit(
+                tr("Staged {value0} delete operation(s)", value0=added)
+            )
 
     def stage_copy_dialog(self) -> None:
         self.stage_transfer_dialog(PlanAction.COPY)
@@ -945,8 +966,8 @@ class PlanExplorerPage(QWidget):
             return
         destination, accepted = QInputDialog.getText(
             self,
-            f"Plan {action.value.title()}",
-            "Destination folder relative to the Plan root (empty for root):",
+            tr("Plan {value0}", value0=action.value.title()),
+            tr("Destination folder relative to the Plan root (empty for root):"),
         )
         if accepted:
             self.stage_transfers(
@@ -1010,7 +1031,7 @@ class PlanExplorerPage(QWidget):
             )
         lines.extend(problem.message for problem in report.problems[:100])
         dialog = QDialog(self)
-        dialog.setWindowTitle("Plan Dependencies and Execution Order")
+        dialog.setWindowTitle(tr("Plan Dependencies and Execution Order"))
         dialog.resize(900, 600)
         layout = QVBoxLayout(dialog)
         from PySide6.QtWidgets import QPlainTextEdit
@@ -1054,7 +1075,7 @@ class PlanExplorerPage(QWidget):
             op for op in self.plan.operations if op.operation_id in selected
         )
         dialog = QDialog(self)
-        dialog.setWindowTitle("Edit Planned Operation")
+        dialog.setWindowTitle(tr("Edit Planned Operation"))
         layout = QFormLayout(dialog)
         action = QComboBox()
         for item in PlanAction:
@@ -1062,9 +1083,9 @@ class PlanExplorerPage(QWidget):
         action.setCurrentIndex(action.findData(operation.action))
         source = QLineEdit(str(operation.source) if operation.source else "")
         target = QLineEdit(str(operation.target) if operation.target else "")
-        layout.addRow("Action", action)
-        layout.addRow("Source relative path", source)
-        layout.addRow("Target relative path", target)
+        layout.addRow(tr("Action"), action)
+        layout.addRow(tr("Source relative path"), source)
+        layout.addRow(tr("Target relative path"), target)
 
         def update_fields():
             source.setEnabled(
@@ -1094,7 +1115,7 @@ class PlanExplorerPage(QWidget):
                     target=target.text() if target.isEnabled() else None,
                 )
             except (ValueError, KeyError, TypeError) as error:
-                QMessageBox.warning(dialog, "Invalid operation", str(error))
+                QMessageBox.warning(dialog, tr("Invalid operation"), str(error))
             else:
                 dialog.accept()
 
@@ -1129,8 +1150,10 @@ class PlanExplorerPage(QWidget):
         policies = (ConflictPolicy.ERROR, ConflictPolicy.OVERWRITE, ConflictPolicy.SKIP)
         label, accepted = QInputDialog.getItem(
             self,
-            "Set Conflict Policy",
-            "Policy for selected operations (Auto Rename is available in Diff / Simulate):",
+            tr("Set Conflict Policy"),
+            tr(
+                "Policy for selected operations (Auto Rename is available in Diff / Simulate):"
+            ),
             [policy.value for policy in policies],
             editable=False,
         )
@@ -1154,21 +1177,23 @@ class PlanExplorerPage(QWidget):
         removed = self.plan.remove_many(operation_ids)
         if removed:
             self._refresh_plan_list()
-            self.status_changed.emit(f"Removed {removed} planned operation(s)")
+            self.status_changed.emit(
+                tr("Removed {value0} planned operation(s)", value0=removed)
+            )
 
     def clear_plan(self) -> None:
         if not len(self.plan):
             return
         self.plan.clear()
         self._refresh_plan_list()
-        self.status_changed.emit("Plan cleared")
+        self.status_changed.emit(tr("Plan cleared"))
 
     def export_current_report(self) -> None:
         if self.snapshot is None:
             return
         path, selected = QFileDialog.getSaveFileName(
             self,
-            "Export File System Analysis",
+            tr("Export File System Analysis"),
             "analysis.json",
             "JSON (*.json);;CSV (*.csv);;HTML (*.html)",
         )
@@ -1204,12 +1229,18 @@ class PlanExplorerPage(QWidget):
             after.close()
             return
         dialog = QDialog(self)
-        dialog.setWindowTitle("Planned Folder Structure — original files are unchanged")
+        dialog.setWindowTitle(
+            tr("Planned Folder Structure — original files are unchanged")
+        )
         dialog.resize(1150, 720)
         layout = QVBoxLayout(dialog)
         layout.addWidget(
             QLabel(
-                f"Before: {self.snapshot.entry_count:,} items · After: {after.entry_count:,} items"
+                tr(
+                    "Before: {value0:,} items · After: {value1:,} items",
+                    value0=self.snapshot.entry_count,
+                    value1=after.entry_count,
+                )
             )
         )
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -1243,7 +1274,7 @@ class PlanExplorerPage(QWidget):
             return
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select Before Snapshot",
+            tr("Select Before Snapshot"),
             "",
             "Snapshots (*.ftvsnapshot);;All Files (*)",
         )
@@ -1256,12 +1287,15 @@ class PlanExplorerPage(QWidget):
         if self.snapshot is None:
             return
         name, accepted = QInputDialog.getText(
-            self, "Save Snapshot", "Snapshot name:", text=self.snapshot.name
+            self, tr("Save Snapshot"), tr("Snapshot name:"), text=self.snapshot.name
         )
         if not accepted:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Snapshot", "snapshot.ftvsnapshot", "Snapshots (*.ftvsnapshot)"
+            self,
+            tr("Save Snapshot"),
+            "snapshot.ftvsnapshot",
+            "Snapshots (*.ftvsnapshot)",
         )
         if path:
             self.start_plan_io(
@@ -1273,7 +1307,7 @@ class PlanExplorerPage(QWidget):
         if len(self.plan) and not self._confirm_plan_replacement():
             return
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Snapshot", "", "Snapshots (*.ftvsnapshot);;All Files (*)"
+            self, tr("Open Snapshot"), "", "Snapshots (*.ftvsnapshot);;All Files (*)"
         )
         if path:
             self.start_plan_io(SnapshotFileWorker(Path(path)), "snapshot_load")
@@ -1293,7 +1327,7 @@ class PlanExplorerPage(QWidget):
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Reusable Plan",
+            tr("Save Reusable Plan"),
             "file-plan.json",
             "File Tree Viewer Plans (*.json);;All Files (*)",
         )
@@ -1316,8 +1350,10 @@ class PlanExplorerPage(QWidget):
         if len(self.plan):
             answer = QMessageBox.question(
                 self,
-                "Replace current Plan",
-                "Loading a saved Plan will replace all staged operations. Continue?",
+                tr("Replace current Plan"),
+                tr(
+                    "Loading a saved Plan will replace all staged operations. Continue?"
+                ),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -1325,7 +1361,7 @@ class PlanExplorerPage(QWidget):
                 return
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Load Reusable Plan",
+            tr("Load Reusable Plan"),
             "",
             "File Tree Viewer Plans (*.json);;All Files (*)",
         )
@@ -1380,7 +1416,9 @@ class PlanExplorerPage(QWidget):
 
     def show_plan_io_progress(self, message: str, completed: int) -> None:
         self.task_progress.emit(message, completed, 0)
-        self.progress_label.setText(f"{message}: {completed:,}")
+        self.progress_label.setText(
+            tr("{value0}: {value1:,}", value0=message, value1=completed)
+        )
 
     def receive_plan_io_result(
         self,
@@ -1408,26 +1446,28 @@ class PlanExplorerPage(QWidget):
             self.ready_to_close.emit()
             return
         if outcome is None:
-            self.progress_label.setText("Plan file operation failed")
+            self.progress_label.setText(tr("Plan file operation failed"))
             return
         result, cancelled, error = outcome
         if error:
-            self.progress_label.setText("Plan file operation failed")
+            self.progress_label.setText(tr("Plan file operation failed"))
             show_error(
                 self,
-                "Cannot process Plan file",
-                "The file operation failed. Review the details before retrying.",
+                tr("Cannot process Plan file"),
+                tr("The file operation failed. Review the details before retrying."),
                 error,
             )
             self.status_changed.emit(error)
             return
         if cancelled:
-            self.progress_label.setText("Plan file operation cancelled")
-            self.status_changed.emit("Plan file operation cancelled")
+            self.progress_label.setText(tr("Plan file operation cancelled"))
+            self.status_changed.emit(tr("Plan file operation cancelled"))
             return
         if kind == "analysis_export":
-            self.progress_label.setText("Analysis report exported")
-            self.status_changed.emit(f"Exported analysis report: {result}")
+            self.progress_label.setText(tr("Analysis report exported"))
+            self.status_changed.emit(
+                tr("Exported analysis report: {value0}", value0=result)
+            )
             return
         if kind == "duplicate_review" and isinstance(result, tuple):
             self.stage_operations(
@@ -1436,7 +1476,7 @@ class PlanExplorerPage(QWidget):
             return
         if kind == "plan_preview" and isinstance(result, FileSnapshot):
             self.show_structure_preview(result)
-            self.progress_label.setText("Structure preview complete")
+            self.progress_label.setText(tr("Structure preview complete"))
             return
         if kind == "snapshot_compare" and isinstance(result, SnapshotComparison):
             dialog = SnapshotComparisonDialog(result, self)
@@ -1445,26 +1485,32 @@ class PlanExplorerPage(QWidget):
             finally:
                 dialog.deleteLater()
                 result.close()
-            self.progress_label.setText("Snapshot comparison complete")
+            self.progress_label.setText(tr("Snapshot comparison complete"))
             return
         if kind == "snapshot_load" and isinstance(result, FileSnapshot):
             self._replace_snapshot(result)
-            self.status_changed.emit(f"Loaded Snapshot: {result.name}")
+            self.status_changed.emit(
+                tr("Loaded Snapshot: {value0}", value0=result.name)
+            )
             return
         if kind == "snapshot_save":
-            self.status_changed.emit(f"Saved Snapshot: {result}")
-            self.progress_label.setText("Snapshot saved")
+            self.status_changed.emit(tr("Saved Snapshot: {value0}", value0=result))
+            self.progress_label.setText(tr("Snapshot saved"))
             return
         if kind == "save":
-            self.progress_label.setText(f"Saved {len(self.plan):,} operations")
-            self.status_changed.emit(f"Saved {len(self.plan):,} planned operation(s)")
+            self.progress_label.setText(
+                tr("Saved {value0:,} operations", value0=len(self.plan))
+            )
+            self.status_changed.emit(
+                tr("Saved {value0:,} planned operation(s)", value0=len(self.plan))
+            )
             return
         if not isinstance(result, tuple) or len(result) != 2:
-            self.progress_label.setText("Plan load failed")
+            self.progress_label.setText(tr("Plan load failed"))
             return
         loaded, source_root = result
         if not isinstance(loaded, FilePlan):
-            self.progress_label.setText("Plan load failed")
+            self.progress_label.setText(tr("Plan load failed"))
             return
         self.plan = loaded
         self._refresh_plan_list()
@@ -1475,17 +1521,22 @@ class PlanExplorerPage(QWidget):
             and source_root != str(self.snapshot.root)
             else ""
         )
-        self.progress_label.setText(f"Loaded {len(self.plan):,} operations")
+        self.progress_label.setText(
+            tr("Loaded {value0:,} operations", value0=len(self.plan))
+        )
         self.status_changed.emit(
-            f"Loaded {len(self.plan):,} planned operation(s){root_note}. "
-            "Run Diff / Simulate before applying."
+            tr(
+                "Loaded {value0:,} planned operation(s){value1}. Run Diff / Simulate before applying.",
+                value0=len(self.plan),
+                value1=root_note,
+            )
         )
 
     def toggle_analysis(self) -> None:
         if self.analysis_is_running:
             if self.analysis_worker is not None:
                 self.analysis_worker.cancel()
-                self.progress_label.setText("Cancelling analysis…")
+                self.progress_label.setText(tr("Cancelling analysis…"))
             return
         if (
             self.snapshot is None
@@ -1507,8 +1558,8 @@ class PlanExplorerPage(QWidget):
         self.analysis_worker = worker
         self.analysis_outcome = None
         self._set_analyzing(True)
-        self.progress_label.setText("Analyzing snapshot…")
-        self.status_changed.emit("Analyzing folder structure…")
+        self.progress_label.setText(tr("Analyzing snapshot…"))
+        self.status_changed.emit(tr("Analyzing folder structure…"))
         thread.start()
 
     def show_analysis_progress(self, message: str) -> None:
@@ -1536,28 +1587,34 @@ class PlanExplorerPage(QWidget):
             self.ready_to_close.emit()
             return
         if outcome is None:
-            self.progress_label.setText("Analysis failed")
+            self.progress_label.setText(tr("Analysis failed"))
             return
         result, cancelled, error = outcome
         if error:
-            self.progress_label.setText("Analysis failed")
+            self.progress_label.setText(tr("Analysis failed"))
             show_error(
-                self, "Cannot analyze snapshot", "Snapshot analysis stopped.", error
+                self,
+                tr("Cannot analyze snapshot"),
+                tr("Snapshot analysis stopped."),
+                error,
             )
             self.status_changed.emit(error)
             return
         if cancelled:
-            self.progress_label.setText("Analysis cancelled")
-            self.status_changed.emit("Folder analysis cancelled")
+            self.progress_label.setText(tr("Analysis cancelled"))
+            self.status_changed.emit(tr("Folder analysis cancelled"))
             return
         if not isinstance(result, StructureAnalysis):
-            self.progress_label.setText("Analysis failed")
+            self.progress_label.setText(tr("Analysis failed"))
             return
 
         self.progress_label.setText(
-            f"Analyzed {result.file_count + result.folder_count:,} items"
+            tr(
+                "Analyzed {value0:,} items",
+                value0=result.file_count + result.folder_count,
+            )
         )
-        self.status_changed.emit("Folder structure analysis complete")
+        self.status_changed.emit(tr("Folder structure analysis complete"))
         self.structure_analysis = result
         dialog = StructureAnalysisDialog(result, self)
         dialog.exec()
@@ -1567,7 +1624,7 @@ class PlanExplorerPage(QWidget):
         if self.diagnostic_is_running:
             if self.diagnostic_worker is not None:
                 self.diagnostic_worker.cancel()
-                self.progress_label.setText("Cancelling problem scan…")
+                self.progress_label.setText(tr("Cancelling problem scan…"))
             return
         if (
             self.snapshot is None
@@ -1589,8 +1646,8 @@ class PlanExplorerPage(QWidget):
         self.diagnostic_worker = worker
         self.diagnostic_outcome = None
         self._set_diagnosing(True)
-        self.progress_label.setText("Scanning for problems…")
-        self.status_changed.emit("Scanning for duplicate and problem files…")
+        self.progress_label.setText(tr("Scanning for problems…"))
+        self.status_changed.emit(tr("Scanning for duplicate and problem files…"))
         thread.start()
 
     def show_diagnostic_progress(self, message: str) -> None:
@@ -1618,28 +1675,33 @@ class PlanExplorerPage(QWidget):
             self.ready_to_close.emit()
             return
         if outcome is None:
-            self.progress_label.setText("Problem scan failed")
+            self.progress_label.setText(tr("Problem scan failed"))
             return
         result, cancelled, error = outcome
         if error:
-            self.progress_label.setText("Problem scan failed")
+            self.progress_label.setText(tr("Problem scan failed"))
             show_error(
-                self, "Cannot scan for problems", "The problem scan stopped.", error
+                self,
+                tr("Cannot scan for problems"),
+                tr("The problem scan stopped."),
+                error,
             )
             self.status_changed.emit(error)
             return
         if cancelled:
-            self.progress_label.setText("Problem scan cancelled")
-            self.status_changed.emit("Problem scan cancelled")
+            self.progress_label.setText(tr("Problem scan cancelled"))
+            self.status_changed.emit(tr("Problem scan cancelled"))
             return
         if not isinstance(result, DiagnosticReport):
-            self.progress_label.setText("Problem scan failed")
+            self.progress_label.setText(tr("Problem scan failed"))
             return
 
         duplicate_groups = len(result.duplicate_groups)
         total_problems = result.problem_count + duplicate_groups
-        self.progress_label.setText(f"Found {total_problems:,} problem group(s)")
-        self.status_changed.emit("Duplicate and problem file scan complete")
+        self.progress_label.setText(
+            tr("Found {value0:,} problem group(s)", value0=total_problems)
+        )
+        self.status_changed.emit(tr("Duplicate and problem file scan complete"))
         self.diagnostic_report = result
         dialog = DiagnosticDialog(
             result,
@@ -1664,7 +1726,7 @@ class PlanExplorerPage(QWidget):
         if self.simulation_is_running:
             if self.simulation_worker is not None:
                 self.simulation_worker.cancel()
-                self.progress_label.setText("Cancelling simulation…")
+                self.progress_label.setText(tr("Cancelling simulation…"))
             return
         if (
             self.snapshot is None
@@ -1703,8 +1765,8 @@ class PlanExplorerPage(QWidget):
         self.simulation_outcome = None
         self.simulation_purpose = purpose
         self._set_simulating(True)
-        self.progress_label.setText("Simulating Plan…")
-        self.status_changed.emit("Simulating Plan without changing files…")
+        self.progress_label.setText(tr("Simulating Plan…"))
+        self.status_changed.emit(tr("Simulating Plan without changing files…"))
         thread.start()
 
     def show_simulation_progress(
@@ -1714,7 +1776,14 @@ class PlanExplorerPage(QWidget):
         total: int,
     ) -> None:
         self.task_progress.emit(message, completed, total)
-        self.progress_label.setText(f"{message}: {completed:,}/{total:,}")
+        self.progress_label.setText(
+            tr(
+                "{value0}: {value1:,}/{value2:,}",
+                value0=message,
+                value1=completed,
+                value2=total,
+            )
+        )
 
     def receive_simulation_result(
         self,
@@ -1740,22 +1809,22 @@ class PlanExplorerPage(QWidget):
             self.ready_to_close.emit()
             return
         if outcome is None:
-            self.progress_label.setText("Simulation failed")
+            self.progress_label.setText(tr("Simulation failed"))
             return
         result, cancelled, error = outcome
         if error:
-            self.progress_label.setText("Simulation failed")
+            self.progress_label.setText(tr("Simulation failed"))
             self._show_plan_error(RuntimeError(error))
             return
         if cancelled:
-            self.progress_label.setText("Simulation cancelled")
-            self.status_changed.emit("Plan simulation cancelled")
+            self.progress_label.setText(tr("Simulation cancelled"))
+            self.status_changed.emit(tr("Plan simulation cancelled"))
             return
         if not isinstance(result, PlanSimulation):
-            self.progress_label.setText("Simulation failed")
+            self.progress_label.setText(tr("Simulation failed"))
             return
         self.progress_label.setText(
-            f"Simulated {len(result.changes):,} planned operations"
+            tr("Simulated {value0:,} planned operations", value0=len(result.changes))
         )
         if purpose == "apply":
             self.confirm_plan_apply_result(result)
@@ -1772,11 +1841,17 @@ class PlanExplorerPage(QWidget):
             return
         if simulation.can_apply:
             self.status_changed.emit(
-                f"Simulation complete: {len(simulation.changes):,} changes, no problems"
+                tr(
+                    "Simulation complete: {value0:,} changes, no problems",
+                    value0=len(simulation.changes),
+                )
             )
         else:
             self.status_changed.emit(
-                f"Simulation complete: {len(simulation.issues):,} problem(s)"
+                tr(
+                    "Simulation complete: {value0:,} problem(s)",
+                    value0=len(simulation.issues),
+                )
             )
 
     def resolve_plan_problems(self, simulation) -> None:
@@ -1802,15 +1877,20 @@ class PlanExplorerPage(QWidget):
         if not resolved_simulation.can_apply:
             QMessageBox.warning(
                 self,
-                "Plan still has problems",
-                "The selected resolutions produced new conflicts. "
-                "The original Plan was kept unchanged.",
+                tr("Plan still has problems"),
+                tr(
+                    "The selected resolutions produced new conflicts. "
+                    "The original Plan was kept unchanged."
+                ),
             )
             return
         self.plan = resolved_plan
         self._refresh_plan_list()
         self.status_changed.emit(
-            f"Resolved Plan: {resolved_simulation.skipped_count:,} operation(s) skipped"
+            tr(
+                "Resolved Plan: {value0:,} operation(s) skipped",
+                value0=resolved_simulation.skipped_count,
+            )
         )
         result_dialog = PlanDiffDialog(resolved_simulation, self)
         result_dialog.exec()
@@ -1855,11 +1935,14 @@ class PlanExplorerPage(QWidget):
         )
         answer = QMessageBox.warning(
             self,
-            "Apply Plan to real files",
-            f"Apply {active_count:,} operation(s) to:\n{self.snapshot.root}\n\n"
-            f"Deletes: {delete_count:,} · Overwrites: {overwrite_count:,}\n"
-            "The filesystem will change immediately. Recovery data will be kept "
-            "for the full Undo feature.",
+            tr("Apply Plan to real files"),
+            tr(
+                "Apply {value0:,} operation(s) to:\n{value1}\n\nDeletes: {value2:,} · Overwrites: {value3:,}\nThe filesystem will change immediately. Recovery data will be kept for the full Undo feature.",
+                value0=active_count,
+                value1=self.snapshot.root,
+                value2=delete_count,
+                value3=overwrite_count,
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1889,14 +1972,14 @@ class PlanExplorerPage(QWidget):
         self.apply_worker = worker
         self.apply_outcome = None
         self._set_applying(True)
-        self.progress_label.setText("Applying Plan…")
-        self.status_changed.emit("Applying Plan to real files…")
+        self.progress_label.setText(tr("Applying Plan…"))
+        self.status_changed.emit(tr("Applying Plan to real files…"))
         thread.start()
 
     def cancel_plan_apply(self) -> None:
         if self.apply_worker is not None:
             self.apply_worker.cancel()
-            self.progress_label.setText("Cancelling and restoring changes…")
+            self.progress_label.setText(tr("Cancelling and restoring changes…"))
 
     def show_apply_progress(
         self,
@@ -1905,8 +1988,18 @@ class PlanExplorerPage(QWidget):
         total: int,
         name: str,
     ) -> None:
-        self.task_progress.emit(f"{phase}: {name}", completed, total)
-        self.progress_label.setText(f"{phase}: {completed:,}/{total:,} — {name}")
+        self.task_progress.emit(
+            tr("{value0}: {value1}", value0=phase, value1=name), completed, total
+        )
+        self.progress_label.setText(
+            tr(
+                "{value0}: {value1:,}/{value2:,} — {value3}",
+                value0=phase,
+                value1=completed,
+                value2=total,
+                value3=name,
+            )
+        )
 
     def receive_apply_result(self, result: object, error: str) -> None:
         self.apply_outcome = (result, error)
@@ -1925,28 +2018,31 @@ class PlanExplorerPage(QWidget):
             self.ready_to_close.emit()
             return
         if outcome is None:
-            self.progress_label.setText("Apply failed")
+            self.progress_label.setText(tr("Apply failed"))
             return
         result, error = outcome
         if isinstance(result, RecoveryResult):
             self.filesystem_changed.emit(result.root)
             if result.errors:
                 QMessageBox.warning(
-                    self, "Recovery needs review", "\n".join(result.errors)
+                    self, tr("Recovery needs review"), "\n".join(result.errors)
                 )
             else:
                 QMessageBox.information(
                     self,
-                    "Recovery complete",
-                    f"Recovered {len(result.recovered):,} interrupted transaction(s).",
+                    tr("Recovery complete"),
+                    tr(
+                        "Recovered {value0:,} interrupted transaction(s).",
+                        value0=len(result.recovered),
+                    ),
                 )
             self._recovery_notified_root = None
             self.start_snapshot(result.root)
             return
         if error or not isinstance(result, PlanApplicationRecord):
             message = error or "The Plan worker returned no application record"
-            self.progress_label.setText("Apply failed before changes")
-            QMessageBox.warning(self, "Cannot apply Plan", message)
+            self.progress_label.setText(tr("Apply failed before changes"))
+            QMessageBox.warning(self, tr("Cannot apply Plan"), message)
             self.status_changed.emit(message)
             return
 
@@ -1956,33 +2052,41 @@ class PlanExplorerPage(QWidget):
             self.plan.clear()
             self._refresh_plan_list()
             self.progress_label.setText(
-                f"Applied {len(result.completed_operation_ids):,} operation(s)"
+                tr(
+                    "Applied {value0:,} operation(s)",
+                    value0=len(result.completed_operation_ids),
+                )
             )
             QMessageBox.information(
                 self,
-                "Plan applied",
-                f"Applied {len(result.completed_operation_ids):,} operation(s). "
-                "Recovery data was saved for full Undo.",
+                tr("Plan applied"),
+                tr(
+                    "Applied {value0:,} operation(s). Recovery data was saved for full Undo.",
+                    value0=len(result.completed_operation_ids),
+                ),
             )
             self.start_snapshot(result.root)
             return
         if result.status is ApplicationStatus.ROLLED_BACK:
-            self.progress_label.setText("Apply stopped; changes restored")
+            self.progress_label.setText(tr("Apply stopped; changes restored"))
             QMessageBox.warning(
                 self,
-                "Plan not applied",
-                f"{result.error}\n\nAll changes from this attempt were restored.",
+                tr("Plan not applied"),
+                tr(
+                    "{value0}\n\nAll changes from this attempt were restored.",
+                    value0=result.error,
+                ),
             )
-            self.status_changed.emit("Plan apply stopped and was rolled back")
+            self.status_changed.emit(tr("Plan apply stopped and was rolled back"))
             return
 
         self.plan.clear()
         self._refresh_plan_list()
-        self.progress_label.setText("Recovery incomplete")
+        self.progress_label.setText(tr("Recovery incomplete"))
         show_error(
             self,
-            "Manual recovery required",
-            "Some changes could not be restored.",
+            tr("Manual recovery required"),
+            tr("Some changes could not be restored."),
             str(result.error),
             recovery_path=result.journal_path,
         )
@@ -2005,8 +2109,10 @@ class PlanExplorerPage(QWidget):
         if len(self.plan):
             QMessageBox.warning(
                 self,
-                "Cannot undo last Plan",
-                "Clear the currently staged Plan before undoing the last application.",
+                tr("Cannot undo last Plan"),
+                tr(
+                    "Clear the currently staged Plan before undoing the last application."
+                ),
             )
             return
         marker = record.transaction_directory / "sync.json"
@@ -2064,7 +2170,7 @@ class PlanExplorerPage(QWidget):
             return
         answer = QMessageBox.warning(
             self,
-            "Recover interrupted Plan",
+            tr("Recover interrupted Plan"),
             scan.summary()
             + "\n\nRoll back interrupted changes? Conflicting files will be preserved.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -2105,8 +2211,8 @@ class PlanExplorerPage(QWidget):
         self.undo_worker = worker
         self.undo_outcome = None
         self._set_undoing(True)
-        self.progress_label.setText("Checking and undoing last Plan…")
-        self.status_changed.emit("Undoing last applied Plan…")
+        self.progress_label.setText(tr("Checking and undoing last Plan…"))
+        self.status_changed.emit(tr("Undoing last applied Plan…"))
         thread.start()
 
     def receive_undo_result(self, result: object, error: str) -> None:
@@ -2126,7 +2232,7 @@ class PlanExplorerPage(QWidget):
             self.ready_to_close.emit()
             return
         if outcome is None:
-            self.progress_label.setText("Undo failed")
+            self.progress_label.setText(tr("Undo failed"))
             return
         result, error = outcome
         if isinstance(result, (SyncApplication, RecoveryResult)):
@@ -2143,12 +2249,14 @@ class PlanExplorerPage(QWidget):
             if errors:
                 show_error(
                     self,
-                    "Recovery needs review",
-                    "Conflicting files were preserved. Resolve the recorded conflicts before retrying.",
+                    tr("Recovery needs review"),
+                    tr(
+                        "Conflicting files were preserved. Resolve the recorded conflicts before retrying."
+                    ),
                     "\n".join(errors),
                 )
             else:
-                self.status_changed.emit("Coordinated recovery / Undo complete")
+                self.status_changed.emit(tr("Coordinated recovery / Undo complete"))
             selected_root = (
                 self.snapshot.root
                 if self.snapshot and self.snapshot.root in roots
@@ -2158,33 +2266,37 @@ class PlanExplorerPage(QWidget):
             return
         if error or not isinstance(result, PlanApplicationRecord):
             message = error or "The Undo worker returned no application record"
-            self.progress_label.setText("Undo could not start")
-            QMessageBox.warning(self, "Cannot undo last Plan", message)
+            self.progress_label.setText(tr("Undo could not start"))
+            QMessageBox.warning(self, tr("Cannot undo last Plan"), message)
             self.status_changed.emit(message)
             return
         self.filesystem_changed.emit(result.root)
         if result.status is ApplicationStatus.UNDONE:
             self.last_application = None
-            self.progress_label.setText("Last Plan fully undone")
+            self.progress_label.setText(tr("Last Plan fully undone"))
             QMessageBox.information(
                 self,
-                "Plan undone",
-                f"Restored {len(result.completed_operation_ids):,} operation(s).",
+                tr("Plan undone"),
+                tr(
+                    "Restored {value0:,} operation(s).",
+                    value0=len(result.completed_operation_ids),
+                ),
             )
-            self.status_changed.emit("Last applied Plan was fully undone")
+            self.status_changed.emit(tr("Last applied Plan was fully undone"))
             self.start_snapshot(result.root)
             return
 
         self.last_application = None
-        self.progress_label.setText("Undo recovery incomplete")
+        self.progress_label.setText(tr("Undo recovery incomplete"))
         QMessageBox.critical(
             self,
-            "Manual recovery required",
-            "Some Plan changes could not be undone. Do not apply another Plan "
-            "until this recovery record is checked:\n"
-            f"{result.journal_path}",
+            tr("Manual recovery required"),
+            tr(
+                "Some Plan changes could not be undone. Do not apply another Plan until this recovery record is checked:\n{value0}",
+                value0=result.journal_path,
+            ),
         )
-        self.status_changed.emit("Plan Undo requires manual recovery")
+        self.status_changed.emit(tr("Plan Undo requires manual recovery"))
         self.start_snapshot(result.root)
 
     def stage_operations(
@@ -2199,7 +2311,11 @@ class PlanExplorerPage(QWidget):
         self.plan.extend(additions)
         self._refresh_plan_list()
         self.status_changed.emit(
-            f"{source}: staged {len(additions):,} change(s). Review Diff / Simulate before Apply."
+            tr(
+                "{value0}: staged {value1:,} change(s). Review Diff / Simulate before Apply.",
+                value0=source,
+                value1=len(additions),
+            )
         )
 
     def _finish_staging(self, operation: PlanOperation) -> None:
@@ -2207,7 +2323,7 @@ class PlanExplorerPage(QWidget):
             [operation.operation_id], self.default_conflict_policy
         )
         self._refresh_plan_list()
-        self.status_changed.emit(f"Staged {operation.action.value}")
+        self.status_changed.emit(tr("Staged {value0}", value0=operation.action.value))
 
     def _refresh_plan_list(self) -> None:
         self.plan_model.set_plan(self.plan)
@@ -2225,7 +2341,9 @@ class PlanExplorerPage(QWidget):
             + (f" | {summary}" if summary else "")
         )
         self.plan_count.setToolTip(
-            "Changes are staged only. Review Diff / Simulate, then explicitly Apply to modify files."
+            tr(
+                "Changes are staged only. Review Diff / Simulate, then explicitly Apply to modify files."
+            )
         )
         self.update_buttons()
 
@@ -2269,8 +2387,10 @@ class PlanExplorerPage(QWidget):
     def _confirm_plan_replacement(self) -> bool:
         answer = QMessageBox.question(
             self,
-            "Discard current plan",
-            "Importing another snapshot will discard all staged operations. Continue?",
+            tr("Discard current plan"),
+            tr(
+                "Importing another snapshot will discard all staged operations. Continue?"
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2279,8 +2399,8 @@ class PlanExplorerPage(QWidget):
     def _show_plan_error(self, error: Exception) -> None:
         show_error(
             self,
-            "Cannot process Plan",
-            "Review the selected paths, operation and conflicts.",
+            tr("Cannot process Plan"),
+            tr("Review the selected paths, operation and conflicts."),
             str(error),
         )
         self.status_changed.emit(str(error))
@@ -2402,7 +2522,10 @@ class PlanExplorerPage(QWidget):
         self.recovery_notice.setVisible(attention)
         if attention:
             self.recovery_notice.setText(
-                f"Recovery required — {len(self.recovery_scan.candidates):,} record(s) need review. Apply is blocked; use Recover Interrupted Plan."
+                tr(
+                    "Recovery required — {value0:,} record(s) need review. Apply is blocked; use Recover Interrupted Plan.",
+                    value0=len(self.recovery_scan.candidates),
+                )
             )
             self.recovery_notice.setToolTip(self.recovery_scan.summary())
         ready = (
@@ -2524,8 +2647,8 @@ class PlanExplorerPage(QWidget):
             self.close_cancelled = True
             QMessageBox.information(
                 self,
-                "Undo in progress",
-                "Wait for the full Plan Undo to finish before closing.",
+                tr("Undo in progress"),
+                tr("Wait for the full Plan Undo to finish before closing."),
             )
             return False
         if self.analysis_is_running:
@@ -2548,8 +2671,8 @@ class PlanExplorerPage(QWidget):
         if len(self.plan):
             answer = QMessageBox.question(
                 self,
-                "Discard current plan",
-                "Discard all staged operations and close?",
+                tr("Discard current plan"),
+                tr("Discard all staged operations and close?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )

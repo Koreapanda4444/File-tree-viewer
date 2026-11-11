@@ -86,6 +86,7 @@ from ui.file_drop import FileDropController
 from ui.file_groups import FileGroupDelegate
 from ui.file_views import FolderViews
 from ui.folder_compare import FolderComparisonDialog
+from ui.i18n import add_choice, add_choices, choice_text, set_language, tr
 from ui.image_preview import ImagePreview
 from ui.live_search import LiveSearch
 from ui.locations import LocationsButton, LocationStore
@@ -137,9 +138,9 @@ class ExplorerPage(QWidget):
     def _create_location_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         if not self.virtual:
-            self.back_button = QPushButton("Back")
-            self.forward_button = QPushButton("Forward")
-            self.up_button = QPushButton("Up")
+            self.back_button = QPushButton(tr("Back"))
+            self.forward_button = QPushButton(tr("Forward"))
+            self.up_button = QPushButton(tr("Up"))
             for button, icon in (
                 (self.back_button, QStyle.StandardPixmap.SP_ArrowBack),
                 (self.forward_button, QStyle.StandardPixmap.SP_ArrowForward),
@@ -147,19 +148,19 @@ class ExplorerPage(QWidget):
             ):
                 button.setToolTip(button.text())
                 button.setIcon(self.style().standardIcon(icon))
-                button.setText("")
+                button.setText(tr(""))
                 button.setFixedWidth(36)
                 button.setEnabled(False)
                 row.addWidget(button)
-        row.addWidget(QLabel("Workspace" if self.virtual else "Root"))
+        row.addWidget(QLabel(tr("Workspace" if self.virtual else "Root")))
 
         self.location = QLineEdit()
         self.location.setReadOnly(self.virtual)
         if self.virtual:
-            self.location.setText("VM:/")
+            self.location.setText(tr("VM:/"))
         else:
             self.location.setPlaceholderText(
-                "Enter a folder or drive path, then press Enter"
+                tr("Enter a folder or drive path, then press Enter")
             )
         if self.virtual:
             row.addWidget(self.location, 1)
@@ -169,10 +170,10 @@ class ExplorerPage(QWidget):
 
         self.location_buttons = []
         if self.virtual:
-            self.save_button = QPushButton("Save")
-            self.load_button = QPushButton("Load")
-            self.export_button = QPushButton("Export")
-            self.reset_button = QPushButton("Reset")
+            self.save_button = QPushButton(tr("Save"))
+            self.load_button = QPushButton(tr("Load"))
+            self.export_button = QPushButton(tr("Export"))
+            self.reset_button = QPushButton(tr("Reset"))
             self.location_buttons.extend(
                 (
                     self.save_button,
@@ -182,15 +183,15 @@ class ExplorerPage(QWidget):
                 )
             )
         else:
-            self.select_root_button = QPushButton("Select Root")
-            self.refresh_button = QPushButton("Refresh")
+            self.select_root_button = QPushButton(tr("Select Root"))
+            self.refresh_button = QPushButton(tr("Refresh"))
             self.location_buttons.extend((self.select_root_button, self.refresh_button))
 
         for button in self.location_buttons:
             button.setEnabled(False)
             row.addWidget(button)
 
-        self.show_hidden = QCheckBox("Show hidden")
+        self.show_hidden = QCheckBox(tr("Show hidden"))
         self.show_hidden.setVisible(not self.virtual)
         self.show_hidden.setEnabled(False)
         row.addWidget(self.show_hidden)
@@ -203,11 +204,11 @@ class ExplorerPage(QWidget):
         layout.addLayout(row)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search files and folders")
+        self.search_input.setPlaceholderText(tr("Search files and folders"))
         self.search_input.setEnabled(False)
 
-        self.search_button = QPushButton("Search")
-        self.clear_search_button = QPushButton("Clear")
+        self.search_button = QPushButton(tr("Search"))
+        self.clear_search_button = QPushButton(tr("Clear"))
         self.search_button.setEnabled(False)
         self.clear_search_button.setEnabled(False)
 
@@ -217,15 +218,15 @@ class ExplorerPage(QWidget):
         if not self.virtual:
             row = FlowLayout()
             layout.addLayout(row)
-            self.search_filters_button = QPushButton("Filters…")
-            self.search_tools_button = QPushButton("Search Tools…")
+            self.search_filters_button = QPushButton(tr("Filters…"))
+            self.search_tools_button = QPushButton(tr("Search Tools…"))
             row.addWidget(self.search_filters_button)
             row.addWidget(self.search_tools_button)
             self.name_input = QLineEdit()
-            self.name_input.setPlaceholderText("Jump to file or folder…")
+            self.name_input.setPlaceholderText(tr("Jump to file or folder…"))
             self.name_input.setFixedWidth(240)
             self.name_input.setEnabled(False)
-            self.jump_button = QPushButton("Jump")
+            self.jump_button = QPushButton(tr("Jump"))
             self.jump_button.setEnabled(False)
             row.addWidget(self.name_input)
             row.addWidget(self.jump_button)
@@ -244,7 +245,9 @@ class ExplorerPage(QWidget):
         self.tree.setIndentation(18)
 
         empty_model = QStandardItemModel(self.tree)
-        empty_model.setHorizontalHeaderLabels(("Name", "Type", "Size", "Modified"))
+        empty_model.setHorizontalHeaderLabels(
+            (tr("Name"), tr("Type"), tr("Size"), tr("Modified"))
+        )
         self.tree.setModel(empty_model)
         self.tree.header().resizeSection(0, 360)
         if self.virtual:
@@ -274,7 +277,7 @@ class ExplorerPage(QWidget):
         details_layout = QVBoxLayout(details)
         details_layout.setContentsMargins(0, 0, 0, 0)
 
-        details_group = QGroupBox("Details")
+        details_group = QGroupBox(tr("Details"))
         details_group.setMinimumHeight(230)
         details_form = QFormLayout(details_group)
         self.detail_values = {}
@@ -287,29 +290,29 @@ class ExplorerPage(QWidget):
             "Permissions",
             "Link target",
         ):
-            value = QLabel("-")
+            value = QLabel(tr("-"))
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             value.setWordWrap(label in ("Path", "Link target"))
             self.detail_values[label.lower()] = value
-            details_form.addRow(f"{label}:", value)
-        self.metadata_button = QPushButton("Inspect Metadata")
+            details_form.addRow(tr("{value0}:", value0=tr(label)), value)
+        self.metadata_button = QPushButton(tr("Inspect Metadata"))
         self.metadata_button.setEnabled(False)
         self.metadata_button.setVisible(not self.virtual)
         details_form.addRow(self.metadata_button)
         details_layout.addWidget(details_group)
 
-        preview_group = QGroupBox("Preview")
+        preview_group = QGroupBox(tr("Preview"))
         preview_group.setMinimumHeight(250)
         preview_layout = QVBoxLayout(preview_group)
 
         preview_toolbar = FlowLayout()
-        self.preview_status = QLabel("Select a file to preview it")
+        self.preview_status = QLabel(tr("Select a file to preview it"))
         self.preview_status.setWordWrap(True)
         preview_layout.addWidget(self.preview_status)
 
-        self.save_file_button = QPushButton("Save")
-        self.reload_file_button = QPushButton("Reload")
-        self.open_external_button = QPushButton("Open Externally")
+        self.save_file_button = QPushButton(tr("Save"))
+        self.reload_file_button = QPushButton(tr("Reload"))
+        self.open_external_button = QPushButton(tr("Open Externally"))
         for button in (
             self.save_file_button,
             self.reload_file_button,
@@ -321,7 +324,7 @@ class ExplorerPage(QWidget):
 
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
-        self.preview.setPlaceholderText("Select a file to preview it")
+        self.preview.setPlaceholderText(tr("Select a file to preview it"))
         preview_layout.addWidget(self.preview)
         self.image_preview = ImagePreview()
         self.image_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -355,7 +358,7 @@ class ExplorerPage(QWidget):
 
         self.action_buttons = []
         for attribute, name in actions:
-            button = QPushButton(name)
+            button = QPushButton(tr(name))
             button.setEnabled(False)
             setattr(self, attribute, button)
             self.action_buttons.append(button)
@@ -368,17 +371,17 @@ class ExplorerPage(QWidget):
                 ("Skip conflicts", "skip"),
                 ("Stop on conflict", "stop"),
             ):
-                self.transfer_policy.addItem(label, value)
+                add_choice(self.transfer_policy, label, value)
             self.transfer_policy.setToolTip(
-                "Conflict policy for Real copy/move; existing files are preserved"
+                tr("Conflict policy for Real copy/move; existing files are preserved")
             )
-            self.operation_results_button = QPushButton("Last Operation")
+            self.operation_results_button = QPushButton(tr("Last Operation"))
             self.operation_results_button.setEnabled(False)
             row.addWidget(self.transfer_policy)
             row.addWidget(self.operation_results_button)
-            self.compare_files_button = QPushButton("Compare Files")
+            self.compare_files_button = QPushButton(tr("Compare Files"))
             row.addWidget(self.compare_files_button)
-        self.tree_export_button = QPushButton("Export Tree…")
+        self.tree_export_button = QPushButton(tr("Export Tree…"))
         row.addWidget(self.tree_export_button)
         self.delete_button.setProperty("danger", True)
         return row
@@ -452,15 +455,15 @@ class RealExplorerPage(ExplorerPage):
         self._set_tree_model(self.model)
         self._configure_tree_columns()
         self.sort_field = QComboBox()
-        self.sort_field.addItems(("Name", "Type", "Size", "Modified"))
+        add_choices(self.sort_field, ("Name", "Type", "Size", "Modified"))
         self.sort_order = QComboBox()
-        self.sort_order.addItems(("Ascending", "Descending"))
+        add_choices(self.sort_order, ("Ascending", "Descending"))
         self.group_field = QComboBox()
-        self.group_field.addItems(("None", "Type", "Date", "Size"))
+        add_choices(self.group_field, ("None", "Type", "Date", "Size"))
         self.group_field.setToolTip(
-            "Group all directory entries before loading display pages"
+            tr("Group all directory entries before loading display pages")
         )
-        self.folders_first = QCheckBox("Folders first")
+        self.folders_first = QCheckBox(tr("Folders first"))
         self.folders_first.setChecked(True)
         for control in (
             self.sort_field,
@@ -603,7 +606,7 @@ class RealExplorerPage(ExplorerPage):
                     self.browse_model.mapFromSource(self.model.index_for_path(path))
                 )
         if paths:
-            self.status_changed.emit("External file changes refreshed")
+            self.status_changed.emit(tr("External file changes refreshed"))
 
     @property
     def search_is_running(self) -> bool:
@@ -621,7 +624,7 @@ class RealExplorerPage(ExplorerPage):
         initial = str(self.model.root_path or Path.home())
         selected = QFileDialog.getExistingDirectory(
             self,
-            "Select root folder or drive",
+            tr("Select root folder or drive"),
             initial,
             QFileDialog.Option.ShowDirsOnly,
         )
@@ -647,7 +650,7 @@ class RealExplorerPage(ExplorerPage):
             or self.preview_is_running
         ):
             self.status_changed.emit(
-                "Wait for Real tasks to finish before changing the root"
+                tr("Wait for Real tasks to finish before changing the root")
             )
             return False
         if self.model.root_path is not None and not self._confirm_editor_transition():
@@ -658,7 +661,7 @@ class RealExplorerPage(ExplorerPage):
             else:
                 self.model.set_root(path)
         except (OSError, ValueError) as error:
-            QMessageBox.critical(self, "Cannot open root", str(error))
+            QMessageBox.critical(self, tr("Cannot open root"), str(error))
             return False
 
         self._show_path(None)
@@ -686,7 +689,7 @@ class RealExplorerPage(ExplorerPage):
         )
         self.location_changed.emit(self.model.root_path)
         self.status_changed.emit(
-            f"Root: {self.model.root_path}"
+            tr("Root: {value0}", value0=self.model.root_path)
             + ("" if saved else " — recent locations could not be saved")
         )
         return True
@@ -699,7 +702,7 @@ class RealExplorerPage(ExplorerPage):
             path = (self.model.root_path or Path.home()) / path
         path = Path(os.path.abspath(path))
         if not path.exists() and not path.is_symlink():
-            self.status_changed.emit(f"Item no longer exists: {path}")
+            self.status_changed.emit(tr("Item no longer exists: {value0}", value0=path))
             return
         if path.is_dir() and not path.is_symlink():
             self.set_root(path)
@@ -709,7 +712,7 @@ class RealExplorerPage(ExplorerPage):
                 return
         elif not self._confirm_editor_transition():
             return
-        self.status_changed.emit(f"Locating {path.name}…")
+        self.status_changed.emit(tr("Locating {value0}…", value0=path.name))
         self.file_revealer.start(path)
 
     def sort_by_header(self, column):
@@ -719,7 +722,7 @@ class RealExplorerPage(ExplorerPage):
             self.sort_field.setCurrentIndex(column)
 
     def update_sorting(self):
-        self.browse_model.grouping = self.group_field.currentText()
+        self.browse_model.grouping = choice_text(self.group_field)
         self.browse_model.folders_first = self.folders_first.isChecked()
         self.browse_model.invalidate()
         order = (
@@ -730,7 +733,7 @@ class RealExplorerPage(ExplorerPage):
         self.model.set_sort_options(
             self.sort_field.currentIndex(),
             bool(self.sort_order.currentIndex()),
-            self.group_field.currentText(),
+            choice_text(self.group_field),
             self.folders_first.isChecked(),
         )
         self._expand_root()
@@ -739,7 +742,7 @@ class RealExplorerPage(ExplorerPage):
             self.sort_field.currentIndex(), order
         )
         self.folder_view.header().setSortIndicatorShown(True)
-        self.folder_icons.setUniformItemSizes(self.group_field.currentText() == "None")
+        self.folder_icons.setUniformItemSizes(choice_text(self.group_field) == "None")
         self.folder_view.viewport().update()
         self.folder_icons.viewport().update()
 
@@ -760,7 +763,9 @@ class RealExplorerPage(ExplorerPage):
         self.tree.scrollTo(index)
         self.folder_panel.active_view.scrollTo(index)
         self.folder_panel.active_view.setFocus()
-        self.status_changed.emit(f"Selected: {self._path_from_index(index)}")
+        self.status_changed.emit(
+            tr("Selected: {value0}", value0=self._path_from_index(index))
+        )
 
     def toggle_favorite(self, path):
         if path is None:
@@ -772,7 +777,7 @@ class RealExplorerPage(ExplorerPage):
             return
         self.locations_changed.emit()
         self.status_changed.emit(
-            "Favorites updated" if saved else "Favorites could not be saved"
+            tr("Favorites updated" if saved else "Favorites could not be saved")
         )
 
     def update_navigation_buttons(self):
@@ -805,7 +810,9 @@ class RealExplorerPage(ExplorerPage):
             index, path = candidate
             if not path.is_dir():
                 self.history.discard(index)
-                self.status_changed.emit(f"Skipped unavailable location: {path}")
+                self.status_changed.emit(
+                    tr("Skipped unavailable location: {value0}", value0=path)
+                )
                 candidate = self.history.candidate(direction)
                 continue
             self.history_navigation = True
@@ -830,7 +837,7 @@ class RealExplorerPage(ExplorerPage):
             self._show_operation_error("Cannot refresh root", error)
             return
         self._expand_root()
-        self.status_changed.emit("Tree refreshed")
+        self.status_changed.emit(tr("Tree refreshed"))
 
     def toggle_hidden(self, enabled: bool) -> None:
         if not self._confirm_editor_transition():
@@ -882,7 +889,7 @@ class RealExplorerPage(ExplorerPage):
     def start_search(self) -> None:
         if self.search_export_thread is not None:
             self.status_changed.emit(
-                "Wait for search export to finish, or cancel it using Cancel Task"
+                tr("Wait for search export to finish, or cancel it using Cancel Task")
             )
             return
         if self.operation_is_running:
@@ -936,7 +943,7 @@ class RealExplorerPage(ExplorerPage):
         )
         self.live_search.started(thread)
         self._set_search_running(True)
-        self.status_changed.emit(f'Searching for "{query}"...')
+        self.status_changed.emit(tr('Searching for "{value0}"...', value0=query))
         thread.start()
 
     def receive_search_batch(self, batch: list) -> None:
@@ -947,7 +954,9 @@ class RealExplorerPage(ExplorerPage):
         except (OSError, sqlite3.Error) as error:
             if worker is not None:
                 worker.cancel()
-            self.status_changed.emit(f"Cannot store search results: {error}")
+            self.status_changed.emit(
+                tr("Cannot store search results: {value0}", value0=error)
+            )
         finally:
             if worker is not None:
                 worker.batch_processed()
@@ -957,13 +966,13 @@ class RealExplorerPage(ExplorerPage):
             return
         self.search_worker.cancel()
         self.search_button.setEnabled(False)
-        self.status_changed.emit("Cancelling search...")
+        self.status_changed.emit(tr("Cancelling search..."))
 
     def clear_search(self) -> None:
         if self.search_export_thread is not None:
             self.search_export_worker.cancel()
             self.status_changed.emit(
-                "Cancelling search export; retry Clear after it stops"
+                tr("Cancelling search export; retry Clear after it stops")
             )
             return
         if not self._confirm_editor_transition():
@@ -978,19 +987,27 @@ class RealExplorerPage(ExplorerPage):
         self._configure_tree_columns()
         self._expand_root()
         if self.model.root_path is not None:
-            self.status_changed.emit(f"Root: {self.model.root_path}")
+            self.status_changed.emit(tr("Root: {value0}", value0=self.model.root_path))
 
     def show_search_progress(self, scanned: int, matched: int) -> None:
-        self.task_progress.emit(f"{scanned:,} checked, {matched:,} found", scanned, 0)
+        self.task_progress.emit(
+            tr("{value0:,} checked, {value1:,} found", value0=scanned, value1=matched),
+            scanned,
+            0,
+        )
         if self.search_view_active and self.live_search.accepts:
             self.status_changed.emit(
-                f"Searching: {scanned:,} checked, {matched:,} found"
+                tr(
+                    "Searching: {value0:,} checked, {value1:,} found",
+                    value0=scanned,
+                    value1=matched,
+                )
             )
 
     def show_search_error(self, message: str) -> None:
         if self.search_view_active and self.live_search.accepts:
             self.search_error = message
-            self.status_changed.emit(f"Search error: {message}")
+            self.status_changed.emit(tr("Search error: {value0}", value0=message))
 
     def finish_search(
         self,
@@ -1068,7 +1085,7 @@ class RealExplorerPage(ExplorerPage):
             self._clear_details()
             self._set_preview_text("")
             self.preview.setReadOnly(True)
-            self.preview_status.setText("Select a file to preview it")
+            self.preview_status.setText(tr("Select a file to preview it"))
             self.save_file_button.setEnabled(False)
             self.reload_file_button.setEnabled(False)
             self.open_external_button.setEnabled(False)
@@ -1079,7 +1096,7 @@ class RealExplorerPage(ExplorerPage):
         if path.is_dir():
             self._set_preview_text("")
             self.preview.setReadOnly(True)
-            self.preview_status.setText("Folder selected")
+            self.preview_status.setText(tr("Folder selected"))
             self.save_file_button.setEnabled(False)
             self.reload_file_button.setEnabled(False)
             return
@@ -1089,7 +1106,7 @@ class RealExplorerPage(ExplorerPage):
     def _request_preview(self, path: Path) -> None:
         self._set_preview_text("")
         self.preview.setReadOnly(True)
-        self.preview_status.setText("Loading preview...")
+        self.preview_status.setText(tr("Loading preview..."))
         self.save_file_button.setEnabled(False)
         self.reload_file_button.setEnabled(False)
 
@@ -1159,7 +1176,9 @@ class RealExplorerPage(ExplorerPage):
         if result.error:
             self._set_preview_text("")
             self.preview.setReadOnly(True)
-            self.preview_status.setText(f"Cannot preview file: {result.error}")
+            self.preview_status.setText(
+                tr("Cannot preview file: {value0}", value0=result.error)
+            )
             return
         if result.image is not None:
             self._set_preview_text("")
@@ -1167,14 +1186,18 @@ class RealExplorerPage(ExplorerPage):
             self.image_preview.set_image(result.image)
             self.image_preview.show()
             self.preview_status.setText(
-                f"Read-only image · {result.image.width()} × {result.image.height()} preview"
+                tr(
+                    "Read-only image · {value0} × {value1} preview",
+                    value0=result.image.width(),
+                    value1=result.image.height(),
+                )
             )
             return
         if result.binary:
             self._set_preview_text(result.text)
             self.preview.setReadOnly(True)
             self.preview_status.setText(
-                "Read-only binary preview · first 4 KB in hexadecimal"
+                tr("Read-only binary preview · first 4 KB in hexadecimal")
             )
             return
 
@@ -1182,14 +1205,19 @@ class RealExplorerPage(ExplorerPage):
         self.preview.setReadOnly(not result.editable)
         if result.truncated:
             self.preview_status.setText(
-                f"Large file - showing the first 1 MB of {self._format_size(result.size)}"
+                tr(
+                    "Large file - showing the first 1 MB of {value0}",
+                    value0=self._format_size(result.size),
+                )
             )
         elif result.is_link:
             self.preview_status.setText(
-                f"Symbolic link - read-only text - {result.encoding}"
+                tr("Symbolic link - read-only text - {value0}", value0=result.encoding)
             )
         else:
-            self.preview_status.setText(f"Editable text - {result.encoding}")
+            self.preview_status.setText(
+                tr("Editable text - {value0}", value0=result.encoding)
+            )
         self.editor_text_changed()
 
     def editor_text_changed(self) -> None:
@@ -1209,8 +1237,8 @@ class RealExplorerPage(ExplorerPage):
         if path.is_symlink():
             QMessageBox.warning(
                 self,
-                "Cannot save file",
-                "Symbolic links are read-only in the built-in editor.",
+                tr("Cannot save file"),
+                tr("Symbolic links are read-only in the built-in editor."),
             )
             return False
 
@@ -1228,8 +1256,8 @@ class RealExplorerPage(ExplorerPage):
         ):
             answer = QMessageBox.warning(
                 self,
-                "File changed",
-                "The file changed outside the editor. Overwrite it?",
+                tr("File changed"),
+                tr("The file changed outside the editor. Overwrite it?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
@@ -1269,9 +1297,9 @@ class RealExplorerPage(ExplorerPage):
         )
         self.preview.document().setModified(False)
         self.save_file_button.setEnabled(False)
-        self.preview_status.setText(f"Saved - {result.encoding}")
+        self.preview_status.setText(tr("Saved - {value0}", value0=result.encoding))
         self._update_details(path)
-        self.status_changed.emit(f"Saved {path}")
+        self.status_changed.emit(tr("Saved {value0}", value0=path))
         return True
 
     def reload_current_file(self) -> None:
@@ -1288,7 +1316,7 @@ class RealExplorerPage(ExplorerPage):
         if path is None:
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
-            QMessageBox.warning(self, "Cannot open item", str(path))
+            QMessageBox.warning(self, tr("Cannot open item"), str(path))
 
     def _confirm_editor_transition(self) -> bool:
         if not self.preview.document().isModified():
@@ -1296,8 +1324,8 @@ class RealExplorerPage(ExplorerPage):
 
         answer = QMessageBox.warning(
             self,
-            "Unsaved changes",
-            "Save changes before continuing?",
+            tr("Unsaved changes"),
+            tr("Save changes before continuing?"),
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
@@ -1363,12 +1391,12 @@ class RealExplorerPage(ExplorerPage):
             self._show_operation_error("Cannot inspect metadata", error)
             return
         dialog = QDialog(self)
-        dialog.setWindowTitle("File Metadata")
+        dialog.setWindowTitle(tr("File Metadata"))
         dialog.resize(900, 650)
         layout = QVBoxLayout(dialog)
         values = metadata.display_values()
         table = QTableWidget(len(values), 2)
-        table.setHorizontalHeaderLabels(("Property", "Value"))
+        table.setHorizontalHeaderLabels((tr("Property"), tr("Value")))
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setColumnWidth(0, 250)
         table.horizontalHeader().setStretchLastSection(True)
@@ -1392,7 +1420,7 @@ class RealExplorerPage(ExplorerPage):
         self.current_metadata = None
         self.metadata_button.setEnabled(False)
         for value in self.detail_values.values():
-            value.setText("-")
+            value.setText(tr("-"))
 
     def _set_preview_text(self, text: str) -> None:
         self.image_preview.hide()
@@ -1456,7 +1484,7 @@ class RealExplorerPage(ExplorerPage):
             return
         paths = [path for path in self.selected_paths() if path.is_file()]
         while len(paths) < 2:
-            path, _ = QFileDialog.getOpenFileName(self, "Select File to Compare")
+            path, _ = QFileDialog.getOpenFileName(self, tr("Select File to Compare"))
             if not path:
                 return
             paths.append(Path(path))
@@ -1482,8 +1510,8 @@ class RealExplorerPage(ExplorerPage):
         label = "folder" if directory else "file"
         name, accepted = QInputDialog.getText(
             self,
-            f"New {label.title()}",
-            f"{label.title()} name:",
+            tr("New {value0}", value0=tr(label).title()),
+            tr("{value0} name:", value0=tr(label).title()),
         )
         if not accepted:
             return
@@ -1523,7 +1551,9 @@ class RealExplorerPage(ExplorerPage):
             [change.target for change in record.changes if change.target is not None]
         )
         self._refresh_after_operation()
-        self.status_changed.emit(f"Created {record.changes[0].target}")
+        self.status_changed.emit(
+            tr("Created {value0}", value0=record.changes[0].target)
+        )
 
     def rename_selected(self) -> None:
         selected = self._operable_selected_paths()
@@ -1534,8 +1564,8 @@ class RealExplorerPage(ExplorerPage):
         source = selected[0]
         new_name, accepted = QInputDialog.getText(
             self,
-            "Rename",
-            "New name:",
+            tr("Rename"),
+            tr("New name:"),
             text=source.name,
         )
         if not accepted:
@@ -1576,7 +1606,9 @@ class RealExplorerPage(ExplorerPage):
             [change.target for change in record.changes if change.target is not None]
         )
         self._refresh_after_operation()
-        self.status_changed.emit(f"Renamed to {record.changes[0].target.name}")
+        self.status_changed.emit(
+            tr("Renamed to {value0}", value0=record.changes[0].target.name)
+        )
 
     def transfer_selected(self, action: str) -> None:
         sources = self._operable_selected_paths()
@@ -1588,7 +1620,7 @@ class RealExplorerPage(ExplorerPage):
         initial = self._selected_directory() or self.model.root_path or Path.home()
         selected = QFileDialog.getExistingDirectory(
             self,
-            f"Choose {action} destination",
+            tr("Choose {value0} destination", value0=action),
             str(initial),
             QFileDialog.Option.ShowDirsOnly,
         )
@@ -1613,7 +1645,7 @@ class RealExplorerPage(ExplorerPage):
             question = f"Move {len(sources)} selected items to the Recycle Bin?"
         answer = QMessageBox.question(
             self,
-            "Delete",
+            tr("Delete"),
             question,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -1660,7 +1692,7 @@ class RealExplorerPage(ExplorerPage):
         self.operation_record = record
         self.operation_outcome = None
         self._set_operation_running(True)
-        self.status_changed.emit(f"Starting {action}...")
+        self.status_changed.emit(tr("Starting {value0}...", value0=action))
         thread.start()
 
     def show_operation_progress(
@@ -1671,8 +1703,20 @@ class RealExplorerPage(ExplorerPage):
         name: str,
     ) -> None:
         self.operation_results.total = total
-        self.task_progress.emit(f"{action.title()}: {name}", position - 1, total)
-        self.status_changed.emit(f"{action.title()}: {position}/{total} - {name}")
+        self.task_progress.emit(
+            tr("{value0}: {value1}", value0=action.title(), value1=name),
+            position - 1,
+            total,
+        )
+        self.status_changed.emit(
+            tr(
+                "{value0}: {value1}/{value2} - {value3}",
+                value0=action.title(),
+                value1=position,
+                value2=total,
+                value3=name,
+            )
+        )
 
     def show_operation_results(self):
         dialog = OperationResultsDialog(self)
@@ -1749,8 +1793,12 @@ class RealExplorerPage(ExplorerPage):
         if errors and not self.close_requested:
             show_error(
                 self,
-                "File operation incomplete",
-                f"{len(changes):,} completed; {len(errors):,} failed or cancelled. Completed copies and moves are available in Undo.",
+                tr("File operation incomplete"),
+                tr(
+                    "{value0:,} completed; {value1:,} failed or cancelled. Completed copies and moves are available in Undo.",
+                    value0=len(changes),
+                    value1=len(errors),
+                ),
                 "\n".join(errors[:1000])
                 + (
                     "\nFurther details are available in Last Operation."
@@ -1763,7 +1811,12 @@ class RealExplorerPage(ExplorerPage):
             self.status_changed.emit(self.operation_results.summary())
         else:
             self.status_changed.emit(
-                f"{action.title()} stopped: {len(changes):,} completed, {len(errors):,} error(s)"
+                tr(
+                    "{value0} stopped: {value1:,} completed, {value2:,} error(s)",
+                    value0=action.title(),
+                    value1=len(changes),
+                    value2=len(errors),
+                )
             )
         self.update_action_buttons()
 
@@ -1776,7 +1829,7 @@ class RealExplorerPage(ExplorerPage):
         try:
             self.model.refresh()
         except (OSError, ValueError) as error:
-            self.status_changed.emit(f"Cannot refresh root: {error}")
+            self.status_changed.emit(tr("Cannot refresh root: {value0}", value0=error))
             return
         self._set_tree_model(self.model)
         self._configure_tree_columns()
@@ -1873,7 +1926,7 @@ class RealExplorerPage(ExplorerPage):
         self.search_input.setEnabled(
             self.model.root_path is not None and not self.operation_is_running
         )
-        self.search_button.setText("Cancel" if running else "Search")
+        self.search_button.setText(tr("Cancel" if running else "Search"))
         self.clear_search_button.setEnabled(running or self.search_view_active)
         if not running:
             self.update_search_button()
@@ -2020,7 +2073,7 @@ class VirtualExplorerPage(ExplorerPage):
             self._clear_details()
             self._set_preview_text("")
             self.preview.setReadOnly(True)
-            self.preview_status.setText("Select a virtual file to edit it")
+            self.preview_status.setText(tr("Select a virtual file to edit it"))
             self.save_file_button.setEnabled(False)
             self.reload_file_button.setEnabled(False)
             return
@@ -2041,14 +2094,14 @@ class VirtualExplorerPage(ExplorerPage):
         if node.is_directory:
             self._set_preview_text("")
             self.preview.setReadOnly(True)
-            self.preview_status.setText("Virtual folder selected")
+            self.preview_status.setText(tr("Virtual folder selected"))
             self.save_file_button.setEnabled(False)
             self.reload_file_button.setEnabled(False)
             return
 
         self._set_preview_text(node.content)
         self.preview.setReadOnly(False)
-        self.preview_status.setText("Editable virtual text file - UTF-8")
+        self.preview_status.setText(tr("Editable virtual text file - UTF-8"))
         self.save_file_button.setEnabled(False)
         self.reload_file_button.setEnabled(True)
 
@@ -2081,8 +2134,10 @@ class VirtualExplorerPage(ExplorerPage):
         self._set_preview_text(content)
         self._select_node(node)
         self._show_node(node)
-        self.preview_status.setText("Saved to virtual workspace - UTF-8")
-        self.status_changed.emit(f"Updated {self.model.path_for(node)}")
+        self.preview_status.setText(tr("Saved to virtual workspace - UTF-8"))
+        self.status_changed.emit(
+            tr("Updated {value0}", value0=self.model.path_for(node))
+        )
         self.update_action_buttons()
         return True
 
@@ -2098,8 +2153,8 @@ class VirtualExplorerPage(ExplorerPage):
             return True
         answer = QMessageBox.warning(
             self,
-            "Unsaved virtual file",
-            "Save this virtual file before continuing?",
+            tr("Unsaved virtual file"),
+            tr("Save this virtual file before continuing?"),
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
@@ -2126,8 +2181,8 @@ class VirtualExplorerPage(ExplorerPage):
         label = "folder" if directory else "file"
         name, accepted = QInputDialog.getText(
             self,
-            f"New Virtual {label.title()}",
-            f"{label.title()} name:",
+            tr("New Virtual {value0}", value0=tr(label).title()),
+            tr("{value0} name:", value0=tr(label).title()),
         )
         if not accepted:
             return
@@ -2150,8 +2205,8 @@ class VirtualExplorerPage(ExplorerPage):
         node = selected[0]
         name, accepted = QInputDialog.getText(
             self,
-            "Rename Virtual Item",
-            "New name:",
+            tr("Rename Virtual Item"),
+            tr("New name:"),
             text=node.name,
         )
         if not accepted:
@@ -2187,15 +2242,15 @@ class VirtualExplorerPage(ExplorerPage):
         initial = self.model.path_for(self._selected_directory())
         path, accepted = QInputDialog.getText(
             self,
-            f"Virtual {action.title()} Destination",
-            "Destination path:",
+            tr("Virtual {value0} Destination", value0=action.title()),
+            tr("Destination path:"),
             text=initial,
         )
         if not accepted:
             return None
         destination = self.model.resolve_path(path)
         if destination is None or not destination.is_directory:
-            QMessageBox.warning(self, "Invalid destination", path)
+            QMessageBox.warning(self, tr("Invalid destination"), path)
             return None
         return destination
 
@@ -2205,8 +2260,8 @@ class VirtualExplorerPage(ExplorerPage):
             return
         answer = QMessageBox.question(
             self,
-            "Delete Virtual Items",
-            f"Delete {len(selected)} selected virtual item(s)?",
+            tr("Delete Virtual Items"),
+            tr("Delete {value0} selected virtual item(s)?", value0=len(selected)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2224,7 +2279,7 @@ class VirtualExplorerPage(ExplorerPage):
         self.selection_guard = False
         self._reset_view_after_change()
         self._set_workspace_dirty(True)
-        self.status_changed.emit(f"Undid virtual {record.action}")
+        self.status_changed.emit(tr("Undid virtual {value0}", value0=record.action))
         self.update_action_buttons()
 
     def _run_model_change(self, operation, *args, **kwargs) -> VirtualUndoRecord:
@@ -2263,7 +2318,13 @@ class VirtualExplorerPage(ExplorerPage):
             for node in self._all_nodes()
             if node is not self.model.root and query.casefold() in node.name.casefold()
         )
-        self.status_changed.emit(f'Virtual search: {matched:,} result(s) for "{query}"')
+        self.status_changed.emit(
+            tr(
+                'Virtual search: {value0:,} result(s) for "{value1}"',
+                value0=matched,
+                value1=query,
+            )
+        )
         self.update_search_buttons()
 
     def clear_search(self) -> None:
@@ -2273,7 +2334,7 @@ class VirtualExplorerPage(ExplorerPage):
         self.search_input.clear()
         self._show_node(None)
         self._expand_root()
-        self.status_changed.emit("Virtual search cleared")
+        self.status_changed.emit(tr("Virtual search cleared"))
         self.update_search_buttons()
 
     def update_search_buttons(self, *args: object) -> None:
@@ -2357,7 +2418,7 @@ class VirtualExplorerPage(ExplorerPage):
         initial = self.workspace_path or Path.home() / "workspace.ftv.json"
         selected, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Virtual Workspace",
+            tr("Save Virtual Workspace"),
             str(initial),
             "Virtual Workspace (*.ftv.json *.json);;JSON Files (*.json)",
         )
@@ -2374,7 +2435,7 @@ class VirtualExplorerPage(ExplorerPage):
         initial = self.workspace_path.parent if self.workspace_path else Path.home()
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            "Load Virtual Workspace",
+            tr("Load Virtual Workspace"),
             str(initial),
             "Virtual Workspace (*.ftv.json *.json);;JSON Files (*.json)",
         )
@@ -2386,7 +2447,7 @@ class VirtualExplorerPage(ExplorerPage):
             return
         selected = QFileDialog.getExistingDirectory(
             self,
-            "Choose Export Parent Folder",
+            tr("Choose Export Parent Folder"),
             str(Path.home()),
             QFileDialog.Option.ShowDirsOnly,
         )
@@ -2405,7 +2466,7 @@ class VirtualExplorerPage(ExplorerPage):
         self.workspace_path = None
         self._reset_view_after_change()
         self._set_workspace_dirty(False)
-        self.status_changed.emit("Virtual workspace reset")
+        self.status_changed.emit(tr("Virtual workspace reset"))
         self.update_action_buttons()
 
     def _confirm_workspace_replacement(self) -> bool:
@@ -2413,8 +2474,8 @@ class VirtualExplorerPage(ExplorerPage):
             return True
         answer = QMessageBox.warning(
             self,
-            "Unsaved workspace",
-            "Unsaved virtual workspace changes will be lost. Continue?",
+            tr("Unsaved workspace"),
+            tr("Unsaved virtual workspace changes will be lost. Continue?"),
             QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -2436,7 +2497,7 @@ class VirtualExplorerPage(ExplorerPage):
         self.task_outcome = None
         self.task_path = path
         self._set_task_running(True)
-        self.status_changed.emit(f"Virtual {action} started...")
+        self.status_changed.emit(tr("Virtual {value0} started...", value0=action))
         thread.start()
 
     def receive_task_result(self, action: str, result: object, error: str) -> None:
@@ -2459,12 +2520,16 @@ class VirtualExplorerPage(ExplorerPage):
             action, result, error = outcome
             if error:
                 failed = True
-                QMessageBox.warning(self, f"Virtual {action} failed", error)
+                QMessageBox.warning(
+                    self, tr("Virtual {value0} failed", value0=action), error
+                )
                 self.status_changed.emit(error)
             elif action == "save" and isinstance(result, Path):
                 self.workspace_path = result
                 self._set_workspace_dirty(False)
-                self.status_changed.emit(f"Virtual workspace saved: {result}")
+                self.status_changed.emit(
+                    tr("Virtual workspace saved: {value0}", value0=result)
+                )
             elif action == "load" and isinstance(result, VirtualNode):
                 self.selection_guard = True
                 self.model.replace_root(result)
@@ -2473,11 +2538,13 @@ class VirtualExplorerPage(ExplorerPage):
                 self.workspace_path = task_path
                 self._reset_view_after_change()
                 self._set_workspace_dirty(False)
-                self.status_changed.emit("Virtual workspace loaded")
+                self.status_changed.emit(tr("Virtual workspace loaded"))
             elif action == "stage" and isinstance(result, tuple):
                 self.staged_workspace.emit(result)
             elif action == "export" and isinstance(result, Path):
-                self.status_changed.emit(f"Virtual workspace exported: {result}")
+                self.status_changed.emit(
+                    tr("Virtual workspace exported: {value0}", value0=result)
+                )
 
         if self.close_requested:
             if failed:
@@ -2508,7 +2575,7 @@ class VirtualExplorerPage(ExplorerPage):
 
     def _clear_details(self) -> None:
         for value in self.detail_values.values():
-            value.setText("-")
+            value.setText(tr("-"))
 
     def _set_preview_text(self, text: str) -> None:
         self.preview_loading = True
@@ -2540,8 +2607,8 @@ class VirtualExplorerPage(ExplorerPage):
         if self.workspace_dirty:
             answer = QMessageBox.warning(
                 self,
-                "Unsaved virtual workspace",
-                "Save the virtual workspace before closing?",
+                tr("Unsaved virtual workspace"),
+                tr("Save the virtual workspace before closing?"),
                 QMessageBox.StandardButton.Save
                 | QMessageBox.StandardButton.Discard
                 | QMessageBox.StandardButton.Cancel,
@@ -2566,8 +2633,9 @@ class VirtualExplorerPage(ExplorerPage):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        set_language(Preferences.load(application_settings()).language)
         self.appearance = install_appearance()
-        self.setWindowTitle("File Tree Viewer")
+        self.setWindowTitle(tr("File Tree Viewer"))
         self.auxiliary_close_pending = False
         self.command_palette_dialog = None
         self.recovery_history_dialog = None
@@ -2589,9 +2657,9 @@ class MainWindow(QMainWindow):
         self.virtual_page.close_aborted.connect(self.cancel_pending_close)
         self.plan_page.status_changed.connect(self.statusBar().showMessage)
         self.plan_page.ready_to_close.connect(self.close)
-        self.tabs.addTab(self.real_page, "Real File System")
-        self.tabs.addTab(self.virtual_page, "Virtual File System")
-        self.tabs.addTab(self.plan_page, "Plan")
+        self.tabs.addTab(self.real_page, tr("Real File System"))
+        self.tabs.addTab(self.virtual_page, tr("Virtual File System"))
+        self.tabs.addTab(self.plan_page, tr("Plan"))
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -2601,12 +2669,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.workspace_header)
         layout.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
-        workspace_menu = self.menuBar().addMenu("Workspace")
+        workspace_menu = self.menuBar().addMenu(tr("Workspace"))
         self.workspace_actions = QActionGroup(self)
         for index, title in enumerate(
             ("Real File System", "Virtual File System", "Plan")
         ):
-            action = QAction(title, self, checkable=True)
+            action = QAction(tr(title), self, checkable=True)
             action.setShortcut(f"Ctrl+{index + 1}")
             action.triggered.connect(
                 lambda checked=False, i=index: self.tabs.setCurrentIndex(i)
@@ -2618,26 +2686,30 @@ class MainWindow(QMainWindow):
             lambda i: self.workspace_actions.actions()[i].setChecked(True)
         )
         workspace_menu.addSeparator()
-        workspace_menu.addAction("Import Real Root into Plan", self.import_real_root)
-        workspace_menu.addAction("Open Snapshot Root in Real", self.open_snapshot_root)
-        workspace_menu.addAction("Export Folder Tree…", self.export_folder_tree)
+        workspace_menu.addAction(
+            tr("Import Real Root into Plan"), self.import_real_root
+        )
+        workspace_menu.addAction(
+            tr("Open Snapshot Root in Real"), self.open_snapshot_root
+        )
+        workspace_menu.addAction(tr("Export Folder Tree…"), self.export_folder_tree)
         self.real_page.tree_export_button.clicked.connect(self.export_folder_tree)
         self.virtual_page.tree_export_button.clicked.connect(self.export_folder_tree)
-        workspace_menu.addAction("Compare Folders…", self.compare_folders_dialog)
-        workspace_menu.addAction("Analyze Disk Usage…", self.analyze_disk_usage)
-        workspace_menu.addAction("Operation History…", self.show_history)
-        workspace_menu.addAction("Recovery History…", self.show_recovery_history)
+        workspace_menu.addAction(tr("Compare Folders…"), self.compare_folders_dialog)
+        workspace_menu.addAction(tr("Analyze Disk Usage…"), self.analyze_disk_usage)
+        workspace_menu.addAction(tr("Operation History…"), self.show_history)
+        workspace_menu.addAction(tr("Recovery History…"), self.show_recovery_history)
         self.staging = StagingController(self)
         self.plan_page.sync_workspace.filesystem_changed.connect(
             self.sync_filesystem_changed
         )
         workspace_menu.addAction(
-            "Add Virtual Workspace to Plan…", self.staging.request_virtual
+            tr("Add Virtual Workspace to Plan…"), self.staging.request_virtual
         )
         self.real_page.stage_requested.connect(self.staging.request)
         for action in ("copy", "move", "rename", "delete"):
             workspace_menu.addAction(
-                f"Stage Real {action.title()}…",
+                tr("Stage Real {value0}…", value0=action.title()),
                 lambda checked=False, a=action: self.staging.request(a),
             )
         self.tabs.setDocumentMode(True)
@@ -2647,8 +2719,8 @@ class MainWindow(QMainWindow):
         self.apply_preferences(self.preferences)
         restore_layout(self, self.settings)
         self.panel_manager = PanelManager(self, self.settings)
-        settings_menu = self.menuBar().addMenu("Settings")
-        settings_menu.addAction("Preferences...", self.edit_preferences)
+        settings_menu = self.menuBar().addMenu(tr("Settings"))
+        settings_menu.addAction(tr("Preferences..."), self.edit_preferences)
         self.command_action = install_command_palette(self)
         settings_menu.addAction(self.command_action)
         self.task_monitor = TaskMonitor(self)
@@ -2660,7 +2732,7 @@ class MainWindow(QMainWindow):
                     p, message, completed, total
                 )
             )
-        self.statusBar().showMessage("Ready")
+        self.statusBar().showMessage(tr("Ready"))
         QTimer.singleShot(
             0, lambda: self.real_page.explorer_state.load_session(self.settings)
         )
@@ -2688,7 +2760,7 @@ class MainWindow(QMainWindow):
                 return
             source, kind = page.snapshot, "snapshot"
         if source is None:
-            self.statusBar().showMessage("Select a folder or load a snapshot first")
+            self.statusBar().showMessage(tr("Select a folder or load a snapshot first"))
             return
         dialog = TreeExportDialog(source, kind, self)
         dialog.exec()
@@ -2698,8 +2770,8 @@ class MainWindow(QMainWindow):
         if self.isEnabled():
             show_error(
                 self,
-                "Background task failed",
-                "The task stopped unexpectedly. Review its result before retrying.",
+                tr("Background task failed"),
+                tr("The task stopped unexpectedly. Review its result before retrying."),
                 message,
             )
         self.statusBar().showMessage("Background task failed: " + message)
@@ -2723,7 +2795,9 @@ class MainWindow(QMainWindow):
     def edit_preferences(self) -> None:
         if self.real_page.operation_is_running or self.real_page.search_is_running:
             self.statusBar().showMessage(
-                "Wait for Real operations or search to finish before changing preferences"
+                tr(
+                    "Wait for Real operations or search to finish before changing preferences"
+                )
             )
             return
         dialog = PreferencesDialog(
@@ -2748,8 +2822,10 @@ class MainWindow(QMainWindow):
         if self.settings.status() != QSettings.Status.NoError:
             QMessageBox.warning(
                 self,
-                "Preferences could not be saved",
-                "Check permissions and free space for the application settings location.",
+                tr("Preferences could not be saved"),
+                tr(
+                    "Check permissions and free space for the application settings location."
+                ),
             )
 
     def compare_folders_dialog(self):
@@ -2782,7 +2858,7 @@ class MainWindow(QMainWindow):
             return
         root = self.real_page.model.root_path
         if root is None:
-            name = QFileDialog.getExistingDirectory(self, "Choose recovery root")
+            name = QFileDialog.getExistingDirectory(self, tr("Choose recovery root"))
             if not name:
                 return
             root = Path(name)
@@ -2798,7 +2874,7 @@ class MainWindow(QMainWindow):
 
     def undo_history_transaction(self, record):
         if self.staging.busy() or self.real_page.operation_is_running:
-            self.statusBar().showMessage("Wait for Real and Plan tasks before Undo")
+            self.statusBar().showMessage(tr("Wait for Real and Plan tasks before Undo"))
             return
         if len(self.plan_page.plan) and not self.plan_page._confirm_plan_replacement():
             return
@@ -2807,7 +2883,9 @@ class MainWindow(QMainWindow):
 
     def review_history_recovery(self, root):
         if self.staging.busy() or self.real_page.operation_is_running:
-            self.statusBar().showMessage("Wait for Real and Plan tasks before recovery")
+            self.statusBar().showMessage(
+                tr("Wait for Real and Plan tasks before recovery")
+            )
             return
         self.tabs.setCurrentWidget(self.plan_page)
         self.plan_page.check_recovery(root)
@@ -2836,7 +2914,7 @@ class MainWindow(QMainWindow):
             return
         root = self.real_page.model.root_path
         if root is None:
-            root = QFileDialog.getExistingDirectory(self, "Choose analysis root")
+            root = QFileDialog.getExistingDirectory(self, tr("Choose analysis root"))
         if not root:
             return
         dialog = self.disk_dialog = DiskUsageDialog(root, self)
@@ -2857,7 +2935,7 @@ class MainWindow(QMainWindow):
     def stage_usage_items(self, action, root, paths):
         if self.staging.busy():
             self.statusBar().showMessage(
-                "Wait for Plan tasks before staging analysis items"
+                tr("Wait for Plan tasks before staging analysis items")
             )
             return
         if self.real_page.set_root(root):
@@ -2866,14 +2944,14 @@ class MainWindow(QMainWindow):
     def stage_sync_plan(self, plan):
         if self.staging.busy():
             self.statusBar().showMessage(
-                "Wait for Plan tasks to finish before staging synchronization"
+                tr("Wait for Plan tasks to finish before staging synchronization")
             )
             return False
         if not self.plan_page.sync_workspace.stage(plan):
             return False
         self.tabs.setCurrentWidget(self.plan_page)
         self.statusBar().showMessage(
-            "Synchronization staged in Plan. Review both roots before applying."
+            tr("Synchronization staged in Plan. Review both roots before applying.")
         )
         return True
 
@@ -2884,13 +2962,15 @@ class MainWindow(QMainWindow):
                 self.plan_page.start_snapshot(root)
             else:
                 self.plan_page.status_changed.emit(
-                    "Synchronization changed this Plan root. Review Diff against live files before applying staged changes."
+                    tr(
+                        "Synchronization changed this Plan root. Review Diff against live files before applying staged changes."
+                    )
                 )
 
     def import_real_root(self) -> None:
         root = self.real_page.model.root_path
         if root is None:
-            self.statusBar().showMessage("Select a Real root first")
+            self.statusBar().showMessage(tr("Select a Real root first"))
             return
         if len(self.plan_page.plan) and not self.plan_page._confirm_plan_replacement():
             return
@@ -2900,7 +2980,7 @@ class MainWindow(QMainWindow):
     def open_snapshot_root(self) -> None:
         snapshot = self.plan_page.snapshot
         if snapshot is None:
-            self.statusBar().showMessage("Load a snapshot first")
+            self.statusBar().showMessage(tr("Load a snapshot first"))
             return
         self.tabs.setCurrentWidget(self.real_page)
         self.real_page.set_root(snapshot.root)
@@ -2935,7 +3015,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self.setEnabled(False)
-            self.statusBar().showMessage("Waiting for file tasks to finish...")
+            self.statusBar().showMessage(tr("Waiting for file tasks to finish..."))
             event.ignore()
             return
         if not self.virtual_page.prepare_close():
@@ -2944,7 +3024,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self.setEnabled(False)
-            self.statusBar().showMessage("Waiting for virtual workspace task...")
+            self.statusBar().showMessage(tr("Waiting for virtual workspace task..."))
             event.ignore()
             return
         if not self.plan_page.prepare_close():
@@ -2954,7 +3034,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self.setEnabled(False)
-            self.statusBar().showMessage("Waiting for snapshot task...")
+            self.statusBar().showMessage(tr("Waiting for snapshot task..."))
             event.ignore()
             return
         self.save_preferences()
@@ -2967,4 +3047,4 @@ class MainWindow(QMainWindow):
         self.virtual_page.cancel_close_request()
         self.plan_page.cancel_close_request()
         self.setEnabled(True)
-        self.statusBar().showMessage("Close cancelled")
+        self.statusBar().showMessage(tr("Close cancelled"))

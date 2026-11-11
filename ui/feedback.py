@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui.i18n import tr
 from ui.widgets import PlainLabel
 
 
@@ -44,8 +45,8 @@ class TaskMonitor(QWidget):
         self.label.setMaximumWidth(240)
         self.bar = QProgressBar()
         self.bar.setFixedWidth(150)
-        self.show_task = QPushButton("Show Task")
-        self.cancel = QPushButton("Cancel Task")
+        self.show_task = QPushButton(tr("Show Task"))
+        self.cancel = QPushButton(tr("Cancel Task"))
         for widget in (self.label, self.bar, self.show_task, self.cancel):
             layout.addWidget(widget)
         self.show_task.clicked.connect(self.focus_task)
@@ -111,7 +112,11 @@ class TaskMonitor(QWidget):
         cancelling = id(selected[3]) in self.cancelled
         self.label.setText(("Cancelling: " if cancelling else "") + selected[2])
         self.label.setToolTip(
-            f"{len(tasks)} active task(s); elapsed {time.monotonic() - self.started:.0f}s"
+            tr(
+                "{value0} active task(s); elapsed {value1:.0f}s",
+                value0=len(tasks),
+                value1=time.monotonic() - self.started,
+            )
         )
         self.cancel.setEnabled(
             not cancelling and callable(getattr(selected[4], "cancel", None))

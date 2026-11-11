@@ -12,10 +12,12 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
+from ui.i18n import tr
+
 
 def action_menu(title, buttons):
     control = QToolButton()
-    control.setText(title)
+    control.setText(tr(title))
     menu = QMenu(control)
     for button in buttons:
         action = QWidgetAction(menu)
@@ -39,9 +41,9 @@ class WorkspaceHeader(QWidget):
         layout.addWidget(icon)
         text = QVBoxLayout()
         text.setSpacing(2)
-        title = QLabel("File Tree Viewer")
+        title = QLabel(tr("File Tree Viewer"))
         title.setObjectName("applicationTitle")
-        subtitle = QLabel("Explore. Organize. Plan.")
+        subtitle = QLabel(tr("Explore. Organize. Plan."))
         subtitle.setObjectName("applicationSubtitle")
         text.addWidget(title)
         text.addWidget(subtitle)
@@ -58,9 +60,11 @@ class WorkspaceHeader(QWidget):
 
     def changed(self, index):
         self.context.setText(
-            (
-                "Browse actual files",
-                "Build a virtual workspace",
-                "Review changes before applying",
-            )[max(0, min(index, 2))]
+            tr(
+                (
+                    "Browse actual files",
+                    "Build a virtual workspace",
+                    "Review changes before applying",
+                )[max(0, min(index, 2))]
+            )
         )

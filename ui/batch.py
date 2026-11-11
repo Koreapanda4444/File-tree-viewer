@@ -32,6 +32,7 @@ from organization import (
 from persistence import load_rule, organization_presets, save_rule
 from planning import FilePlan, PlanOperation
 from snapshot import FileSnapshot, SnapshotEntry
+from ui.i18n import add_choice, add_choices, choice_text, set_choice_text, tr
 
 INVALID_INDEX = QModelIndex()
 
@@ -104,9 +105,11 @@ class BatchDialog(QDialog):
         self.resize(850, 720)
         layout = QVBoxLayout(self)
         self.settings = QGroupBox(
-            "Rename selected items"
-            if rename
-            else "Match files (all conditions must match)"
+            tr(
+                "Rename selected items"
+                if rename
+                else "Match files (all conditions must match)"
+            )
         )
         form = QFormLayout(self.settings)
         layout.addWidget(self.settings)
@@ -116,33 +119,33 @@ class BatchDialog(QDialog):
             self.find_text = self._text(form, "Replace text (case-sensitive)")
             self.replace_text = self._text(form, "With")
             self.case = self._combo(form, "Case", ("Keep", "lowercase", "UPPERCASE"))
-            self.keep_extension = QCheckBox("Keep file extension unchanged")
+            self.keep_extension = QCheckBox(tr("Keep file extension unchanged"))
             self.keep_extension.setChecked(True)
             form.addRow(self.keep_extension)
-            self.number = QCheckBox("Append sequence number (path order)")
+            self.number = QCheckBox(tr("Append sequence number (path order)"))
             form.addRow(self.number)
             self.start = QSpinBox()
             self.start.setRange(0, 1_000_000_000)
             self.start.setValue(1)
-            form.addRow("Start", self.start)
+            form.addRow(tr("Start"), self.start)
             self.digits = QSpinBox()
             self.digits.setRange(1, 12)
             self.digits.setValue(3)
-            form.addRow("Minimum digits", self.digits)
+            form.addRow(tr("Minimum digits"), self.digits)
         else:
             preset_row = QHBoxLayout()
             self.preset = QComboBox()
-            self.preset.addItem("Choose a preset…", "")
+            add_choice(self.preset, "Choose a preset…", "")
             for preset_name in organization_presets():
-                self.preset.addItem(preset_name, preset_name)
-            self.load_preset_button = QPushButton("Load Preset")
-            self.save_rule_button = QPushButton("Save Rule")
-            self.load_rule_button = QPushButton("Load Rule")
+                add_choice(self.preset, preset_name, preset_name)
+            self.load_preset_button = QPushButton(tr("Load Preset"))
+            self.save_rule_button = QPushButton(tr("Save Rule"))
+            self.load_rule_button = QPushButton(tr("Load Rule"))
             preset_row.addWidget(self.preset, 1)
             preset_row.addWidget(self.load_preset_button)
             preset_row.addWidget(self.save_rule_button)
             preset_row.addWidget(self.load_rule_button)
-            form.addRow("Reusable rule", preset_row)
+            form.addRow(tr("Reusable rule"), preset_row)
             self.scope = self._combo(
                 form, "Scope", ("Selected items and descendants", "Entire snapshot")
             )
@@ -172,14 +175,16 @@ class BatchDialog(QDialog):
             self.save_rule_button.clicked.connect(self.save_current_rule)
             self.load_rule_button.clicked.connect(self.load_saved_rule)
         note = QLabel(
-            "Preview → Add to Plan. Files stay unchanged. Name conflicts are not resolved here.\nItems already changed in the Plan, links and inaccessible items are skipped."
+            tr(
+                "Preview → Add to Plan. Files stay unchanged. Name conflicts are not resolved here.\nItems already changed in the Plan, links and inaccessible items are skipped."
+            )
         )
         note.setWordWrap(True)
         layout.addWidget(note)
-        self.preview_button = QPushButton("Preview")
+        self.preview_button = QPushButton(tr("Preview"))
         self.preview_button.clicked.connect(self.build_preview)
         layout.addWidget(self.preview_button)
-        self.status = QLabel("Choose settings, then preview.")
+        self.status = QLabel(tr("Choose settings, then preview."))
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.model = BatchPreviewModel(self)
@@ -193,7 +198,7 @@ class BatchDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self.add_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
-        self.add_button.setText("Add to Plan")
+        self.add_button.setText(tr("Add to Plan"))
         self.add_button.setEnabled(False)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
@@ -220,7 +225,7 @@ class BatchDialog(QDialog):
     @staticmethod
     def _combo(form, label, items):
         widget = QComboBox()
-        widget.addItems(items)
+        add_choices(widget, items)
         form.addRow(label, widget)
         return widget
 
@@ -240,7 +245,7 @@ class BatchDialog(QDialog):
         self._stop()
         self.model.clear()
         self.add_button.setEnabled(False)
-        self.status.setText("Settings changed. Preview again.")
+        self.status.setText(tr("Settings changed. Preview again."))
 
     def build_preview(self):
         self.invalidate()
@@ -251,7 +256,7 @@ class BatchDialog(QDialog):
                     suffix=self.suffix.text(),
                     find=self.find_text.text(),
                     replacement=self.replace_text.text(),
-                    case=self.case.currentText(),
+                    case=choice_text(self.case),
                     keep_extension=self.keep_extension.isChecked(),
                     number=self.number.isChecked(),
                     start=self.start.value(),
@@ -277,7 +282,7 @@ class BatchDialog(QDialog):
         self.examined = 0
         self.settings.setEnabled(False)
         self.preview_button.setEnabled(False)
-        self.status.setText("Building preview… Cancel discards this batch.")
+        self.status.setText(tr("Building preview… Cancel discards this batch."))
         self.timer.start()
 
     def _advance(self):
@@ -296,16 +301,23 @@ class BatchDialog(QDialog):
             complete = True
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as error:
             self.invalidate()
-            self.status.setText(f"Cannot build preview: {error}")
+            self.status.setText(tr("Cannot build preview: {value0}", value0=error))
             return
         self.model.extend(operations)
         self.status.setText(
-            f"{len(self.operations):,} planned operations; {self.examined:,} steps processed…"
+            tr(
+                "{value0:,} planned operations; {value1:,} steps processed…",
+                value0=len(self.operations),
+                value1=self.examined,
+            )
         )
         if complete:
             self._stop()
             self.status.setText(
-                f"Preview ready: {len(self.operations):,} operations (including new folders). Add to Plan to stage them."
+                tr(
+                    "Preview ready: {value0:,} operations (including new folders). Add to Plan to stage them.",
+                    value0=len(self.operations),
+                )
             )
             self.add_button.setEnabled(bool(self.operations))
 
@@ -332,7 +344,7 @@ class BatchDialog(QDialog):
             maximum=maximum,
             after=after,
             before=before,
-            grouping=self.grouping.currentText(),
+            grouping=choice_text(self.grouping),
         )
 
     def set_rule(self, rule: OrganizationRule) -> None:
@@ -343,7 +355,7 @@ class BatchDialog(QDialog):
         self.maximum.setText(str(rule.maximum) if rule.maximum is not None else "")
         self.after.setText(rule.after.isoformat() if rule.after is not None else "")
         self.before.setText(rule.before.isoformat() if rule.before is not None else "")
-        self.grouping.setCurrentText(rule.grouping)
+        set_choice_text(self.grouping, rule.grouping)
         self.invalidate()
 
     def load_selected_preset(self) -> None:
@@ -351,17 +363,19 @@ class BatchDialog(QDialog):
         if not name:
             return
         self.set_rule(organization_presets()[name])
-        self.status.setText(f"Loaded {name} preset. Preview to review its operations.")
+        self.status.setText(
+            tr("Loaded {value0} preset. Preview to review its operations.", value0=name)
+        )
 
     def save_current_rule(self) -> None:
         try:
             rule = self.current_rule()
         except ValueError as error:
-            QMessageBox.warning(self, "Cannot save rule", str(error))
+            QMessageBox.warning(self, tr("Cannot save rule"), str(error))
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Organization Rule",
+            tr("Save Organization Rule"),
             "organization-rule.json",
             "File Tree Viewer Rules (*.json);;All Files (*)",
         )
@@ -370,14 +384,14 @@ class BatchDialog(QDialog):
         try:
             save_rule(path, rule)
         except (OSError, TypeError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot save rule", str(error))
+            QMessageBox.warning(self, tr("Cannot save rule"), str(error))
             return
-        self.status.setText("Organization rule saved.")
+        self.status.setText(tr("Organization rule saved."))
 
     def load_saved_rule(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Load Organization Rule",
+            tr("Load Organization Rule"),
             "",
             "File Tree Viewer Rules (*.json);;All Files (*)",
         )
@@ -386,11 +400,11 @@ class BatchDialog(QDialog):
         try:
             rule = load_rule(path)
         except (OSError, UnicodeError, TypeError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot load rule", str(error))
+            QMessageBox.warning(self, tr("Cannot load rule"), str(error))
             return
         self.set_rule(rule)
         self.preset.setCurrentIndex(0)
-        self.status.setText("Organization rule loaded. Preview before adding it.")
+        self.status.setText(tr("Organization rule loaded. Preview before adding it."))
 
     def accept(self):
         if self.iterator is None and self.add_button.isEnabled():

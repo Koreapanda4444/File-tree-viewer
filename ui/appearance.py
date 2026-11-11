@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QStyle,
 )
 
+from ui.i18n import source_text
+
 ICONS = {
     "back": QStyle.StandardPixmap.SP_ArrowBack,
     "forward": QStyle.StandardPixmap.SP_ArrowForward,
@@ -39,7 +41,12 @@ class AppearanceController(QObject):
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.Polish:
             if isinstance(watched, QPushButton):
-                word = watched.text().replace("&", "").lower().split(" ", 1)[0]
+                word = (
+                    source_text(watched.text())
+                    .replace("&", "")
+                    .lower()
+                    .split(" ", 1)[0]
+                )
                 icon = ICONS.get(word)
                 if icon is not None and watched.icon().isNull():
                     watched.setIcon(watched.style().standardIcon(icon))

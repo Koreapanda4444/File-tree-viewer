@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui.i18n import tr
+
 
 class AddressBar(QWidget):
     navigate = Signal(object)
@@ -35,8 +37,8 @@ class AddressBar(QWidget):
         self.stack.addWidget(self.crumbs)
         layout.addWidget(self.stack, 1)
         self.edit_button = QToolButton()
-        self.edit_button.setText("Edit Path")
-        self.edit_button.setToolTip("Enter a path (Alt+D or Ctrl+L)")
+        self.edit_button.setText(tr("Edit Path"))
+        self.edit_button.setToolTip(tr("Enter a path (Alt+D or Ctrl+L)"))
         self.edit_button.clicked.connect(self.edit_path)
         layout.addWidget(self.edit_button)
         edit.installEventFilter(self)
@@ -62,7 +64,7 @@ class AddressBar(QWidget):
             if len(ancestors) > 5 and 0 < index < len(ancestors) - 3:
                 if index == 1:
                     overflow = QToolButton()
-                    overflow.setText("…")
+                    overflow.setText(tr("…"))
                     menu = QMenu(overflow)
                     for hidden in ancestors[1:-3]:
                         action = menu.addAction(str(hidden).replace("&", "&&"))

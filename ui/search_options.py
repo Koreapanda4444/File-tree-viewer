@@ -13,39 +13,42 @@ from PySide6.QtWidgets import (
 )
 
 from search_options import SearchOptions
+from ui.i18n import add_choice, add_choices, choice_text, set_choice_text, tr
 from ui.widgets import PlainLabel
 
 
 class SearchOptionsDialog(QDialog):
     def __init__(self, options, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Advanced Search Filters")
+        self.setWindowTitle(tr("Advanced Search Filters"))
         self.resize(520, 460)
         layout = QFormLayout(self)
         self.options = options
         self.extensions = QLineEdit(";".join(options.extensions))
-        self.extensions.setPlaceholderText("txt;py;tar.gz (blank = all)")
-        layout.addRow("Extensions", self.extensions)
+        self.extensions.setPlaceholderText(tr("txt;py;tar.gz (blank = all)"))
+        layout.addRow(tr("Extensions"), self.extensions)
         self.mode = QComboBox()
         for label, value in (
             ("Contains text", "literal"),
             ("Wildcard (*, ?, [abc])", "wildcard"),
             ("Regular expression", "regex"),
         ):
-            self.mode.addItem(label, value)
+            add_choice(self.mode, label, value)
         self.mode.setCurrentIndex(self.mode.findData(options.name_mode))
-        layout.addRow("Name matching", self.mode)
-        self.case_sensitive = QCheckBox("Case sensitive")
+        layout.addRow(tr("Name matching"), self.mode)
+        self.case_sensitive = QCheckBox(tr("Case sensitive"))
         self.case_sensitive.setChecked(options.case_sensitive)
         layout.addRow(self.case_sensitive)
         self.content_query = QLineEdit(options.content_query)
-        layout.addRow("File contents contain", self.content_query)
+        layout.addRow(tr("File contents contain"), self.content_query)
         self.encoding = QComboBox()
-        self.encoding.addItems(("auto", "utf-8", "utf-16", "cp949", "cp1252"))
-        self.encoding.setCurrentText(options.content_encoding)
-        layout.addRow("Content encoding", self.encoding)
+        add_choices(self.encoding, ("auto", "utf-8", "utf-16", "cp949", "cp1252"))
+        set_choice_text(self.encoding, options.content_encoding)
+        layout.addRow(tr("Content encoding"), self.encoding)
         limits = PlainLabel(
-            "Content search: at most 64 MiB per file, 128 KiB per line and 20 matching lines per file. Binary, inaccessible and unsupported text files are counted as skipped."
+            tr(
+                "Content search: at most 64 MiB per file, 128 KiB per line and 20 matching lines per file. Binary, inaccessible and unsupported text files are counted as skipped."
+            )
         )
         limits.setWordWrap(True)
         layout.addRow(limits)
@@ -55,18 +58,18 @@ class SearchOptionsDialog(QDialog):
             ("Files", "files"),
             ("Folders", "folders"),
         ):
-            self.kind.addItem(label, value)
+            add_choice(self.kind, label, value)
         self.kind.setCurrentIndex(self.kind.findData(options.kind))
-        layout.addRow("Type", self.kind)
+        layout.addRow(tr("Type"), self.kind)
         self.scope = QComboBox()
         for label, value in (
             ("Current folder and descendants", "recursive"),
             ("Current folder only", "current"),
             ("Entire filesystem / drive root", "filesystem"),
         ):
-            self.scope.addItem(label, value)
+            add_choice(self.scope, label, value)
         self.scope.setCurrentIndex(self.scope.findData(options.scope))
-        layout.addRow("Scope", self.scope)
+        layout.addRow(tr("Scope"), self.scope)
         self.fields = {}
         for name, label in (
             ("minimum_size", "Minimum bytes"),
@@ -93,7 +96,9 @@ class SearchOptionsDialog(QDialog):
             )
             layout.addRow(label, field)
         note = PlainLabel(
-            "Creation dates use filesystem birth time. Items without a birth time do not match creation-date filters. All selected conditions must match."
+            tr(
+                "Creation dates use filesystem birth time. Items without a birth time do not match creation-date filters. All selected conditions must match."
+            )
         )
         note.setWordWrap(True)
         layout.addRow(note)
@@ -141,7 +146,7 @@ class SearchOptionsDialog(QDialog):
                     ) * 1_000_000_000 - (1 if name.endswith("before") else 0)
             self.options = SearchOptions(
                 content_query=self.content_query.text(),
-                content_encoding=self.encoding.currentText(),
+                content_encoding=choice_text(self.encoding),
                 name_mode=self.mode.currentData(),
                 case_sensitive=self.case_sensitive.isChecked(),
                 extensions=tuple(self.extensions.text().split(";")),
@@ -150,6 +155,6 @@ class SearchOptionsDialog(QDialog):
                 **values,
             )
         except (ValueError, OverflowError) as error:
-            QMessageBox.warning(self, "Invalid search filters", str(error))
+            QMessageBox.warning(self, tr("Invalid search filters"), str(error))
             return
         self.accept()

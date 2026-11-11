@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from fs_paths import normalized_path
+from ui.i18n import add_choice, tr
 from ui.tasks import CancellableWorker, prepare_worker_thread
 
 
@@ -71,7 +72,7 @@ class QuickAccess(QWidget):
         self.list.setMaximumHeight(240)
         self.list.itemActivated.connect(self.activate)
         self.list.itemClicked.connect(self.activate)
-        self.refresh_button = QPushButton("Refresh Locations")
+        self.refresh_button = QPushButton(tr("Refresh Locations"))
         self.refresh_button.clicked.connect(self.refresh)
         layout.addWidget(self.list)
         layout.addWidget(self.refresh_button)
@@ -119,19 +120,19 @@ class QuickAccess(QWidget):
         section = None
         for category, path, available in items:
             if category != section:
-                title = QListWidgetItem(category)
+                title = QListWidgetItem(tr(category))
                 font = title.font()
                 font.setBold(True)
                 title.setFont(font)
                 title.setFlags(Qt.ItemFlag.NoItemFlags)
-                self.list.addItem(title)
+                add_choice(self.list, title)
                 section = category
             item = QListWidgetItem(
                 (Path(path).name or path) + (" (unavailable)" if not available else "")
             )
             item.setData(Qt.ItemDataRole.UserRole, path)
             item.setToolTip(path)
-            self.list.addItem(item)
+            add_choice(self.list, item)
         self.select_path(self.current)
 
     def activate(self, item):

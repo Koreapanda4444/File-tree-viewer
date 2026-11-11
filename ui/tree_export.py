@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from snapshot import SnapshotCancelled
 from tree_export import TreeExportOptions, build_tree, tree_lines, write_tree
+from ui.i18n import add_choice, tr
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -71,11 +72,11 @@ class TreeExportDialog(QDialog):
         self.source, self.kind = source, kind
         self.thread = self.worker = self.document = self.outcome = None
         self.closing = False
-        self.setWindowTitle("Export Folder Tree")
+        self.setWindowTitle(tr("Export Folder Tree"))
         self.resize(820, 700)
         layout = QVBoxLayout(self)
         self.summary = PlainLabel(
-            "Choose options and generate a preview. Existing files are preserved."
+            tr("Choose options and generate a preview. Existing files are preserved.")
         )
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
@@ -86,7 +87,7 @@ class TreeExportDialog(QDialog):
             ("Markdown (.md)", "md"),
             ("JSON (.json)", "json"),
         ):
-            self.format.addItem(label, value)
+            add_choice(self.format, label, value)
         self.depth = QSpinBox()
         self.depth.setRange(0, 256)
         self.depth.setValue(8)
@@ -94,11 +95,11 @@ class TreeExportDialog(QDialog):
         self.limit = QSpinBox()
         self.limit.setRange(1, 1_000_000)
         self.limit.setValue(100_000)
-        self.hidden = QCheckBox("Include hidden entries")
-        self.sizes = QCheckBox("Include file sizes")
+        self.hidden = QCheckBox(tr("Include hidden entries"))
+        self.sizes = QCheckBox(tr("Include file sizes"))
         self.extensions, self.folders = QLineEdit(), QLineEdit()
-        self.extensions.setPlaceholderText(".pyc, .log")
-        self.folders.setPlaceholderText("node_modules, __pycache__")
+        self.extensions.setPlaceholderText(tr(".pyc, .log"))
+        self.folders.setPlaceholderText(tr("node_modules, __pycache__"))
         for label, widget in (
             ("Format", self.format),
             ("Maximum depth", self.depth),
@@ -108,17 +109,17 @@ class TreeExportDialog(QDialog):
             ("", self.hidden),
             ("", self.sizes),
         ):
-            form.addRow(label, widget)
+            form.addRow(tr(label), widget)
         layout.addLayout(form)
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(self.preview, 1)
         row = QHBoxLayout()
-        self.generate = QPushButton("Generate Preview")
-        self.copy = QPushButton("Copy Tree")
-        self.save = QPushButton("Save Export…")
-        self.cancel = QPushButton("Cancel Task")
+        self.generate = QPushButton(tr("Generate Preview"))
+        self.copy = QPushButton(tr("Copy Tree"))
+        self.save = QPushButton(tr("Save Export…"))
+        self.cancel = QPushButton(tr("Cancel Task"))
         for button in (self.generate, self.copy, self.save, self.cancel):
             row.addWidget(button)
         layout.addLayout(row)
@@ -194,7 +195,9 @@ class TreeExportDialog(QDialog):
         )
         self.worker.finished.connect(self.receive)
         self.worker.progress.connect(
-            lambda count: self.summary.setText(f"Reading {count:,} entries…")
+            lambda count: self.summary.setText(
+                tr("Reading {value0:,} entries…", value0=count)
+            )
         )
         self.thread = prepare_worker_thread(
             self, self.worker, on_finished=self.thread_finished
@@ -213,11 +216,14 @@ class TreeExportDialog(QDialog):
         elif isinstance(result, dict):
             self.document = result
             self.summary.setText(
-                f"{result['entry_count']:,} entries. Preview is limited to 1,000 lines / 40,000 characters."
+                tr(
+                    "{value0:,} entries. Preview is limited to 1,000 lines / 40,000 characters.",
+                    value0=result["entry_count"],
+                )
             )
             self.render_preview()
         else:
-            self.summary.setText(f"Export saved: {result}")
+            self.summary.setText(tr("Export saved: {value0}", value0=result))
         self.set_busy(False)
         if self.closing:
             super().reject()
@@ -248,16 +254,16 @@ class TreeExportDialog(QDialog):
             )
             if len(text) > 16 * 1024 * 1024:
                 self.summary.setText(
-                    "Tree is too large for the clipboard; save an export instead"
+                    tr("Tree is too large for the clipboard; save an export instead")
                 )
                 return
             QApplication.clipboard().setText(text)
-            self.summary.setText("Tree copied to clipboard")
+            self.summary.setText(tr("Tree copied to clipboard"))
 
     def save_tree(self):
         format = self.format.currentData()
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Tree Export", f"tree.{format}", f"Tree export (*.{format})"
+            self, tr("Save Tree Export"), f"tree.{format}", f"Tree export (*.{format})"
         )
         if path:
             self.start(destination=path)

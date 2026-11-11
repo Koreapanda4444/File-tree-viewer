@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from snapshot_compare import SnapshotChangeKind, SnapshotComparison
+from ui.i18n import add_choice, tr
 
 INVALID_INDEX = QModelIndex()
 
@@ -92,25 +93,40 @@ class ComparisonTableModel(QAbstractTableModel):
 class SnapshotComparisonDialog(QDialog):
     def __init__(self, comparison: SnapshotComparison, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Snapshot Comparison")
+        self.setWindowTitle(tr("Snapshot Comparison"))
         self.resize(1100, 760)
         layout = QVBoxLayout(self)
         layout.addWidget(
-            QLabel(f"Before: {comparison.before_name} · {comparison.before_root}")
+            QLabel(
+                tr(
+                    "Before: {value0} · {value1}",
+                    value0=comparison.before_name,
+                    value1=comparison.before_root,
+                )
+            )
         )
         layout.addWidget(
-            QLabel(f"After: {comparison.after_name} · {comparison.after_root}")
+            QLabel(
+                tr(
+                    "After: {value0} · {value1}",
+                    value0=comparison.after_name,
+                    value1=comparison.after_root,
+                )
+            )
         )
         note = QLabel(
-            "Compares stored metadata. Move and rename matches are candidates; file contents are not hashed."
+            tr(
+                "Compares stored metadata. Move and rename matches are candidates; file contents are not hashed."
+            )
         )
         note.setWordWrap(True)
         layout.addWidget(note)
         row = QHBoxLayout()
         self.filter = QComboBox()
-        self.filter.addItem("All changes", None)
+        add_choice(self.filter, "All changes", None)
         for kind in SnapshotChangeKind:
-            self.filter.addItem(
+            add_choice(
+                self.filter,
                 f"{kind.value.replace('_', ' ').title()} ({comparison.counts[kind]:,})",
                 kind,
             )
@@ -148,7 +164,9 @@ class SnapshotComparisonDialog(QDialog):
 
     def apply_filter(self) -> None:
         self.model.set_kind(self.filter.currentData())
-        self.count_label.setText(f"{self.model.rowCount():,} change(s)")
+        self.count_label.setText(
+            tr("{value0:,} change(s)", value0=self.model.rowCount())
+        )
         self.before.clear()
         self.after.clear()
         if self.model.rowCount():

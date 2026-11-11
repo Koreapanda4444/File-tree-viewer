@@ -101,25 +101,41 @@ class FilesystemChecks(unittest.TestCase):
     def test_handle_permission_and_creation_metadata_do_not_change_identity(self):
         source = self.file("metadata.txt", "content")
         original = os.fstat
+
         def metadata(descriptor):
             details = original(descriptor)
-            return SimpleNamespace(st_dev=details.st_dev, st_ino=details.st_ino,
-                st_mode=details.st_mode ^ 0o100, st_size=details.st_size,
-                st_mtime_ns=details.st_mtime_ns, st_ctime_ns=details.st_ctime_ns + 100)
+            return SimpleNamespace(
+                st_dev=details.st_dev,
+                st_ino=details.st_ino,
+                st_mode=details.st_mode ^ 0o100,
+                st_size=details.st_size,
+                st_mtime_ns=details.st_mtime_ns,
+                st_ctime_ns=details.st_ctime_ns + 100,
+            )
+
         with patch("file_content.os.fstat", side_effect=metadata):
             self.assertEqual(read_file_bytes(source, limit=1024).data, b"content")
 
     def test_replaced_file_handle_is_rejected(self):
         source = self.file("identity.txt")
         original = os.fstat
+
         def metadata(descriptor):
             details = original(descriptor)
-            return SimpleNamespace(st_dev=details.st_dev, st_ino=details.st_ino + 1,
-                st_mode=details.st_mode, st_size=details.st_size,
-                st_mtime_ns=details.st_mtime_ns, st_ctime_ns=details.st_ctime_ns)
-        with patch("file_content.os.fstat", side_effect=metadata):
-            with self.assertRaises(FileExistsError):
-                read_file_bytes(source, limit=1024)
+            return SimpleNamespace(
+                st_dev=details.st_dev,
+                st_ino=details.st_ino + 1,
+                st_mode=details.st_mode,
+                st_size=details.st_size,
+                st_mtime_ns=details.st_mtime_ns,
+                st_ctime_ns=details.st_ctime_ns,
+            )
+
+        with (
+            patch("file_content.os.fstat", side_effect=metadata),
+            self.assertRaises(FileExistsError),
+        ):
+            read_file_bytes(source, limit=1024)
 
     def test_modified_copy_cannot_be_undone(self):
         source = self.file("source/nested/item.txt", "original")

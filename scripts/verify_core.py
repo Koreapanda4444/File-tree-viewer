@@ -188,7 +188,9 @@ class FilesystemChecks(unittest.TestCase):
         self.addCleanup(plan.close)
         self.assertTrue(plan.can_apply, plan.issues)
         result = apply_sync_plan(plan)
-        self.assertEqual(result.status, "completed")
+        self.assertEqual(
+            result.status, "completed", (result.error, result.recovery_errors)
+        )
         self.assertEqual((self.root / "right/item.txt").read_text(), "left")
         self.assertEqual((self.root / "right/keep.txt").read_text(), "keep")
         recover_sync_group(result.journals[0].parent / "sync.json", undo=True)

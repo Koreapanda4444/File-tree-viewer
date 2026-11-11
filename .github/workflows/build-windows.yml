@@ -71,7 +71,8 @@ jobs:
 
   publish:
     needs: build
-    if: github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish 1.0.0')
+    if: >-
+      github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish 1.0.0')
     runs-on: windows-latest
     timeout-minutes: 5
     permissions:

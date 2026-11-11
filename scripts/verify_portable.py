@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,7 +71,7 @@ class PortableChecks(unittest.TestCase):
         self.assertEqual(len(HistoryStore().rows()), 1)
         self.assertFalse(copy_history(source, history_path()))
         self.assertEqual(len(HistoryStore().rows()), 1)
-        with sqlite3.connect(history_path()) as database:
+        with closing(sqlite3.connect(history_path())) as database:
             self.assertEqual(database.execute("PRAGMA quick_check").fetchone(), ("ok",))
 
     def test_existing_legacy_preferences_are_not_used_as_a_fallback(self):

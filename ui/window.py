@@ -43,7 +43,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -73,6 +75,7 @@ from search_matching import NameMatcher, SearchPatternError
 from search_options import SearchOptions
 from ui.address import AddressBar
 from ui.appearance import install_appearance
+from ui.chrome import WorkspaceHeader
 from ui.command_palette import install_command_palette
 from ui.completion import PathCompletion
 from ui.explorer_state import ExplorerState
@@ -123,6 +126,8 @@ class ExplorerPage(QWidget):
         self.virtual = virtual
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
         layout.addLayout(self._create_location_row())
         layout.addLayout(self._create_search_row())
         layout.addWidget(self._create_content(), 1)
@@ -134,7 +139,15 @@ class ExplorerPage(QWidget):
             self.back_button = QPushButton("Back")
             self.forward_button = QPushButton("Forward")
             self.up_button = QPushButton("Up")
-            for button in (self.back_button, self.forward_button, self.up_button):
+            for button, icon in (
+                (self.back_button, QStyle.StandardPixmap.SP_ArrowBack),
+                (self.forward_button, QStyle.StandardPixmap.SP_ArrowForward),
+                (self.up_button, QStyle.StandardPixmap.SP_ArrowUp),
+            ):
+                button.setToolTip(button.text())
+                button.setIcon(self.style().standardIcon(icon))
+                button.setText("")
+                button.setFixedWidth(36)
                 button.setEnabled(False)
                 row.addWidget(button)
         row.addWidget(QLabel("Workspace" if self.virtual else "Root"))
@@ -182,8 +195,11 @@ class ExplorerPage(QWidget):
         row.addWidget(self.show_hidden)
         return row
 
-    def _create_search_row(self) -> QHBoxLayout:
+    def _create_search_row(self) -> QVBoxLayout:
+        layout = QVBoxLayout()
+        layout.setSpacing(6)
         row = QHBoxLayout()
+        layout.addLayout(row)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search files and folders")
@@ -198,19 +214,22 @@ class ExplorerPage(QWidget):
         row.addWidget(self.search_button)
         row.addWidget(self.clear_search_button)
         if not self.virtual:
+            row = FlowLayout()
+            layout.addLayout(row)
             self.search_filters_button = QPushButton("Filters…")
             self.search_tools_button = QPushButton("Search Tools…")
             row.addWidget(self.search_filters_button)
             row.addWidget(self.search_tools_button)
             self.name_input = QLineEdit()
             self.name_input.setPlaceholderText("Jump to file or folder…")
-            self.name_input.setMaximumWidth(280)
+            self.name_input.setFixedWidth(240)
             self.name_input.setEnabled(False)
             self.jump_button = QPushButton("Jump")
             self.jump_button.setEnabled(False)
             row.addWidget(self.name_input)
             row.addWidget(self.jump_button)
-        return row
+        self.search_button.setProperty("primary", True)
+        return layout
 
     def _create_content(self) -> QSplitter:
         splitter = self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -220,6 +239,8 @@ class ExplorerPage(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tree.setUniformRowHeights(True)
+        self.tree.setMinimumWidth(160)
+        self.tree.setIndentation(18)
 
         empty_model = QStandardItemModel(self.tree)
         empty_model.setHorizontalHeaderLabels(("Name", "Type", "Size", "Modified"))
@@ -253,6 +274,7 @@ class ExplorerPage(QWidget):
         details_layout.setContentsMargins(0, 0, 0, 0)
 
         details_group = QGroupBox("Details")
+        details_group.setMinimumHeight(230)
         details_form = QFormLayout(details_group)
         self.detail_values = {}
         for label in (
@@ -276,6 +298,7 @@ class ExplorerPage(QWidget):
         details_layout.addWidget(details_group)
 
         preview_group = QGroupBox("Preview")
+        preview_group.setMinimumHeight(250)
         preview_layout = QVBoxLayout(preview_group)
 
         preview_toolbar = FlowLayout()
@@ -306,9 +329,15 @@ class ExplorerPage(QWidget):
         preview_layout.addWidget(self.image_preview)
         details_layout.addWidget(preview_group, 1)
 
-        splitter.addWidget(details)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        details_scroll = QScrollArea()
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setWidget(details)
+        details_scroll.setMinimumWidth(240)
+        splitter.addWidget(details_scroll)
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([1000, 320])
+        details.setMinimumWidth(220)
         return splitter
 
     def _create_action_row(self) -> FlowLayout:
@@ -348,6 +377,7 @@ class ExplorerPage(QWidget):
             row.addWidget(self.operation_results_button)
             self.compare_files_button = QPushButton("Compare Files")
             row.addWidget(self.compare_files_button)
+        self.delete_button.setProperty("danger", True)
         return row
 
 
@@ -2543,7 +2573,7 @@ class MainWindow(QMainWindow):
         self.folder_comparison_dialog = None
         self.comparison_close_pending = False
         self.resize(1400, 850)
-        self.setMinimumSize(880, 600)
+        self.setMinimumSize(960, 640)
 
         self.tabs = QTabWidget()
         self.real_page = RealExplorerPage()
@@ -2560,7 +2590,14 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.virtual_page, "Virtual File System")
         self.tabs.addTab(self.plan_page, "Plan")
 
-        self.setCentralWidget(self.tabs)
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.workspace_header = WorkspaceHeader(self.tabs)
+        layout.addWidget(self.workspace_header)
+        layout.addWidget(self.tabs, 1)
+        self.setCentralWidget(central)
         workspace_menu = self.menuBar().addMenu("Workspace")
         self.workspace_actions = QActionGroup(self)
         for index, title in enumerate(

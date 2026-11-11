@@ -49,15 +49,15 @@ class ThemeManager(QObject):
         )
         palette = QPalette()
         colors = {
-            QPalette.ColorRole.Window: "#20242b" if dark else "#f4f6f9",
-            QPalette.ColorRole.WindowText: "#e4e9f1" if dark else "#17243a",
-            QPalette.ColorRole.Base: "#171b21" if dark else "#ffffff",
-            QPalette.ColorRole.AlternateBase: "#252b34" if dark else "#edf1f7",
-            QPalette.ColorRole.Text: "#e4e9f1" if dark else "#17243a",
-            QPalette.ColorRole.Button: "#303743" if dark else "#e8edf5",
-            QPalette.ColorRole.ButtonText: "#e4e9f1" if dark else "#17243a",
-            QPalette.ColorRole.Highlight: "#315c91" if dark else "#bdd6fa",
-            QPalette.ColorRole.HighlightedText: "#ffffff" if dark else "#102844",
+            QPalette.ColorRole.Window: "#202724" if dark else "#eeeee8",
+            QPalette.ColorRole.WindowText: "#e4eae5" if dark else "#25352d",
+            QPalette.ColorRole.Base: "#171e1b" if dark else "#fcfcf8",
+            QPalette.ColorRole.AlternateBase: "#202a24" if dark else "#f3f4ee",
+            QPalette.ColorRole.Text: "#e4eae5" if dark else "#25352d",
+            QPalette.ColorRole.Button: "#303d34" if dark else "#f7f7f1",
+            QPalette.ColorRole.ButtonText: "#e4eae5" if dark else "#25352d",
+            QPalette.ColorRole.Highlight: "#235f43" if dark else "#d5e7d9",
+            QPalette.ColorRole.HighlightedText: "#ffffff" if dark else "#123c26",
             QPalette.ColorRole.ToolTipBase: "#303743" if dark else "#ffffff",
             QPalette.ColorRole.ToolTipText: "#e4e9f1" if dark else "#17243a",
             QPalette.ColorRole.Link: "#91c4ff" if dark else "#225c99",
@@ -76,5 +76,42 @@ class ThemeManager(QObject):
                 QColor("#87909d" if dark else "#7c8794"),
             )
         self.app.setPalette(palette)
+        border = "#435147" if dark else "#b8c0b5"
+        surface = "#28332c" if dark else "#f5f5ef"
+        accent = "#88c9a2" if dark else "#215b3c"
+        self.app.setStyleSheet(f"""
+            QWidget {{ font-size: 10pt; }}
+            QMainWindow {{ background: palette(window); }}
+            #workspaceHeader {{ background: #16432d; border-bottom: 3px solid #c4ae62; }}
+            #applicationTitle {{ color: #fffef4; font-size: 17pt; font-weight: 600; }}
+            #applicationSubtitle, #workspaceContext {{ color: #c4d8c9; font-size: 9pt; }}
+            QMenuBar {{ padding: 3px 8px; }}
+            QMenu {{ padding: 5px; }}
+            QMenu::item {{ padding: 7px 24px 7px 12px; }}
+            QTabWidget::pane {{ border: 0; border-top: 1px solid {border}; }}
+            QTabBar::tab {{ padding: 8px 18px; margin-right: 2px; background: {surface}; border: 1px solid {border}; }}
+            QTabBar::tab:selected {{ color: {accent}; border-bottom: 3px solid {accent}; font-weight: 600; }}
+            QPushButton, QToolButton {{ padding: 5px 9px; min-height: 20px; border: 1px solid {border}; border-radius: 2px; background: {surface}; }}
+            QPushButton:hover, QToolButton:hover {{ border-color: {accent}; }}
+            QPushButton:pressed, QToolButton:pressed {{ background: palette(highlight); }}
+            QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus {{ border: 1px solid {accent}; }}
+            QPushButton[primary="true"] {{ background: #215b3c; color: white; border-color: #215b3c; font-weight: 600; }}
+            QPushButton[primary="true"]:disabled {{ background: {surface}; color: palette(disabled, button-text); border-color: {border}; }}
+            QPushButton[danger="true"]:enabled {{ color: {"#ffa59b" if dark else "#9b332b"}; }}
+            QLineEdit, QSpinBox, QComboBox {{ padding: 5px 7px; min-height: 20px; border: 1px solid {border}; border-radius: 2px; background: palette(base); }}
+            QComboBox {{ padding-right: 24px; }}
+            QComboBox::drop-down {{ width: 20px; border-left: 1px solid {border}; }}
+            QTreeView, QListView, QTableView, QPlainTextEdit {{ border: 1px solid {border}; outline: 0; }}
+            QTreeView::item, QListView::item, QTableView::item {{ min-height: 26px; }}
+            QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{ background: palette(highlight); color: palette(highlighted-text); }}
+            QHeaderView::section {{ background: {surface}; border: 0; border-bottom: 1px solid {border}; border-right: 1px solid {border}; padding: 6px; font-weight: 600; }}
+            QGroupBox {{ border: 1px solid {border}; border-radius: 2px; margin-top: 12px; padding: 10px; font-weight: 600; }}
+            QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: {accent}; }}
+            QSplitter::handle {{ background: palette(window); width: 7px; height: 7px; }}
+            QSplitter::handle:hover {{ background: palette(highlight); }}
+            QStatusBar {{ border-top: 1px solid {border}; padding: 3px; }}
+            QDialogButtonBox {{ padding-top: 8px; }}
+            QToolTip {{ padding: 5px; border: 1px solid {border}; }}
+        """)
         for widget in self.app.topLevelWidgets():
             widget.update()

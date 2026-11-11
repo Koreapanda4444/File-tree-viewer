@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QSize
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QPushButton, QStyle
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QPushButton,
+    QStyle,
+)
 
 ICONS = {
     "back": QStyle.StandardPixmap.SP_ArrowBack,
@@ -39,6 +45,10 @@ class AppearanceController(QObject):
                     watched.setIcon(watched.style().standardIcon(icon))
                     watched.setIconSize(QSize(16, 16))
                 watched.setAutoDefault(False)
+            elif isinstance(watched, QDialog):
+                if watched.layout() is not None:
+                    watched.layout().setContentsMargins(16, 16, 16, 16)
+                    watched.layout().setSpacing(10)
             elif isinstance(watched, QAbstractItemView):
                 watched.setAlternatingRowColors(True)
                 watched.setVerticalScrollMode(

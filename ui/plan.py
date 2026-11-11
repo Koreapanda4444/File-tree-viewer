@@ -63,6 +63,7 @@ from snapshot_compare import SnapshotComparison
 from sync_apply import SyncApplication
 from ui.analysis import StructureAnalysisDialog, StructureAnalysisWorker
 from ui.batch import BatchDialog
+from ui.chrome import action_menu
 from ui.conflicts import ConflictResolutionDialog
 from ui.diagnostics import DiagnosticDialog, DiagnosticWorker, DuplicateReviewWorker
 from ui.feedback import show_error
@@ -475,6 +476,8 @@ class PlanExplorerPage(QWidget):
         self.close_cancelled = False
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
         layout.addLayout(self._create_root_row())
         layout.addWidget(self._create_content(), 1)
         layout.addLayout(self._create_action_row())
@@ -545,20 +548,30 @@ class PlanExplorerPage(QWidget):
         self.open_snapshot_button = QPushButton("Open Snapshot")
         self.save_snapshot_button.clicked.connect(self.save_current_snapshot)
         self.open_snapshot_button.clicked.connect(self.open_saved_snapshot)
-        row.addWidget(self.save_snapshot_button)
+        row.addWidget(self.import_button)
+        self.import_button.setProperty("primary", True)
         row.addWidget(self.open_snapshot_button)
+        row.addWidget(self.save_snapshot_button)
         self.compare_snapshot_button = QPushButton("Compare Snapshot")
         self.compare_snapshot_button.clicked.connect(self.compare_saved_snapshot)
-        row.addWidget(self.compare_snapshot_button)
+
         self.export_report_button = QPushButton("Export Report")
         self.export_report_button.clicked.connect(self.export_current_report)
-        row.addWidget(self.export_report_button)
+
         self.recovery_button = QPushButton("Recover Interrupted Plan")
         self.recovery_button.clicked.connect(self.recover_interrupted)
         self.cancel_button = QPushButton("Cancel")
         self.progress_label = QLabel("No snapshot loaded")
-        row.addWidget(self.import_button)
-        row.addWidget(self.recovery_button)
+        row.addWidget(
+            action_menu(
+                "Snapshot Tools…",
+                (
+                    self.compare_snapshot_button,
+                    self.export_report_button,
+                    self.recovery_button,
+                ),
+            )
+        )
         row.addWidget(self.cancel_button)
         self.progress_label.setWordWrap(True)
         layout.addWidget(self.progress_label)
@@ -670,10 +683,6 @@ class PlanExplorerPage(QWidget):
             self.copy_button,
             self.move_button,
             self.delete_button,
-            self.batch_rename_button,
-            self.organize_button,
-            self.analysis_button,
-            self.diagnostic_button,
             self.preview_plan_button,
             self.diff_button,
             self.apply_button,
@@ -681,6 +690,19 @@ class PlanExplorerPage(QWidget):
             self.undo_plan_button,
         ):
             row.addWidget(button)
+        row.addWidget(
+            action_menu(
+                "More Tools…",
+                (
+                    self.batch_rename_button,
+                    self.organize_button,
+                    self.analysis_button,
+                    self.diagnostic_button,
+                ),
+            )
+        )
+        self.apply_button.setProperty("primary", True)
+        self.delete_button.setProperty("danger", True)
         self.new_file_button.clicked.connect(lambda: self.stage_create(False))
         self.new_folder_button.clicked.connect(lambda: self.stage_create(True))
         self.rename_button.clicked.connect(self.stage_rename)

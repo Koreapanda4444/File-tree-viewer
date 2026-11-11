@@ -68,39 +68,3 @@ jobs:
             release/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
-
-  publish:
-    needs: build
-    if: >-
-      github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish 1.0.0')
-    runs-on: windows-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Check out verified source
-        uses: actions/checkout@v7
-
-      - name: Download verified distribution
-        uses: actions/download-artifact@v7
-        with:
-          name: FileTreeViewer-windows-x64
-          path: release
-
-      - name: Publish first official release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $version = python -c "from version import __version__; print(__version__)"
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot read application version' }
-          $tag = "v$version"
-          $head = gh api "repos/$env:GITHUB_REPOSITORY/commits/main" --jq '.sha'
-          if ($LASTEXITCODE -ne 0 -or $head -ne $env:GITHUB_SHA) { throw 'main changed after this build; refusing release' }
-          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
-          if ($LASTEXITCODE -eq 0) { throw 'This release already exists; refusing overwrite' }
-          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>$null
-          if ($LASTEXITCODE -eq 0) { throw 'This tag already exists; refusing overwrite' }
-          $archive = (Get-ChildItem release/FileTreeViewer-*-windows-x64.zip).FullName
-          gh release create $tag $archive release/SHA256SUMS --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "File Tree Viewer $version" --notes-file docs/RELEASE_NOTES.md
-          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

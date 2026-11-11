@@ -327,7 +327,7 @@ class SnapshotTreeModel(QAbstractItemModel):
         if column == 0:
             return self.snapshot.root.name or str(self.snapshot.root)
         if column == 1:
-            return "Snapshot Root"
+            return tr("Snapshot Root")
         return "-"
 
 
@@ -376,7 +376,7 @@ class PlanListModel(QAbstractItemModel):
         operation = self.plan.operations[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return (
-                operation.action.value.replace("_", " ").upper(),
+                tr(operation.action.value.replace("_", " ").title()),
                 operation.source.as_posix() if operation.source is not None else "-",
                 operation.target.as_posix() if operation.target is not None else "-",
                 operation.conflict_policy.value.replace("_", " ").upper()
@@ -2333,11 +2333,15 @@ class PlanExplorerPage(QWidget):
             if op.conflict_policy is not ConflictPolicy.SKIP
         )
         summary = ", ".join(
-            f"{count:,} {action.replace('_', ' ')}"
+            tr(
+                "{count:,} {action}",
+                count=count,
+                action=tr(action.replace("_", " ").title()),
+            )
             for action, count in sorted(counts.items())
         )
         self.plan_count.setText(
-            f"PLAN — {len(self.plan):,} staged operation(s)"
+            tr("PLAN — {count:,} staged operation(s)", count=len(self.plan))
             + (f" | {summary}" if summary else "")
         )
         self.plan_count.setToolTip(
@@ -2719,11 +2723,13 @@ def top_level_entries(entries: list[SnapshotEntry]) -> tuple[SnapshotEntry, ...]
 
 def snapshot_type(entry: SnapshotEntry) -> str:
     if entry.is_symlink:
-        return "Symbolic Link"
+        return tr("Symbolic Link")
     if entry.is_directory:
-        return "Folder"
+        return tr("Folder")
     suffix = PurePosixPath(entry.name).suffix
-    return f"{suffix[1:].upper()} File" if suffix else "File"
+    return (
+        tr("{extension} File", extension=suffix[1:].upper()) if suffix else tr("File")
+    )
 
 
 def format_size(size: int) -> str:

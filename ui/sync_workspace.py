@@ -18,7 +18,7 @@ class SyncWorkspace(QGroupBox):
     filesystem_changed = Signal(object)
 
     def __init__(self, page):
-        super().__init__("Multi-root Synchronization", page)
+        super().__init__(tr("Multi-root Synchronization"), page)
         self.page = page
         self.plan = self.result = self.dialog = None
         layout = QVBoxLayout(self)

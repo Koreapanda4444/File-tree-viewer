@@ -641,5 +641,11 @@
   "Data Import Failed": "데이터 가져오기 실패",
   "Previous data was preserved. Check permissions and try again.": "이전 데이터는 보존했습니다. 쓰기 권한을 확인한 뒤 다시 시도하세요.",
   "Data Import Complete": "데이터 가져오기 완료",
-  "Settings were imported. Restart the application to use imported preferences. Existing portable history was preserved unless a new history database was copied.": "설정을 가져왔습니다. 가져온 환경설정은 프로그램을 다시 시작하면 적용됩니다. 기존 포터블 기록은 유지하며, 기록 파일이 없을 때만 이전 기록을 복사했습니다."
+  "Settings were imported. Restart the application to use imported preferences. Existing portable history was preserved unless a new history database was copied.": "설정을 가져왔습니다. 가져온 환경설정은 프로그램을 다시 시작하면 적용됩니다. 기존 포터블 기록은 유지하며, 기록 파일이 없을 때만 이전 기록을 복사했습니다.",
+  "PLAN — {count:,} staged operation(s)": "계획 — 준비된 작업 {count:,}개",
+  "{count:,} {action}": "{action} {count:,}개",
+  "Create File": "파일 생성",
+  "Create Folder": "폴더 생성",
+  "Snapshot Root": "스냅샷 루트",
+  "{extension} File": "{extension} 파일"
 }

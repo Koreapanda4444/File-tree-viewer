@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dist", type=Path, default=ROOT / "dist")
     options = parser.parse_args()
-    if os.name != "nt":
+    if os.name != "nt" or struct.calcsize("P") != 8:
         parser.error("Windows x64 is required to build the Windows executable")
     version = tuple(int(part) for part in __version__.split(".")) + (0,)
     with tempfile.TemporaryDirectory(prefix="ftv-build-") as temporary:

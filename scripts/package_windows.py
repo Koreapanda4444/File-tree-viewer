@@ -21,10 +21,21 @@ def verify_archive(path):
             for name in names
         ):
             raise ValueError("Portable ZIP must contain only the FileTreeViewer folder")
+        if len(names) != len(set(names)):
+            raise ValueError("Portable ZIP contains duplicate paths")
         if "FileTreeViewer/FileTreeViewer.exe" not in names or not any(
             name.startswith("FileTreeViewer/_internal/") for name in names
         ):
             raise ValueError("Portable executable or runtime is missing")
+        required = {
+            "FileTreeViewer/README.md",
+            "FileTreeViewer/_internal/assets/app-icon.png",
+            "FileTreeViewer/_internal/ui/translations/ko.json",
+        }
+        if not required.issubset(names):
+            raise ValueError(
+                "Portable guide, icon or interface translations are missing"
+            )
         if any(
             name.startswith("FileTreeViewer/data/")
             or "/scripts/" in name
@@ -54,6 +65,10 @@ def main():
             relative = path.relative_to(source)
             if path.is_file() and relative.parts[0] != "data":
                 archive.write(path, "FileTreeViewer/" + relative.as_posix())
+        archive.write(
+            Path(__file__).resolve().parents[1] / "docs/PORTABLE.md",
+            "FileTreeViewer/README.md",
+        )
     verify_archive(destination)
     with destination.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()

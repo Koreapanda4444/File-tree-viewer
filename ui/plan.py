@@ -14,11 +14,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
-    QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLineEdit,
@@ -40,7 +37,6 @@ from plan_apply import (
     PlanApplicationRecord,
     latest_completed_application,
 )
-from plan_dependencies import analyze_dependencies
 from plan_diff import PlanSimulation, simulate_plan
 from planning import (
     ConflictPolicy,
@@ -70,6 +66,11 @@ from ui.performance import (
     SnapshotFileWorker,
 )
 from ui.plan_apply import PlanApplyWorker, PlanRecoveryWorker, PlanUndoWorker
+from ui.plan_dialogs import (
+    create_dependencies_dialog,
+    create_operation_dialog,
+    create_structure_dialog,
+)
 from ui.plan_diff import PlanDiffDialog
 from ui.plan_models import (
     INVALID_INDEX,
@@ -689,43 +690,7 @@ class PlanExplorerPage(QWidget):
             self._show_plan_error(error)
 
     def review_dependencies(self) -> None:
-        report = analyze_dependencies(self.plan)
-        positions = {
-            op.operation_id: index + 1 for index, op in enumerate(self.plan.operations)
-        }
-        lines = [
-            "Move sources are staged first. Deletes, folders, moves, renames and files are then processed in execution groups.",
-            "",
-            "Execution order: "
-            + ", ".join(str(positions[key]) for key in report.execution_order[:500]),
-        ]
-        for edge in report.edges[:500]:
-            lines.append(
-                f"Step {positions[edge.operation_id]} requires step {positions[edge.requires_id]}: {edge.reason}"
-            )
-        for cycle in report.cycles[:100]:
-            lines.append(
-                (
-                    "Staged move cycle: "
-                    if cycle.staged
-                    else "Blocked dependency cycle: "
-                )
-                + ", ".join(str(positions[key]) for key in cycle.operation_ids)
-            )
-        lines.extend(problem.message for problem in report.problems[:100])
-        dialog = QDialog(self)
-        dialog.setWindowTitle(tr("Plan Dependencies and Execution Order"))
-        dialog.resize(900, 600)
-        layout = QVBoxLayout(dialog)
-        from PySide6.QtWidgets import QPlainTextEdit
-
-        text = QPlainTextEdit()
-        text.setReadOnly(True)
-        text.setPlainText("\n".join(lines))
-        layout.addWidget(text)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+        dialog = create_dependencies_dialog(self.plan, self)
         dialog.exec()
         dialog.deleteLater()
 
@@ -757,54 +722,7 @@ class PlanExplorerPage(QWidget):
         operation = next(
             op for op in self.plan.operations if op.operation_id in selected
         )
-        dialog = QDialog(self)
-        dialog.setWindowTitle(tr("Edit Planned Operation"))
-        layout = QFormLayout(dialog)
-        action = QComboBox()
-        for item in PlanAction:
-            action.addItem(item.value.replace("_", " ").title(), item)
-        action.setCurrentIndex(action.findData(operation.action))
-        source = QLineEdit(str(operation.source) if operation.source else "")
-        target = QLineEdit(str(operation.target) if operation.target else "")
-        layout.addRow(tr("Action"), action)
-        layout.addRow(tr("Source relative path"), source)
-        layout.addRow(tr("Target relative path"), target)
-
-        def update_fields():
-            source.setEnabled(
-                action.currentData()
-                in {
-                    PlanAction.COPY,
-                    PlanAction.MOVE,
-                    PlanAction.RENAME,
-                    PlanAction.DELETE,
-                }
-            )
-            target.setEnabled(action.currentData() is not PlanAction.DELETE)
-
-        action.currentIndexChanged.connect(update_fields)
-        update_fields()
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-
-        def save():
-            try:
-                self.plan.update_operation(
-                    operation.operation_id,
-                    action=action.currentData(),
-                    source=source.text() if source.isEnabled() else None,
-                    target=target.text() if target.isEnabled() else None,
-                )
-            except (ValueError, KeyError, TypeError) as error:
-                QMessageBox.warning(dialog, tr("Invalid operation"), str(error))
-            else:
-                dialog.accept()
-
-        buttons.accepted.connect(save)
-        buttons.rejected.connect(dialog.reject)
-        layout.addRow(buttons)
+        dialog = create_operation_dialog(self.plan, operation, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._refresh_plan_list()
             self.restore_operation_selection(selected)
@@ -911,41 +829,7 @@ class PlanExplorerPage(QWidget):
         if self.snapshot is None:
             after.close()
             return
-        dialog = QDialog(self)
-        dialog.setWindowTitle(
-            tr("Planned Folder Structure — original files are unchanged")
-        )
-        dialog.resize(1150, 720)
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(
-            QLabel(
-                tr(
-                    "Before: {value0:,} items · After: {value1:,} items",
-                    value0=self.snapshot.entry_count,
-                    value1=after.entry_count,
-                )
-            )
-        )
-        split = QSplitter(Qt.Orientation.Horizontal)
-        models = []
-        for title, snapshot in (("Before", self.snapshot), ("After Plan", after)):
-            panel = QWidget()
-            column = QVBoxLayout(panel)
-            column.addWidget(QLabel(title))
-            tree = QTreeView()
-            tree.setUniformRowHeights(True)
-            model = SnapshotTreeModel(snapshot, tree)
-            models.append(model)
-            tree.setModel(model)
-            tree.setDragEnabled(False)
-            tree.setAcceptDrops(False)
-            tree.setColumnWidth(0, 300)
-            index = model.index(0, 0)
-            model.fetchMore(index)
-            tree.expand(index)
-            column.addWidget(tree)
-            split.addWidget(panel)
-        layout.addWidget(split)
+        dialog = create_structure_dialog(self.snapshot, after, self)
         try:
             dialog.exec()
         finally:

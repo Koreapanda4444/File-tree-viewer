@@ -2,6 +2,8 @@
 
 English | [한국어](README.ko.md)
 
+## Overview
+
 File Tree Viewer is a Python and PySide6 Windows application that combines a real
 file explorer, a virtual folder-tree editor and a Snapshot-based change planner.
 Manage files directly, sketch a directory structure independently, or prepare a
@@ -12,9 +14,9 @@ set of changes and inspect the result before applying it to disk.
 ### Real File System
 
 Browse folders through tabs, breadcrumbs, favorites and an editable address bar.
-Search file names or contents, preview text, images and binary data, edit text and
-inspect file metadata. Copy, move, rename and other file commands work directly on
-the selected files, with session Undo for supported operations.
+Search file names or contents, preview text, images and binary data, edit text,
+compare text files and inspect file metadata. Copy, move, rename and other file
+commands work directly on the selected files, with session Undo for supported operations.
 
 ### Virtual File System
 
@@ -41,20 +43,6 @@ lists, or review duplicate files and stage selected cleanup operations in Plan.
 Preview, copy or export folder trees as TXT, Markdown or JSON. Browse operation
 and recovery history and export reports as JSON, CSV or HTML. English/Korean UI,
 light/dark/system themes, saved panel layouts and quick commands support everyday use.
-
-## Preview
-
-### Real File System
-
-Folder navigation, file selection and previews share one workspace.
-
-![Real File System workspace](docs/images/real.png)
-
-### Plan
-
-The Snapshot tree and staged operations remain visible while reviewing changes.
-
-![Plan workspace](docs/images/plan.png)
 
 ## Usage
 

@@ -6,8 +6,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMenu
 
-from search_export import export_search
-from search_history import SearchHistory, SearchRequest
+from search.export import export_search
+from search.history import SearchHistory, SearchRequest
 from snapshot import SnapshotCancelled
 from ui.i18n import tr
 from ui.preferences import application_settings

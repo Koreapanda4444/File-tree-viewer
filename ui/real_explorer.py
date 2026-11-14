@@ -46,9 +46,9 @@ from real.preview import FilePreviewWorker, PreviewResult, save_text_atomic
 from real.search import SearchResultsModel, SearchWorker
 from real.sorting import FileSortModel
 from real.tree import FileTreeModel
-from search_history import SearchRequest
-from search_matching import NameMatcher, SearchPatternError
-from search_options import SearchOptions
+from search.history import SearchRequest
+from search.matching import NameMatcher, SearchPatternError
+from search.options import SearchOptions
 from ui.completion import PathCompletion
 from ui.explorer_state import ExplorerState
 from ui.feedback import show_error

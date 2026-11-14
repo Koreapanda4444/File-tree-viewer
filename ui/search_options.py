@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-from search_options import SearchOptions
+from search.options import SearchOptions
 from ui.i18n import add_choice, add_choices, choice_text, set_choice_text, tr
 from ui.widgets import PlainLabel
 

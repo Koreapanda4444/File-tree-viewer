@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from search_options import SearchOptions
+from search.options import SearchOptions
 
 
 @dataclass(frozen=True, slots=True)

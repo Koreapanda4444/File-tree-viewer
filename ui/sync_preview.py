@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from snapshot import SnapshotCancelled
 from sync_preview import build_sync_preview
 from ui.i18n import tr
+from ui.plan_models import SnapshotTreeModel
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
 
@@ -94,8 +95,6 @@ class SyncPreviewDialog(QDialog):
         if self.preview is None:
             self.summary.setText(error)
             return
-        from ui.plan import SnapshotTreeModel
-
         for side in (0, 1):
             split = QSplitter(Qt.Orientation.Horizontal)
             for title, snapshot in (

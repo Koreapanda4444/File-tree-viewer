@@ -1,11 +1,15 @@
 __pycache__/
 *.py[cod]
 .ruff_cache/
+
 .venv/
+venv/
+env/
+
 build/
 dist/
 release/
 *.spec
-.file-tree-viewer/
 
+.file-tree-viewer/
 /data/

@@ -52,7 +52,7 @@ jobs:
       - name: Package ZIP and checksum
         run: python scripts/package_windows.py dist/FileTreeViewer
 
-      - name: Verify extracted release ZIP
+      - name: Verify extracted portable ZIP
         shell: pwsh
         run: |
           $archive = (Get-ChildItem release/FileTreeViewer-*-windows-x64.zip).FullName

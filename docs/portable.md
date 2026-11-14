@@ -4,7 +4,7 @@ English | [한국어](ko/portable.md)
 
 ## Run
 
-1. Extract the entire `FileTreeViewer-1.0.0-windows-x64.zip`.
+1. Use the complete built `dist/FileTreeViewer/` folder or a program folder you received.
 2. Run `FileTreeViewer/FileTreeViewer.exe`.
 3. Keep `_internal/` beside the EXE. No Python installation is required.
 
@@ -28,7 +28,7 @@ recovery backups. Snapshots store metadata, not file contents.
 Close the app and finish all work first.
 
 - To move, copy the whole `FileTreeViewer` folder, including `data` and `_internal`.
-- To update, extract the new ZIP into a separate folder and copy the old `data` into it.
+- To update, prepare the new program in a separate folder and copy the old `data` into it.
   Keep the previous folder until the new copy is verified. Do not copy an active database.
 - Check that saved paths and drive letters exist on the destination PC. Moving the app
   does not rewrite external file, Snapshot or Plan paths.
@@ -56,10 +56,14 @@ target root's `.file-tree-viewer`. Removing them can prevent Undo or interrupted
 recovery. External modifications or unavailable drives block unsafe recovery while
 preserving the data. Recycle-bin deletion is outside Real Undo.
 
-## Checksum
+## Create a Windows executable
 
-Compare the ZIP's SHA-256 with `SHA256SUMS` beside it:
+On Windows with 64-bit Python 3.12 or newer available as `python`, run the repository BAT:
 
 ```powershell
-Get-FileHash .\FileTreeViewer-1.0.0-windows-x64.zip -Algorithm SHA256
+.\build_windows.bat
 ```
+
+It installs the required dependencies into the current Python environment and creates
+`dist/FileTreeViewer/FileTreeViewer.exe`. The complete folder, including `_internal/`,
+is the result. No installer, ZIP or checksum file is generated.

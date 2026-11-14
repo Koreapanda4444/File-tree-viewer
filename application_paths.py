@@ -4,8 +4,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-_data_override: Path | None = None
-
 
 def application_directory():
     return (
@@ -20,13 +18,8 @@ def resource_path(*parts):
     return base.joinpath(*parts)
 
 
-def configure_data_directory(path=None):
-    global _data_override
-    _data_override = Path(path).resolve() if path is not None else None
-
-
 def data_directory():
-    return _data_override or application_directory() / "data"
+    return application_directory() / "data"
 
 
 def settings_path():

@@ -4,7 +4,7 @@
 
 ## 실행
 
-1. `FileTreeViewer-1.0.0-windows-x64.zip` 전체를 압축 해제합니다.
+1. 빌드한 `dist/FileTreeViewer/` 또는 전달받은 프로그램 폴더 전체를 준비합니다.
 2. `FileTreeViewer` 폴더의 `FileTreeViewer.exe`를 실행합니다.
 3. `_internal` 폴더를 EXE와 함께 보관합니다. 별도 Python 설치는 필요하지 않습니다.
 
@@ -25,7 +25,7 @@ Windows x64용입니다. 프로그램과 `data`에 쓸 수 있는 일반 사용�
 앱과 작업을 모두 종료한 뒤 진행하세요.
 
 - 이동: `data`와 `_internal`을 포함한 `FileTreeViewer` 폴더 전체를 복사합니다.
-- 업데이트: 새 ZIP을 별도 폴더에 풀고 기존 `data` 폴더를 새 프로그램 폴더로 복사합니다. 새 버전에서 확인하기 전까지 이전 폴더를 보관합니다. 실행 중인 DB 파일을 복사하지 마세요.
+- 업데이트: 새 프로그램 폴더를 별도로 준비하고 기존 `data` 폴더를 새 프로그램 폴더로 복사합니다. 새 버전에서 확인하기 전까지 이전 폴더를 보관합니다. 실행 중인 DB 파일을 복사하지 마세요.
 - 새 PC에서 예전 경로·드라이브 문자가 유효한지 확인합니다. 이동은 외부 파일·Snapshot·Plan의 경로를 자동 변환하지 않습니다.
 - 대상 루트의 `.file-tree-viewer/transactions` 등 복구 자료는 이동·삭제하지 않습니다. 여러 루트 동기화의 복구에는 모든 참여 드라이브가 필요합니다.
 
@@ -41,10 +41,14 @@ Real은 실제 파일을 관리합니다. Virtual은 내보내기 전까지 가�
 
 Plan·동기화의 Journal·Mutation 로그·백업·잠금은 각 대상 루트의 `.file-tree-viewer`에 남습니다. 이 자료를 지우면 Undo·중단 복구가 불가능해질 수 있습니다. 외부에서 파일이 바뀌거나 드라이브가 분리되면 복구를 차단하고 자료를 보존합니다. Real의 휴지통 삭제는 Real Undo 대상이 아닙니다.
 
-## 체크섬
+## Windows 실행 파일 만들기
 
-배포 ZIP 옆의 `SHA256SUMS`와 다음 명령의 결과를 비교할 수 있습니다.
+Windows에서 64비트 Python 3.12 이상을 `python` 명령으로 사용할 수 있어야 합니다.
+저장소의 BAT를 실행하세요.
 
 ```powershell
-Get-FileHash .\FileTreeViewer-1.0.0-windows-x64.zip -Algorithm SHA256
+.\build_windows.bat
 ```
+
+현재 Python 환경에 필요한 의존성을 설치하고 `dist/FileTreeViewer/FileTreeViewer.exe`를
+만듭니다. `_internal/`을 포함한 폴더 전체가 결과물입니다. 설치 프로그램·ZIP·체크섬은 만들지 않습니다.

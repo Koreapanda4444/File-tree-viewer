@@ -2,7 +2,7 @@
 
 English | [한국어](ko/usage.md)
 
-Run instructions and data migration are in the [portable guide](portable.md); source setup is in the [development guide](development.md).
+Execution, updates and data migration are in the [portable guide](portable.md). Source run commands are in the [README](../README.md).
 
 ## Workspaces
 
@@ -84,11 +84,3 @@ are candidates based on file identity rather than proof of identical contents.
 and revalidated. Batch Rename and Organize Files prepare operations; rules support
 JSON save/load. Dependency review distinguishes safely staged swaps from combinations
 that require separate Plans. Staging and simulation do not change original files.
-
-## Screenshots
-
-Actual application with disposable sample folders:
-
-![Real workspace](images/real.png)
-
-![Plan workspace](images/plan.png)

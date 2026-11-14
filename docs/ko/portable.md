@@ -1,4 +1,6 @@
-# File Tree Viewer 1.0.0 — 포터블 실행 안내
+# 포터블 실행 안내
+
+한국어 | [English](../portable.md)
 
 ## 실행
 
@@ -46,15 +48,3 @@ Plan·동기화의 Journal·Mutation 로그·백업·잠금은 각 대상 루트
 ```powershell
 Get-FileHash .\FileTreeViewer-1.0.0-windows-x64.zip -Algorithm SHA256
 ```
-
-## English quick start
-
-Extract the entire ZIP and run `FileTreeViewer/FileTreeViewer.exe`. Keep `_internal` beside the executable. Python and an installer are not required. Use a writable Windows x64 folder.
-
-Settings and history are created under `data/settings/preferences.ini` and `data/history/operation-history.sqlite3`. Close the app before moving or updating it. Copy the entire folder when moving; preserve the old `data` folder when updating. Previously saved file paths are not rewritten on another PC.
-
-Choose English or Korean under **Settings → Preferences**, then restart. **Settings → Import Previous Data** copies missing legacy preferences and, only if no portable history exists, the previous history database. Existing portable values and original data are preserved.
-
-Review Diff and conflicts before applying a Plan. Snapshots contain metadata, not file-content backups. Recovery journals and backups remain under each target root's `.file-tree-viewer`; keep these files and every participating drive available for recovery. Recycle-bin deletions are not part of Real Undo. Keep independent backups of important files.
-
-Project: https://github.com/Koreapanda4444/File-tree-viewer

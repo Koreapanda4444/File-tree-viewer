@@ -65,10 +65,18 @@ def main():
             relative = path.relative_to(source)
             if path.is_file() and relative.parts[0] != "data":
                 archive.write(path, "FileTreeViewer/" + relative.as_posix())
-        archive.write(
-            Path(__file__).resolve().parents[1] / "docs/PORTABLE.md",
-            "FileTreeViewer/README.md",
-        )
+        root = Path(__file__).resolve().parents[1]
+        guides = []
+        for name in ("docs/portable.md", "docs/ko/portable.md"):
+            lines = (root / name).read_text(encoding="utf-8").splitlines()
+            guides.append(
+                "\n".join(
+                    line
+                    for line in lines
+                    if not line.startswith(("English | [", "한국어 | ["))
+                )
+            )
+        archive.writestr("FileTreeViewer/README.md", "\n\n".join(guides) + "\n")
     verify_archive(destination)
     with destination.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()

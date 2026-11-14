@@ -1,19 +1,8 @@
-# File Tree Viewer
+# 사용법
 
-[프로젝트 소개](../README.md) · [English documentation](../README_EN.md)
+한국어 | [English](../usage.md)
 
-Python과 PySide6로 만든 로컬 파일 탐색·분석·작업 계획 앱입니다. 기존 Real·Virtual·Plan 작업공간을 유지하며, Snapshot을 기준으로 변경을 검토하고 실제 파일에 적용합니다.
-
-## 실행
-
-Python 3.12 이상과 `requirements.txt`의 PySide6·Send2Trash·regex가 필요합니다. Windows CI는 Python 3.12에서 실행됩니다.
-
-```powershell
-python -m pip install -r requirements.txt
-python main.py
-```
-
-포터블 실행·업데이트·데이터 이전은 [실행 안내](PORTABLE.md), 소스 실행·빌드는 [개발 안내](DEVELOPMENT.md)를 참고하세요.
+포터블 실행·데이터 이전은 [실행 안내](portable.md), 소스 실행은 [개발 안내](development.md)를 참고하세요.
 
 ## 작업공간과 탐색
 
@@ -143,40 +132,10 @@ Logical은 모든 파일 경로의 크기 합계이며 Unique는 파일 식별�
 
 **Ctrl+P / Settings → Quick Commands**는 메뉴와 현재 작업공간의 명령을 검색합니다. 방향키·Enter로 실행하고 최근 명령·즐겨찾기를 저장합니다. 절대 폴더 경로를 입력해 Real로 이동하거나 폴더 명령을 즐겨찾기에 저장할 수 있습니다. 비활성 명령은 실행되지 않으며 위험한 명령은 확인 후 기존 작업 절차를 따릅니다.
 
-## 성능과 구조
+## 화면
 
-Snapshot·검색·Snapshot 비교는 SQLite와 페이지 캐시를 사용합니다. 트리는 필요한 하위 항목만 읽고, 대량 경로 조회는 배치로 처리합니다. 스캔·검색·미리보기·파일 비교·분석·저장·Diff·적용은 Worker에서 실행되며 안전한 종료를 기다립니다.
+임시 샘플 폴더를 연 실제 프로그램 화면입니다.
 
-| 주요 모듈 | 역할 |
-| --- | --- |
-| `fs_paths.py`, `fs_ops.py`, `file_operations.py` | 공통 경로 검증과 파일 작업 |
-| `snapshot.py`, `snapshot_store.py`, `snapshot_compare.py` | Snapshot 스캔·영구 저장·비교 |
-| `planning.py`, `plan_dependencies.py`, `plan_diff.py`, `plan_preview.py` | Plan 모델·의존성·시뮬레이션·구조 미리보기 |
-| `plan_apply.py`, `journal.py`, `recovery.py` | 트랜잭션·Rollback·Undo·복구 |
-| `file_content.py`, `file_preview.py`, `file_comparison.py`, `file_metadata.py` | 안전한 파일 읽기·미리보기·비교·속성 |
-| `analysis.py`, `diagnostics.py`, `duplicate_management.py`, `reports.py` | 구조·문제·중복 분석과 보고서 |
-| `disk_usage.py`, `operation_history.py`, `recovery_history.py` | 디스크 집계·영구 감사 기록·기존 복구 자료 검토 |
-| `folder_compare.py`, `sync_plan.py`, `sync_apply.py`, `sync_baseline.py`, `sync_preview.py` | 폴더 비교·다중 루트 동기화·이력·전후 트리 |
-| `ui/`, `real/`, `virtual/` | 화면·Worker·탐색 모델·가상 작업공간 |
+![실제 파일 탐색](../images/real.png)
 
-## Windows 실행 파일
-
-`build_windows.bat`은 자신의 위치에서 실행되며 전용 임시 가상환경과 빌드 디렉터리를 사용합니다. 시작 진단, PyInstaller 빌드, 실행 파일 시작·종료 검사를 수행한 뒤 중간 파일을 정리합니다.
-
-```powershell
-build_windows.bat
-```
-
-출력은 `release/FileTreeViewer-1.0.0-windows-x64.zip`과 `release/SHA256SUMS`입니다. ZIP에는 `FileTreeViewer/FileTreeViewer.exe`, `_internal/`과 실행 안내가 들어 있습니다. **Build Windows**는 main Push·`v*` 태그·수동 실행에서 검증된 ZIP과 체크섬을 아티팩트로 보관합니다(14일). 자동 릴리스 게시는 비활성화되어 있습니다.
-
-## 품질 확인
-
-```powershell
-python -m pip install ruff==0.16.6
-ruff format --check .
-ruff check .
-python -m compileall -q main.py ui real virtual
-python main.py --smoke-test
-```
-
-`--smoke-test`는 임시 설정으로 세 작업공간을 열고 닫아 시작 오류를 확인합니다. 사용자 파일 작업이나 기존 설정 변경을 수행하지 않습니다. CI는 전체 소스 구문·가져오기 검사와 이 진단을 Windows에서 실행하고, Windows 빌드는 패키징된 EXE도 같은 방식으로 실행합니다. `scripts/verify_core.py`, `scripts/verify_gui.py`, `scripts/verify_portable.py`는 재사용하는 최소 검증 진입점입니다. 검증 데이터는 임시 폴더에 만들고 삭제하며, 사용자 파일은 사용하지 않습니다.
+![변경 계획 검토](../images/plan.png)

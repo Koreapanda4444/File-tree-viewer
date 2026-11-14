@@ -1,33 +1,8 @@
-# File Tree Viewer
+# Usage
 
-[한국어 설명](README.md)
+English | [한국어](ko/usage.md)
 
-A local Python / PySide6 desktop application for browsing real files, editing a virtual file tree, reviewing changes against a Snapshot, and applying recoverable file plans.
-
-## Download and portable use
-
-**Version 1.0.0 is being prepared; no official release has been published.** Sign in to GitHub and download **FileTreeViewer-windows-x64** from a successful [Build Windows run](https://github.com/Koreapanda4444/File-tree-viewer/actions/workflows/build-windows.yml). Extract the artifact, then extract the entire program ZIP inside it. Run `FileTreeViewer/FileTreeViewer.exe`; keep `_internal/` beside it. No Python installation is required.
-
-Settings are stored in `data/settings/preferences.ini`, and history in `data/history/operation-history.sqlite3`, relative to the executable. Close the application before copying or updating it; preserve the existing `data/` folder. Snapshots, virtual trees and plans remain wherever you saved them. Transaction journals and backups remain under each target root's `.file-tree-viewer`, not in application data.
-
-Legacy settings and history can be copied through **Settings → Import Previous Data**. Original data and existing portable values are preserved; an existing portable history DB is not merged or overwritten. Use a writable program folder. [Bilingual portable guide](docs/PORTABLE.md) · [Build and verification](docs/DEVELOPMENT.md)
-
-## Screenshots
-
-Actual application with a disposable sample folder:
-
-![Real workspace](docs/images/real.png)
-
-![Plan workspace](docs/images/plan.png)
-
-## Run
-
-Python 3.12 or later is required. Windows CI uses Python 3.12.
-
-```powershell
-python -m pip install -r requirements.txt
-python main.py
-```
+Run instructions and data migration are in the [portable guide](portable.md); source setup is in the [development guide](development.md).
 
 ## Workspaces
 
@@ -97,20 +72,23 @@ The audit index is `data/history/operation-history.sqlite3` beside the program e
 
 **Ctrl+P / Settings → Quick Commands** searches menus and current-workspace commands. Use arrow keys and Enter, save favorites or reuse recent commands. Enter an absolute folder path to navigate or favorite that location. Disabled commands remain unavailable. Dangerous commands require confirmation and retain the original operation checks.
 
-## Windows build and validation
+## Saved Snapshots and plans
 
-```powershell
-build_windows.bat
-```
+Use **Import Snapshot** to scan a root without changing its contents. **Save Snapshot**
+writes a `.ftvsnapshot`; **Open Snapshot** validates it and works from a temporary copy.
+Saved Snapshots can be browsed and compared even when the original root is unavailable;
+applying a Plan requires that root. Comparison uses metadata, and move/rename matches
+are candidates based on file identity rather than proof of identical contents.
 
-The build produces `release/FileTreeViewer-1.0.0-windows-x64.zip` and `release/SHA256SUMS`. The ZIP includes the executable, `_internal/` runtime and a bilingual guide. The **Build Windows** workflow verifies the executable and extracted ZIP, then retains both files as `FileTreeViewer-windows-x64` for 14 days. It does not publish releases or create tags.
+**Save Plan / Load Plan** retain the existing JSON format. A different root is reported
+and revalidated. Batch Rename and Organize Files prepare operations; rules support
+JSON save/load. Dependency review distinguishes safely staged swaps from combinations
+that require separate Plans. Staging and simulation do not change original files.
 
-```powershell
-python -m pip install ruff==0.16.6
-python -m ruff format --check .
-python -m ruff check .
-python -m compileall -q main.py ui real virtual
-python main.py --smoke-test
-```
+## Screenshots
 
-The smoke test uses temporary preferences and checks startup/shutdown of all three workspaces. Reusable checks live in `scripts/verify_core.py`, `scripts/verify_gui.py` and `scripts/verify_portable.py`; fixtures and results are created in disposable temporary folders. `scripts/verify_windows.py` verifies the actual Windows binary and ZIP. Remote filesystems, power-loss behavior and native Windows Explorer drag interactions require environment-specific validation.
+Actual application with disposable sample folders:
+
+![Real workspace](images/real.png)
+
+![Plan workspace](images/plan.png)

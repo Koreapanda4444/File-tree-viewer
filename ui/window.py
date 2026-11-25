@@ -22,6 +22,7 @@ from ui.command_palette import install_command_palette
 from ui.commands import identify, menu_command
 from ui.data_migration import import_previous_data
 from ui.explorer_base import ExplorerPage
+from ui.explorer_panes import RealWorkspace
 from ui.feedback import TaskMonitor, show_error
 from ui.folder_compare import FolderComparisonDialog
 from ui.i18n import set_language, tr
@@ -61,17 +62,18 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(960, 640)
 
         self.tabs = QTabWidget()
-        self.real_page = RealExplorerPage()
+        self.real_workspace = RealWorkspace()
         self.virtual_page = VirtualExplorerPage()
         self.plan_page = PlanExplorerPage()
-        self.real_page.status_changed.connect(self.statusBar().showMessage)
-        self.real_page.ready_to_close.connect(self.close)
+        for page in self.real_workspace.panes:
+            page.status_changed.connect(self.statusBar().showMessage)
+            page.ready_to_close.connect(self.close)
         self.virtual_page.status_changed.connect(self.statusBar().showMessage)
         self.virtual_page.ready_to_close.connect(self.close)
         self.virtual_page.close_aborted.connect(self.cancel_pending_close)
         self.plan_page.status_changed.connect(self.statusBar().showMessage)
         self.plan_page.ready_to_close.connect(self.close)
-        self.tabs.addTab(self.real_page, tr("Real File System"))
+        self.tabs.addTab(self.real_workspace, tr("Real File System"))
         self.tabs.addTab(self.virtual_page, tr("Virtual File System"))
         self.tabs.addTab(self.plan_page, tr("Plan"))
 
@@ -121,7 +123,8 @@ class MainWindow(QMainWindow):
             tr("Export Folder Tree…"),
             self.export_folder_tree,
         )
-        self.real_page.tree_export_button.clicked.connect(self.export_folder_tree)
+        for page in self.real_workspace.panes:
+            page.tree_export_button.clicked.connect(self.export_folder_tree)
         self.virtual_page.tree_export_button.clicked.connect(self.export_folder_tree)
         menu_command(
             workspace_menu,
@@ -157,7 +160,10 @@ class MainWindow(QMainWindow):
             tr("Add Virtual Workspace to Plan…"),
             self.staging.request_virtual,
         )
-        self.real_page.stage_requested.connect(self.staging.request)
+        for page in self.real_workspace.panes:
+            page.stage_requested.connect(
+                lambda action, p=page: self.stage_from_pane(p, action)
+            )
         for action in ("copy", "move", "rename", "delete"):
             menu_command(
                 workspace_menu,
@@ -172,6 +178,20 @@ class MainWindow(QMainWindow):
         self.apply_preferences(self.preferences)
         restore_layout(self, self.settings)
         self.panel_manager = PanelManager(self, self.settings)
+        dual_action = identify(
+            QAction(tr("Dual pane"), self, checkable=True), "view.dual_pane"
+        )
+        dual_action.setShortcut("Ctrl+Shift+D")
+        dual_action.triggered.connect(self.real_workspace.set_dual)
+        self.real_workspace.toggle.toggled.connect(dual_action.setChecked)
+        self.menuBar().actions()[-1].menu().addAction(dual_action)
+        other_action = identify(
+            QAction(tr("Focus other pane"), self), "view.focus_other"
+        )
+        other_action.setShortcut("F6")
+        other_action.triggered.connect(self.real_workspace.focus_other)
+        self.addAction(other_action)
+        self.menuBar().actions()[-1].menu().addAction(other_action)
         settings_menu = self.menuBar().addMenu(tr("Settings"))
         menu_command(
             settings_menu,
@@ -189,7 +209,7 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(self.command_action)
         self.task_monitor = TaskMonitor(self)
         self.statusBar().addPermanentWidget(self.task_monitor)
-        for page in (self.real_page, self.virtual_page, self.plan_page):
+        for page in (*self.real_workspace.panes, self.virtual_page, self.plan_page):
             page.task_failed.connect(self.show_task_error)
             page.task_progress.connect(
                 lambda message, completed, total, p=page: self.task_monitor.advance(
@@ -201,9 +221,15 @@ class MainWindow(QMainWindow):
             help_menu, "help.about", tr("About File Tree Viewer"), self.show_about
         )
         self.statusBar().showMessage(tr("Ready"))
-        QTimer.singleShot(
-            0, lambda: self.real_page.explorer_state.load_session(self.settings)
-        )
+        QTimer.singleShot(0, lambda: self.real_workspace.restore(self.settings))
+
+    @property
+    def real_page(self):
+        return self.real_workspace.active
+
+    def stage_from_pane(self, page, action):
+        self.real_workspace.activate(page)
+        self.staging.request(action)
 
     def show_about(self):
         QMessageBox.about(
@@ -217,7 +243,8 @@ class MainWindow(QMainWindow):
 
     def export_folder_tree(self):
         page = self.tabs.currentWidget()
-        if page is self.real_page:
+        if page is self.real_workspace:
+            page = self.real_page
             if page.operation_is_running:
                 return
             source, kind = page._selected_directory(), "real"
@@ -257,10 +284,11 @@ class MainWindow(QMainWindow):
     def apply_preferences(self, preferences: Preferences) -> None:
         self.preferences = preferences
         self.theme_manager.apply(preferences.theme)
-        self.real_page.preferences = preferences
-        self.real_page.show_hidden.setChecked(preferences.show_hidden)
+        for pane in self.real_workspace.panes:
+            pane.preferences = preferences
+            pane.show_hidden.setChecked(preferences.show_hidden)
         self.plan_page.default_conflict_policy = preferences.conflict_policy
-        for page in (self.real_page, self.virtual_page):
+        for page in (*self.real_workspace.panes, self.virtual_page):
             font = page.preview.font()
             font.setPointSize(preferences.preview_font_size)
             page.preview.setFont(font)
@@ -290,7 +318,8 @@ class MainWindow(QMainWindow):
         dialog.deleteLater()
 
     def save_preferences(self) -> None:
-        self.real_page.explorer_state.save_session(self.settings)
+        self.real_workspace.left.explorer_state.save_session(self.settings)
+        self.real_workspace.save(self.settings)
         self.preferences = replace(
             self.preferences, show_hidden=self.real_page.show_hidden.isChecked()
         )
@@ -406,7 +435,7 @@ class MainWindow(QMainWindow):
             self.finish_auxiliary_close()
 
     def reveal_usage_item(self, path):
-        self.tabs.setCurrentWidget(self.real_page)
+        self.tabs.setCurrentWidget(self.real_workspace)
         if self.real_page.set_root(path.parent):
             self.real_page.jump_to_item(str(path))
 
@@ -460,7 +489,7 @@ class MainWindow(QMainWindow):
         if snapshot is None:
             self.statusBar().showMessage(tr("Load a snapshot first"))
             return
-        self.tabs.setCurrentWidget(self.real_page)
+        self.tabs.setCurrentWidget(self.real_workspace)
         self.real_page.set_root(snapshot.root)
 
     def finish_auxiliary_close(self):
@@ -488,8 +517,8 @@ class MainWindow(QMainWindow):
             self.folder_comparison_dialog.reject()
             event.ignore()
             return
-        if not self.real_page.prepare_close():
-            if self.real_page.close_cancelled:
+        if not self.real_workspace.prepare_close():
+            if self.real_workspace.close_cancelled:
                 event.ignore()
                 return
             self.setEnabled(False)
@@ -498,7 +527,7 @@ class MainWindow(QMainWindow):
             return
         if not self.virtual_page.prepare_close():
             if self.virtual_page.close_cancelled:
-                self.real_page.cancel_close_request()
+                self.real_workspace.cancel_close_request()
                 event.ignore()
                 return
             self.setEnabled(False)
@@ -507,7 +536,7 @@ class MainWindow(QMainWindow):
             return
         if not self.plan_page.prepare_close():
             if self.plan_page.close_cancelled:
-                self.real_page.cancel_close_request()
+                self.real_workspace.cancel_close_request()
                 self.virtual_page.cancel_close_request()
                 event.ignore()
                 return
@@ -516,12 +545,12 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.save_preferences()
-        self.real_page.finalize_close()
+        self.real_workspace.finalize_close()
         self.plan_page.finalize_close()
         event.accept()
 
     def cancel_pending_close(self) -> None:
-        self.real_page.cancel_close_request()
+        self.real_workspace.cancel_close_request()
         self.virtual_page.cancel_close_request()
         self.plan_page.cancel_close_request()
         self.setEnabled(True)

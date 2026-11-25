@@ -59,14 +59,17 @@ class TaskMonitor(QWidget):
 
     def active_tasks(self):
         for page, prefixes in (
-            (
-                self.window.real_page,
+            *(
                 (
-                    ("operation", "File operation"),
-                    ("search", "Search"),
-                    ("search_export", "Search export"),
-                    ("preview", "Preview"),
-                ),
+                    pane,
+                    (
+                        ("operation", "File operation"),
+                        ("search", "Search"),
+                        ("search_export", "Search export"),
+                        ("preview", "Preview"),
+                    ),
+                )
+                for pane in self.window.real_workspace.panes
             ),
             (self.window.virtual_page, (("task", "Virtual task"),)),
             (

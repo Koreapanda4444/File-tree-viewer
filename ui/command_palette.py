@@ -85,6 +85,8 @@ def collect_commands(window):
                 )
             )
     page = window.tabs.currentWidget()
+    if page is window.real_workspace:
+        page = window.real_page
     if page is window.real_page:
         scope = "real"
     elif page is window.virtual_page:
@@ -224,7 +226,7 @@ class CommandPalette(QDialog):
         return super().eventFilter(watched, event)
 
     def navigate(self, path):
-        self.window.tabs.setCurrentWidget(self.window.real_page)
+        self.window.tabs.setCurrentWidget(self.window.real_workspace)
         self.window.real_page.set_root(path)
 
     def selected(self):

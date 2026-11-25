@@ -44,6 +44,7 @@ class WindowChecks(unittest.TestCase):
         self.addCleanup(self.data_patch.stop)
         self.window = MainWindow()
         self.window.show()
+        APP.processEvents()
         self.addCleanup(self.close_window)
 
     def close_window(self):
@@ -176,6 +177,26 @@ class WindowChecks(unittest.TestCase):
         wait_for(other.prepare_close)
         other.finalize_close()
         other.deleteLater()
+
+    def test_dual_pane_toggle_focus_and_navigation(self):
+        workspace = self.window.real_workspace
+        self.assertFalse(workspace.dual)
+        self.assertIs(self.window.real_page, workspace.left)
+        a, b = self.base / "left", self.base / "right"
+        a.mkdir()
+        b.mkdir()
+        self.assertTrue(workspace.left.set_root(a))
+        self.assertTrue(workspace.set_dual(True))
+        self.assertTrue(workspace.right.set_root(b))
+        workspace.activate(workspace.right)
+        self.assertIs(self.window.real_page, workspace.right)
+        self.assertEqual(workspace.left.model.root_path, a)
+        self.assertEqual(workspace.right.model.root_path, b)
+        self.assertTrue(workspace.set_dual(False))
+        self.assertIs(self.window.real_page, workspace.left)
+        self.assertTrue(workspace.set_dual(True))
+        self.assertEqual(workspace.right.model.root_path, b)
+        self.assertIn("real.delete", [c.key for c in collect_commands(self.window)])
 
 
 if __name__ == "__main__":

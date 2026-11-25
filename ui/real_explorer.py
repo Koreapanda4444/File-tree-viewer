@@ -334,7 +334,8 @@ class RealExplorerPage(ExplorerPage):
 
     def set_root(self, path: Path | None) -> bool:
         if (
-            self.search_export_thread is not None
+            self.close_requested
+            or self.search_export_thread is not None
             or self.operation_is_running
             or self.search_is_running
             or self.preview_is_running

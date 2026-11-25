@@ -115,8 +115,8 @@ def save_layout(window, settings: QSettings) -> None:
 
 def splitters(window):
     return (
-        ("real_splitter", window.real_page.content_splitter),
-        ("real_navigation_splitter", window.real_page.navigation_splitter),
+        ("real_splitter", window.real_workspace.left.content_splitter),
+        ("real_navigation_splitter", window.real_workspace.left.navigation_splitter),
         ("virtual_splitter", window.virtual_page.content_splitter),
         ("plan_splitter", window.plan_page.workspace_splitter),
     )

@@ -13,7 +13,7 @@ from typing import Any, TextIO
 from fs_ops import create_exclusive, move_no_replace
 from fs_paths import checked_boundary
 from fs_paths import validate_windows_name as validate_name
-from write_policy import mutating
+from write_policy import commit_output, mutating
 
 WORKSPACE_FORMAT = "file-tree-viewer-virtual-v1"
 
@@ -193,7 +193,7 @@ def save_workspace(path: Path, root_data: dict[str, Any]) -> None:
             )
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temporary_path, path)
+        commit_output(temporary_path, path)
     except (OSError, TypeError, ValueError):
         temporary_path.unlink(missing_ok=True)
         raise
@@ -216,7 +216,7 @@ def save_workspace_root(path: Path, root: VirtualNode) -> None:
             file.write("}")
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temporary_path, path)
+        commit_output(temporary_path, path)
     except (OSError, TypeError, ValueError):
         temporary_path.unlink(missing_ok=True)
         raise

@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from fs_paths import checked_boundary, normalize_plan_path, normalized_path
 from journal import sync_directory
 from snapshot import FileSnapshot, SnapshotCancelled, count_errors
+from write_policy import commit_output
 
 SNAPSHOT_FORMAT = "file-tree-viewer-snapshot"
 
@@ -85,7 +86,7 @@ def save_snapshot(
         with temporary.open("r+b") as stream:
             os.fsync(stream.fileno())
         checked_boundary(destination.parent, destination, allow_leaf_link=False)
-        os.replace(temporary, destination)
+        commit_output(temporary, destination)
         sync_directory(destination.parent)
         return destination
     finally:

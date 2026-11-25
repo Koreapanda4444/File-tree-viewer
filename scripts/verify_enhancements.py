@@ -681,6 +681,46 @@ class WindowChecks(unittest.TestCase):
         self.assertIsNone(model.root)
         model.close()
 
+    def test_read_only_output_saves_never_overwrite_existing_files(self):
+        from persistence import atomic_text_write, save_plan
+        from planning import FilePlan
+        from snapshot import build_snapshot
+        from snapshot_store import save_snapshot
+        from virtual.storage import (
+            VirtualNode,
+            node_to_data,
+            save_workspace,
+            save_workspace_root,
+        )
+        from write_policy import ReadOnlyError
+
+        root = self.base / "output-source"
+        root.mkdir()
+        (root / "original.txt").write_text("preserve")
+        snapshot = build_snapshot(root)
+        self.addCleanup(snapshot.close)
+        output = self.base / "existing.json"
+        output.write_bytes(b"preserve exactly")
+        self.window.set_read_only(True)
+        virtual = VirtualNode("VM:", True)
+        operations = (
+            lambda path: save_workspace_root(path, virtual),
+            lambda path: save_workspace(path, node_to_data(virtual)),
+            lambda path: save_plan(path, FilePlan(root)),
+            lambda path: save_snapshot(snapshot, path, name="Saved"),
+            lambda path: atomic_text_write(
+                path, lambda stream: stream.write("new report")
+            ),
+        )
+        for index, operation in enumerate(operations):
+            with self.assertRaises(ReadOnlyError):
+                operation(output)
+            self.assertEqual(output.read_bytes(), b"preserve exactly")
+            fresh = self.base / f"new-output-{index}"
+            operation(fresh)
+            self.assertTrue(fresh.is_file())
+        self.assertEqual((root / "original.txt").read_text(), "preserve")
+
 
 if __name__ == "__main__":
     unittest.main()

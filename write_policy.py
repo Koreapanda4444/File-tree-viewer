@@ -65,3 +65,22 @@ def writes_allowed(widget):
         elif hasattr(widget, "summary"):
             widget.summary.setText(message)
     return False
+
+
+def commit_output(temporary, destination, *, overwrite=True):
+    """Keep explicitly saved outputs new-only while read-only mode is enabled."""
+    import os
+
+    from fs_ops import move_no_replace
+
+    with policy._lock:
+        if policy.read_only:
+            if os.path.lexists(destination):
+                raise ReadOnlyError(
+                    "Read-only mode allows saving new output files only"
+                )
+            move_no_replace(temporary, destination, allow_cross_device=False)
+        elif overwrite:
+            os.replace(temporary, destination)
+        else:
+            move_no_replace(temporary, destination, allow_cross_device=False)

@@ -9,9 +9,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any, TextIO
 
-from fs_ops import move_no_replace
 from organization import OrganizationRule
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation, normalize_root
+from write_policy import commit_output
 
 PLAN_FORMAT = "file-tree-viewer-plan"
 RULE_FORMAT = "file-tree-viewer-organization-rule"
@@ -263,10 +263,7 @@ def atomic_text_write(
             writer(stream)
             stream.flush()
             os.fsync(stream.fileno())
-        if overwrite:
-            os.replace(temporary_path, destination)
-        else:
-            move_no_replace(temporary_path, destination, allow_cross_device=False)
+        commit_output(temporary_path, destination, overwrite=overwrite)
         temporary_path = None
     finally:
         if temporary_path is not None:

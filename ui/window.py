@@ -334,6 +334,11 @@ class MainWindow(QMainWindow):
                     if spec is not None and spec.mutates_files:
                         value.setEnabled(False)
         self.real_workspace.update_controls()
+        self.update_pane_actions()
+        for dialog in self.findChildren(QDialog):
+            refresh = getattr(dialog, "refresh_write_access", None)
+            if refresh is not None:
+                refresh()
 
     @property
     def real_page(self):

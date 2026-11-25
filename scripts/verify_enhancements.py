@@ -509,15 +509,177 @@ class WindowChecks(unittest.TestCase):
         self.assertFalse(dialog.validate_results())
         self.assertFalse(dialog.copy.isEnabled())
         self.assertEqual(dialog.output.toPlainText(), "")
-        dialog.start()
-        dialog.cancel_calculation()
-        wait_for(lambda: dialog.thread is None)
+        import threading
+
+        entered, release = threading.Event(), threading.Event()
+
+        def paused_hash(path, **kwargs):
+            entered.set()
+            release.wait(5)
+            return hash_file(path, **kwargs)
+
+        with patch("ui.file_hash.hash_file", side_effect=paused_hash):
+            dialog.start()
+            wait_for(entered.is_set)
+            dialog.cancel_calculation()
+            release.set()
+            wait_for(lambda: dialog.thread is None)
         self.assertFalse(dialog.results)
         self.assertFalse(dialog.copy.isEnabled())
         self.assertTrue(policy.read_only)
         self.assertEqual(hash_file(left).size, 4)
         dialog.reject()
         dialog.deleteLater()
+
+    def test_cross_pane_drag_drop_and_task_focus(self):
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QDropEvent
+
+        from real.file_clipboard import file_mime
+
+        workspace = self.window.real_workspace
+        left, right = workspace.panes
+        a, b = self.base / "drag-from", self.base / "drag-to"
+        a.mkdir()
+        b.mkdir()
+        source = a / "drag.txt"
+        source.write_text("dragged")
+        left.set_root(a)
+        workspace.set_dual(True)
+        right.set_root(b)
+        mime = file_mime([source])
+        event = QDropEvent(
+            QPointF(-1, -1),
+            Qt.DropAction.CopyAction | Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        right.file_drop.drop_files(right.folder_view, event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(event.dropAction(), Qt.DropAction.CopyAction)
+        self.window.task_monitor.focus_task()
+        self.assertIs(self.window.real_page, right)
+        wait_for(lambda: not right.operation_is_running)
+        self.assertEqual((b / "drag.txt").read_text(), "dragged")
+        self.assertTrue(source.exists())
+        right.undo_last_operation()
+        wait_for(lambda: not right.operation_is_running)
+        self.assertFalse((b / "drag.txt").exists())
+        self.window.set_read_only(True)
+        blocked_mime = file_mime([source])
+        blocked = QDropEvent(
+            QPointF(-1, -1),
+            Qt.DropAction.CopyAction,
+            blocked_mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        right.file_drop.drop_files(right.folder_view, blocked)
+        self.assertFalse(blocked.isAccepted())
+        self.assertIsNone(right.operation_thread)
+
+    def test_plan_apply_undo_rollback_and_snapshot_comparison_regression(self):
+        import threading
+
+        from plan_apply import ApplicationStatus, apply_plan, undo_application
+        from planning import FilePlan
+        from snapshot import build_snapshot
+        from snapshot_compare import compare_snapshots
+
+        root = self.base / "plan"
+        root.mkdir()
+        (root / "keep.txt").write_text("keep")
+        before = build_snapshot(root)
+        self.addCleanup(before.close)
+        plan = FilePlan(root)
+        plan.add_rename("keep.txt", "renamed.txt")
+        plan.add_create_folder("new-folder")
+        record = apply_plan(before, plan)
+        self.assertIs(record.status, ApplicationStatus.COMPLETED)
+        self.assertTrue((root / "renamed.txt").exists())
+        after = build_snapshot(root)
+        comparison = compare_snapshots(before, after)
+        self.assertGreater(comparison.count(), 0)
+        comparison.close()
+        after.close()
+        undo_application(record)
+        self.assertEqual((root / "keep.txt").read_text(), "keep")
+        self.assertFalse((root / "new-folder").exists())
+        fresh = build_snapshot(root)
+        self.addCleanup(fresh.close)
+        staged = FilePlan(root)
+        staged.add_create_file("first.txt")
+        staged.add_create_file("second.txt")
+        cancel = threading.Event()
+
+        def progress(phase, *args):
+            if phase == "Creating files":
+                cancel.set()
+
+        cancelled = apply_plan(fresh, staged, cancelled=cancel, progress=progress)
+        self.assertIs(cancelled.status, ApplicationStatus.ROLLED_BACK)
+        self.assertFalse((root / "first.txt").exists())
+        self.assertEqual((root / "keep.txt").read_text(), "keep")
+
+    def test_synchronization_apply_undo_and_read_only_review(self):
+        from folder_compare import compare_folders
+        from sync_apply import apply_sync_plan, recover_sync_group
+        from sync_plan import plan_one_way_sync
+        from ui.sync import SyncReviewDialog
+
+        a, b = self.base / "sync-left", self.base / "sync-right"
+        a.mkdir()
+        b.mkdir()
+        (a / "source.txt").write_text("source")
+        comparison = compare_folders(a, b, verify_content=True)
+        plan = plan_one_way_sync(comparison)
+        self.addCleanup(plan.close)
+        self.addCleanup(comparison.close)
+        result = apply_sync_plan(plan)
+        self.assertEqual(result.status, "completed", result.error)
+        self.assertEqual((b / "source.txt").read_text(), "source")
+        restored = recover_sync_group(
+            result.journals[0].parent / "sync.json", undo=True
+        )
+        self.assertFalse(restored.recovery_errors)
+        self.assertFalse((b / "source.txt").exists())
+        self.assertEqual((a / "source.txt").read_text(), "source")
+        dialog = SyncReviewDialog(plan, self.window)
+        dialog.reviewed.setChecked(True)
+        self.assertTrue(dialog.apply_button.isEnabled())
+        self.window.set_read_only(True)
+        self.assertFalse(dialog.apply_button.isEnabled())
+        dialog.start_execution("apply")
+        self.assertIsNone(dialog.thread)
+        dialog.reject()
+        dialog.deleteLater()
+
+    def test_large_directory_filter_sort_and_stale_worker_cancellation(self):
+        from real.directory_index import DirectoryFilter
+        from real.tree import FileTreeModel
+
+        root = self.base / "many"
+        root.mkdir()
+        for n in range(20000):
+            (root / f"{19999 - n:05d}.txt").touch()
+        model = FileTreeModel(page_size=23)
+        model.set_root(root)
+        model.fetchMore(model.index(0, 0))
+        model.set_local_filter(DirectoryFilter(name="19999"))
+        wait_for(lambda: not model.root.fetch_pending, timeout=30)
+        self.assertEqual([node.name for node in model.root.children], ["19999.txt"])
+        model.set_local_filter(DirectoryFilter())
+        wait_for(lambda: not model.root.fetch_pending)
+        self.assertEqual(
+            [node.name for node in model.root.children],
+            [f"{n:05d}.txt" for n in range(23)],
+        )
+        model.set_local_filter(DirectoryFilter(name="none"))
+        model.clear()
+        wait_for(lambda: model.index_pool.activeThreadCount() == 0)
+        self.assertIsNone(model.root)
+        model.close()
 
 
 if __name__ == "__main__":

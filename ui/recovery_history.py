@@ -193,6 +193,11 @@ class RecoveryHistoryDialog(QDialog):
         if 0 <= index < len(self.rows):
             self.start(self.rows[index]["journal"])
 
+    def refresh_write_access(self):
+        ready = not policy.read_only and self.thread is None
+        self.undo_button.setEnabled(ready and self.checked_record is not None)
+        self.recover_button.setEnabled(ready)
+
     def undo_selected(self):
         if not writes_allowed(self):
             return

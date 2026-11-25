@@ -247,6 +247,25 @@ class SyncReviewDialog(QDialog):
             if self.close_requested:
                 self.done(QDialog.DialogCode.Rejected)
 
+    def refresh_write_access(self):
+        ready = not policy.read_only and self.thread is None
+        self.apply_button.setEnabled(
+            ready
+            and self.reviewed.isChecked()
+            and self.plan.can_apply
+            and self.application_result is None
+        )
+        self.undo_button.setEnabled(
+            ready
+            and self.application_result is not None
+            and self.application_result.status == "completed"
+        )
+        self.recover_button.setEnabled(
+            ready
+            and self.application_result is not None
+            and bool(self.application_result.recovery_errors)
+        )
+
     def start_execution(self, action):
         if not writes_allowed(self):
             return

@@ -1188,7 +1188,11 @@ class RealExplorerPage(ExplorerPage):
         self.delete_button.setEnabled(bool(selected) and not blocked)
         self.undo_button.setEnabled(bool(self.undo_stack) and not blocked)
         self.transfer_policy.setEnabled(not blocked)
-        if policy.read_only:
+        workspace = getattr(self, "workspace", None)
+        if policy.read_only or (
+            workspace is not None
+            and any(p.operation_is_running for p in workspace.panes)
+        ):
             for button in (
                 self.new_file_button,
                 self.new_folder_button,
@@ -1420,6 +1424,14 @@ class RealExplorerPage(ExplorerPage):
     ) -> None:
         if not self.mutations_available():
             return False
+        workspace = getattr(self, "workspace", None)
+        if workspace is not None and action in ("copy", "move"):
+            try:
+                if not workspace.validate_transfer(sources or [], destination):
+                    return False
+            except (OSError, ValueError, TypeError) as error:
+                self._show_operation_error(tr("Cannot transfer files"), error)
+                return False
         worker = FileOperationWorker(
             action,
             sources=sources,

@@ -23,16 +23,6 @@ jobs:
       - name: Build the existing portable application
         shell: cmd
         run: build_windows.bat
-      - name: Verify packaged executable
-        run: python scripts/verify_windows.py dist/FileTreeViewer
-      - name: Package portable ZIP
-        run: python scripts/package_windows.py dist/FileTreeViewer
-      - name: Verify extracted ZIP
-        shell: pwsh
-        run: |
-          $archive = (Get-ChildItem release/FileTreeViewer-*-windows-x64.zip).FullName
-          python scripts/verify_windows.py $archive
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         with:
           name: FileTreeViewer-windows-x64

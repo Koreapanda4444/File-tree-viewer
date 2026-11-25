@@ -18,6 +18,25 @@ Search file names or contents, preview text, images and binary data, edit text,
 compare text files and inspect file metadata. Copy, move, rename and other file
 commands work directly on the selected files, with session Undo for supported operations.
 
+Real also provides an optional **Dual pane** mode with independent navigation,
+views and current-folder filters. Copy or move selections to the opposite pane,
+swap paths, or use **F6** to focus the other pane. **Ctrl+Shift+D** toggles the mode.
+Folder filters cover the complete current directory, including entries not yet
+paged onto the screen, and remain separate from recursive search.
+
+Image previews support zoom buttons, wheel zoom, 100%, fit, scroll/drag panning
+and a separate read-only window. Very large images use a bounded decoded preview.
+**Workspace → File Hash — SHA-256** calculates a streaming hash, compares it with
+an entered hash or another file, and supports cancellation and copying.
+
+### Read-only browsing
+
+The header's **Read-only mode** button blocks actual file changes through Real,
+Plan Apply, synchronization, Undo, recovery and Virtual export. Browsing, search,
+comparison, analysis, hash calculation, staging and saving new reports/Snapshots
+remain available. Active mutations prevent mode changes. This is an application
+restriction and does not change OS permissions or protect against other programs.
+
 ### Virtual File System
 
 Create and edit a folder tree and text files in memory without changing real files.
@@ -87,8 +106,10 @@ On Windows, use 64-bit Python 3.12 or newer available as `python`, and run:
 .\build_windows.bat
 ```
 
-The BAT installs build dependencies into the current Python environment and creates
-`dist/FileTreeViewer/FileTreeViewer.exe`. Run that EXE from the generated folder;
+The BAT installs build dependencies into the current Python environment, builds
+`dist/FileTreeViewer/FileTreeViewer.exe`, verifies startup and relocation, and writes
+`release/FileTreeViewer-1.0.0-windows-x64.zip` with `SHA256SUMS`. It then verifies the
+extracted ZIP. Run the EXE from the fully extracted program folder;
 keep `_internal/` and the other program files together. The built application
 includes Python and Qt and is created locally from this repository's source code.
 
@@ -100,3 +121,13 @@ you selected. The portable guide covers data locations and migration.
 
 - [Desktop usage](docs/usage.md) — workspace controls, search, comparisons, synchronization, analysis and Plan workflows.
 - [Portable execution and data](docs/portable.md) — building and running the Windows folder, settings, updates and data migration.
+
+## Verification
+
+`python scripts/verify_enhancements.py` checks localized command identity and
+history migration, image viewing, dual-pane navigation/transfers/Undo, filters,
+read-only enforcement, streaming hashes and existing Plan/synchronization behavior.
+All fixtures live in disposable directories. [CI](https://github.com/Koreapanda4444/File-tree-viewer/actions/workflows/ci.yml)
+runs on Windows and Linux; [Build Windows](https://github.com/Koreapanda4444/File-tree-viewer/actions/workflows/build-windows.yml)
+verifies the actual x64 executable and ZIP. Successful build artifacts contain the
+portable ZIP and SHA-256 checksum (14-day retention). No release or tag is created.

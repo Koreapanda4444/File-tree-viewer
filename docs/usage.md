@@ -84,3 +84,39 @@ are candidates based on file identity rather than proof of identical contents.
 and revalidated. Batch Rename and Organize Files prepare operations; rules support
 JSON save/load. Dependency review distinguishes safely staged swaps from combinations
 that require separate Plans. Staging and simulation do not change original files.
+
+## Dual panes and current-folder filters
+
+Toggle **Dual pane** or press `Ctrl+Shift+D`; `F6` focuses the other pane. Paths,
+history, tabs, view, sorting, selection and filters are independent. Shortcuts and
+workspace commands use the active pane. Transfers reuse the existing conflict,
+results and Undo engine. Invalid same-folder or nested-source transfers are
+rejected. Ctrl-drag copies, Shift-drag moves, and an unmodified drop offers a menu.
+The worker owns the complete transfer, including the move, to avoid a second OS deletion.
+
+The folder filter is non-recursive and separate from search. Name matching is
+case-insensitive; extensions can be comma/space separated. Counts cover all indexed
+entries under the current hidden-file policy, including unpaged matches. **Keep on
+navigation** controls whether the filter survives a folder change. Recursive search
+disables the local-filter controls until normal browsing resumes.
+
+## Read-only mode, images and SHA-256
+
+Read-only mode rejects actual file changes at shared engine boundaries, including
+deferred workers. Finish/cancel active mutations before changing mode. In-memory
+Virtual editing, Plan staging and saving new reports, Snapshots or workspace JSON
+remain available. Exporting Virtual contents into an actual directory is blocked.
+This does not change OS permissions or prevent other applications from writing.
+
+Image zoom uses the decoded frame, preserves aspect ratio and keeps smooth
+rendering. Use the wheel/buttons, 100%, Fit and scroll/drag panning. Frames above
+8 million pixels are downsampled for bounded memory and labeled **100% preview**.
+Existing dimension, decoder allocation (64 MiB) and file-read limits remain in
+force. The separate window shares the decoded image and marks it stale if the
+original changes; closing releases its frame references.
+
+SHA-256 runs as a cancellable streaming worker. Compare a 64-character hexadecimal
+value against the first file, or compare two files. Results are verified against
+file state before display and rechecked before comparison/copy. Subsequent file
+changes invalidate the displayed result. Closing an active dialog cancels and
+waits for the worker to finish.

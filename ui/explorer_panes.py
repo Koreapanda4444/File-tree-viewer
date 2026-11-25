@@ -263,6 +263,8 @@ class RealWorkspace(QWidget):
         return self.right if self.active is self.left else self.left
 
     def update_controls(self):
+        for pane in self.panes:
+            pane.update_action_buttons()
         ready = self.dual and not self.busy
         for name, button in self.controls.items():
             button.setVisible(self.dual)
@@ -291,7 +293,7 @@ class RealWorkspace(QWidget):
         for source in paths:
             resolved = Path(source).resolve(strict=True)
             if (
-                target == resolved.parent
+                (self.dual and target == resolved.parent)
                 or target == resolved
                 or (resolved.is_dir() and target.is_relative_to(resolved))
             ):

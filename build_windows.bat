@@ -14,7 +14,15 @@ python packaging\windows_resources.py
 if errorlevel 1 goto failed
 python -m PyInstaller --noconfirm --clean --onedir --windowed --name FileTreeViewer --contents-directory _internal --distpath dist --workpath build\windows\pyinstaller --specpath build\windows --icon "%CD%\assets\app-icon.ico" --version-file "%CD%\build\windows\version.txt" --add-data "%CD%\assets\app-icon.png;assets" --add-data "%CD%\ui\translations;ui/translations" --collect-submodules send2trash "%CD%\main.py"
 if errorlevel 1 goto failed
-echo Built dist\FileTreeViewer\FileTreeViewer.exe. Keep the entire program folder together.
+python scripts\verify_windows.py dist\FileTreeViewer
+if errorlevel 1 goto failed
+python scripts\package_windows.py dist\FileTreeViewer
+if errorlevel 1 goto failed
+for %%F in (release\FileTreeViewer-*-windows-x64.zip) do (
+  python scripts\verify_windows.py "%%F"
+  if errorlevel 1 goto failed
+)
+echo Built and verified release\FileTreeViewer-1.0.0-windows-x64.zip and SHA256SUMS.
 popd
 exit /b 0
 :failed

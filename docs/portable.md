@@ -66,4 +66,16 @@ On Windows with 64-bit Python 3.12 or newer available as `python`, run the repos
 
 It installs the required dependencies into the current Python environment and creates
 `dist/FileTreeViewer/FileTreeViewer.exe`. The complete folder, including `_internal/`,
-is the result. No installer, ZIP or checksum file is generated.
+is the result. The BAT also verifies the EXE, produces the portable ZIP and SHA256SUMS in `release/`, and verifies a fully extracted copy. No installer, Release or tag is created.
+
+## Distribution verification
+
+The build writes `release/FileTreeViewer-1.0.0-windows-x64.zip` and `SHA256SUMS`.
+The ZIP contains the application/runtime and both portable guides, never personal
+`data/` or development tests. Verification uses disposable copies with Unicode and
+space-containing paths, both languages, dual-pane/read-only startup, unrelated CWD,
+relocated settings/history, checksum/ZIP validation and an extracted-EXE startup.
+
+Source regression checks run with `python scripts/verify_enhancements.py`. Actual
+network shares, device removal/power loss, native Windows drag interaction and
+multiple physical monitor DPI configurations require environment-specific checks.

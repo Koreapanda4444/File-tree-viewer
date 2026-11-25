@@ -111,13 +111,19 @@ class ImagePreview(QWidget):
         self.zoom = max(0.01, min(16.0, float(zoom)))
         self.view.resetTransform()
         self.view.scale(self.zoom, self.zoom)
-        self.ratio.setText(f"{self.zoom * 100:.0f}%")
         decoded = (self.source.width(), self.source.height())
+        reduced = (
+            decoded[0] * decoded[1] < self.original_size[0] * self.original_size[1]
+        )
+        self.ratio.setText(
+            f"{self.zoom * 100:.0f}%" + (tr(" preview") if reduced else "")
+        )
+        self.buttons["actual"].setText(tr("100% preview") if reduced else "100%")
         self.ratio.setToolTip(
             tr(
                 "Zoom is relative to the decoded preview. Large images may be reduced for memory safety."
             )
-            if decoded != self.original_size
+            if reduced
             else tr("Original image pixels")
         )
 

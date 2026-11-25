@@ -234,6 +234,7 @@ class FileCommands(QObject):
         add("Open", self.open_selected, ready and len(paths) == 1)
         add("Inspect Metadata", self.inspect_selected, not busy and len(paths) == 1)
         add("Copy Path", self.copy_paths, bool(paths))
+        add("File Hash — SHA-256…", page.hash_requested.emit, not busy and bool(paths))
         menu.addSeparator()
         add("Copy", lambda: self.copy(False), ready and bool(mutable))
         add("Cut", lambda: self.copy(True), ready and bool(mutable), mutation=True)

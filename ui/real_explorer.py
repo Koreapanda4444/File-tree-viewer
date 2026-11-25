@@ -77,6 +77,7 @@ from write_policy import policy, writes_allowed
 
 
 class RealExplorerPage(ExplorerPage):
+    hash_requested = Signal()
     stage_requested = Signal(str)
     status_changed = Signal(str)
     task_failed = Signal(str)

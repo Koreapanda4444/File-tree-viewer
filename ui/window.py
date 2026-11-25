@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self.auxiliary_close_pending = False
         self.command_palette_dialog = None
         self.recovery_history_dialog = None
+        self.hash_dialog = None
         self.history_dialog = None
         self.disk_dialog = None
         self.folder_comparison_dialog = None
@@ -173,6 +174,14 @@ class MainWindow(QMainWindow):
                 tr("Stage Real {value0}…", value0=tr(action.title())),
                 lambda checked=False, a=action: self.staging.request(a),
             )
+        menu_command(
+            workspace_menu,
+            "workspace.file_hash",
+            tr("File Hash — SHA-256…"),
+            self.inspect_file_hash,
+        )
+        for pane in self.real_workspace.panes:
+            pane.hash_requested.connect(self.inspect_file_hash)
         workspace_menu.addSeparator()
         for name, title in (
             ("copy", "Copy to other pane"),
@@ -326,6 +335,21 @@ class MainWindow(QMainWindow):
     def stage_from_pane(self, page, action):
         self.real_workspace.activate(page)
         self.staging.request(action)
+
+    def inspect_file_hash(self):
+        from ui.file_hash import FileHashDialog
+
+        if self.hash_dialog is not None:
+            self.hash_dialog.raise_()
+            return
+        paths = [path for path in self.real_page.selected_paths() if path.is_file()][:2]
+        dialog = self.hash_dialog = FileHashDialog(paths, self)
+        try:
+            dialog.exec()
+        finally:
+            self.hash_dialog = None
+            dialog.deleteLater()
+            self.finish_auxiliary_close()
 
     def show_about(self):
         QMessageBox.about(
@@ -603,6 +627,7 @@ class MainWindow(QMainWindow):
             self.history_dialog,
             self.disk_dialog,
             self.command_palette_dialog,
+            self.hash_dialog,
         ):
             if dialog is not None:
                 self.auxiliary_close_pending = True

@@ -484,6 +484,41 @@ class WindowChecks(unittest.TestCase):
         empty.touch()
         self.assertEqual(hash_file(empty).digest, hashlib.sha256(b"").hexdigest())
 
+    def test_hash_dialog_comparison_copy_cancel_and_invalidation(self):
+        from file_hashing import hash_file
+        from ui.file_hash import FileHashDialog
+        from write_policy import policy
+
+        left, right = self.base / "hash-a.txt", self.base / "hash-b.txt"
+        left.write_text("same")
+        right.write_text("same")
+        dialog = FileHashDialog((left, right), self.window)
+        dialog.show()
+        self.window.set_read_only(True)
+        dialog.start()
+        wait_for(lambda: dialog.thread is None)
+        self.assertEqual(len(dialog.results), 2)
+        self.assertIn("match", dialog.status.text())
+        dialog.expected.setText("invalid")
+        self.assertIn("64", dialog.status.text())
+        dialog.expected.setText(dialog.results[0].digest.upper())
+        self.assertIn("Expected hash matches", dialog.status.text())
+        dialog.copy_hash()
+        self.assertEqual(APP.clipboard().text(), dialog.results[0].digest)
+        right.write_text("different")
+        self.assertFalse(dialog.validate_results())
+        self.assertFalse(dialog.copy.isEnabled())
+        self.assertEqual(dialog.output.toPlainText(), "")
+        dialog.start()
+        dialog.cancel_calculation()
+        wait_for(lambda: dialog.thread is None)
+        self.assertFalse(dialog.results)
+        self.assertFalse(dialog.copy.isEnabled())
+        self.assertTrue(policy.read_only)
+        self.assertEqual(hash_file(left).size, 4)
+        dialog.reject()
+        dialog.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

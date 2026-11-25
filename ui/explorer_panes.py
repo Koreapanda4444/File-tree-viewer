@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QByteArray, QEvent, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -106,6 +106,8 @@ class RealWorkspace(QWidget):
         self.right = RealExplorerPage("right")
         self.panes = (self.left, self.right)
         self.active = self.left
+        for pane in self.panes:
+            pane.workspace = self
         self.dual = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -118,6 +120,22 @@ class RealWorkspace(QWidget):
         self.active_label = QLabel()
         row.addWidget(self.active_label)
         row.addStretch()
+        self.controls = {}
+        for name, title, callback in (
+            ("copy", "Copy to other pane", lambda: self.transfer_to_other("copy")),
+            ("move", "Move to other pane", lambda: self.transfer_to_other("move")),
+            ("swap", "Swap paths", self.swap_paths),
+            ("same", "Open same path", self.open_same_path),
+        ):
+            button = QToolButton()
+            button.setText(tr(title))
+            button.clicked.connect(callback)
+            row.addWidget(button)
+            self.controls[name] = button
+        self.state_timer = QTimer(self)
+        self.state_timer.setInterval(150)
+        self.state_timer.timeout.connect(self.update_controls)
+        self.state_timer.start()
         layout.addLayout(row)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         for page in self.panes:
@@ -222,6 +240,69 @@ class RealWorkspace(QWidget):
             self.activate(self.right if self.active is self.left else self.left)
             self.active.folder_panel.active_view.setFocus()
 
+    @property
+    def other(self):
+        return self.right if self.active is self.left else self.left
+
+    def update_controls(self):
+        ready = self.dual and not self.busy
+        for name, button in self.controls.items():
+            button.setVisible(self.dual)
+            allowed = ready
+            if name in ("copy", "move"):
+                allowed = (
+                    allowed
+                    and bool(self.active._operable_selected_paths())
+                    and self.other.model.root_path is not None
+                )
+                guard = getattr(self.window(), "write_policy", None)
+                allowed = allowed and not (guard and guard.read_only)
+            button.setEnabled(bool(allowed))
+
+    def transfer_to_other(self, action):
+        source, destination = self.active, self.other.model.root_path
+        paths = source._operable_selected_paths()
+        if not self.dual or self.busy or not paths or destination is None:
+            return False
+        return source.file_commands.transfer(paths, action, destination)
+
+    def validate_transfer(self, paths, destination):
+        if any(page.operation_is_running for page in self.panes):
+            return False
+        target = Path(destination).resolve(strict=True)
+        for source in paths:
+            resolved = Path(source).resolve(strict=True)
+            if (
+                target == resolved.parent
+                or target == resolved
+                or (resolved.is_dir() and target.is_relative_to(resolved))
+            ):
+                self.active.status_changed.emit(
+                    tr("Choose a different destination outside the selected source.")
+                )
+                return False
+        return True
+
+    def swap_paths(self):
+        if not self.dual or self.busy:
+            return False
+        if not all(page._confirm_editor_transition() for page in self.panes):
+            return False
+        left, right = (page.model.root_path for page in self.panes)
+        if left is None or right is None:
+            return False
+        if not self.left.set_root(right):
+            return False
+        if not self.right.set_root(left):
+            self.left.set_root(left)
+            return False
+        return True
+
+    def open_same_path(self):
+        if not self.dual or self.busy or self.active.model.root_path is None:
+            return False
+        return self.other.set_root(self.active.model.root_path)
+
     def save(self, settings):
         for page in self.panes:
             save_pane(page, settings, page.pane_id)
@@ -264,6 +345,7 @@ class RealWorkspace(QWidget):
             page.cancel_close_request()
 
     def finalize_close(self):
+        self.state_timer.stop()
         QApplication.instance().removeEventFilter(self)
         for page in self.panes:
             page.finalize_close()

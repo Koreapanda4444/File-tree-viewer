@@ -931,6 +931,8 @@ class RealExplorerPage(ExplorerPage):
         )
 
     def save_current_file(self) -> bool:
+        if not self.mutations_available():
+            return False
         result = self.current_preview_result
         path = self.current_preview_path
         if result is None or path is None or not result.editable or not result.encoding:
@@ -1195,6 +1197,17 @@ class RealExplorerPage(ExplorerPage):
         dialog.exec()
         dialog.deleteLater()
 
+    def mutations_available(self):
+        workspace = getattr(self, "workspace", None)
+        return (
+            not self.close_requested
+            and not self.operation_is_running
+            and not (
+                workspace is not None
+                and any(p.operation_is_running for p in workspace.panes)
+            )
+        )
+
     def create_new_file(self) -> None:
         self._create_item(directory=False)
 
@@ -1202,6 +1215,8 @@ class RealExplorerPage(ExplorerPage):
         self._create_item(directory=True)
 
     def _create_item(self, *, directory: bool) -> None:
+        if not self.mutations_available():
+            return False
         if self.search_is_running or self.operation_is_running:
             return
         if not self._confirm_editor_transition():
@@ -1259,6 +1274,8 @@ class RealExplorerPage(ExplorerPage):
         )
 
     def rename_selected(self) -> None:
+        if not self.mutations_available():
+            return False
         selected = self._operable_selected_paths()
         if len(selected) != 1 or self.operation_is_running:
             return
@@ -1374,6 +1391,8 @@ class RealExplorerPage(ExplorerPage):
         destination: Path | None = None,
         record: OperationRecord | None = None,
     ) -> None:
+        if not self.mutations_available():
+            return False
         worker = FileOperationWorker(
             action,
             sources=sources,
@@ -1399,6 +1418,7 @@ class RealExplorerPage(ExplorerPage):
         self._set_operation_running(True)
         self.status_changed.emit(tr("Starting {value0}...", value0=action))
         thread.start()
+        return True
 
     def show_operation_progress(
         self,

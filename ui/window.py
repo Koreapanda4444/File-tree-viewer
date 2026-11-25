@@ -171,6 +171,22 @@ class MainWindow(QMainWindow):
                 tr("Stage Real {value0}…", value0=tr(action.title())),
                 lambda checked=False, a=action: self.staging.request(a),
             )
+        workspace_menu.addSeparator()
+        for name, title in (
+            ("copy", "Copy to other pane"),
+            ("move", "Move to other pane"),
+            ("swap", "Swap paths"),
+            ("same", "Open same path"),
+        ):
+            button = self.real_workspace.controls[name]
+            action = menu_command(
+                workspace_menu,
+                "workspace.panes." + name,
+                tr(title),
+                button.click,
+                mutates_files=name in ("copy", "move"),
+            )
+            action.command_enabled = button.isEnabled
         self.tabs.setDocumentMode(True)
         self.theme_manager = ThemeManager(self)
         self.settings = application_settings()

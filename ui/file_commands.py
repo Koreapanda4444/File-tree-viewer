@@ -109,11 +109,20 @@ class FileCommands(QObject):
             or page.search_is_running
         ):
             return False
+        workspace = getattr(page, "workspace", None)
+        if workspace is not None:
+            try:
+                if not workspace.validate_transfer(paths, destination):
+                    return False
+            except (OSError, ValueError) as error:
+                page._show_operation_error(tr("Cannot transfer files"), error)
+                return False
         if not page._confirm_editor_transition():
             return False
         self.pending_cut_token = cut_token
-        page._start_file_operation(action, sources=paths, destination=destination)
-        return True
+        return page._start_file_operation(
+            action, sources=paths, destination=destination
+        )
 
     def completed(self, action, changes):
         token, self.pending_cut_token = self.pending_cut_token, None

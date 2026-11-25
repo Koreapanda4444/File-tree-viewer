@@ -116,7 +116,11 @@ def migrate_keys(keys, commands):
 
 
 def command_available(window, target, spec):
-    if not target.isEnabled() or not window.isEnabled():
+    if (
+        not target.isEnabled()
+        or not window.isEnabled()
+        or not getattr(target, "command_enabled", lambda: True)()
+    ):
         return False
     guard = getattr(window, "write_policy", None)
     return not (spec.mutates_files and guard is not None and guard.read_only)

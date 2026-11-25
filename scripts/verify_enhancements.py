@@ -261,6 +261,41 @@ class WindowChecks(unittest.TestCase):
         self.assertTrue(workspace.open_same_path())
         self.assertEqual(right.model.root_path, b)
 
+    def test_local_filter_finds_unloaded_rows_and_restores_inventory(self):
+        from real.directory_index import DirectoryFilter
+        from real.tree import FileTreeModel
+
+        root = self.base / "filter"
+        root.mkdir()
+        for n in range(800):
+            (root / f"{n:04d}.txt").touch()
+        (root / "zz-한국어.bin").write_bytes(b"binary")
+        (root / "sub").mkdir()
+        (root / "sub" / "nested.bin").touch()
+        model = FileTreeModel(page_size=7)
+        counts = []
+        model.listing_counts.connect(
+            lambda visible, total: counts.append((visible, total))
+        )
+        model.set_root(root)
+        model.fetchMore(model.index(0, 0))
+        wait_for(lambda: not model.root.fetch_pending)
+        self.assertEqual(len(model.root.children), 7)
+        model.set_local_filter(
+            DirectoryFilter(name="한국어", extensions=(".bin",), kind="files")
+        )
+        wait_for(lambda: not model.root.fetch_pending)
+        self.assertEqual([n.name for n in model.root.children], ["zz-한국어.bin"])
+        self.assertEqual(counts[-1], (1, 802))
+        self.assertEqual(len(model.root.inventory), 802)
+        model.set_local_filter(DirectoryFilter())
+        wait_for(lambda: not model.root.fetch_pending)
+        self.assertEqual(counts[-1], (802, 802))
+        self.assertEqual(len(model.root.children), 7)
+        model.clear()
+        wait_for(lambda: model.index_pool.activeThreadCount() == 0)
+        model.close()
+
 
 if __name__ == "__main__":
     unittest.main()

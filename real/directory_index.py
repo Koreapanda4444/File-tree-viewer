@@ -11,6 +11,38 @@ from PySide6.QtCore import QObject, QRunnable, Signal
 from fs_paths import is_hidden, is_reparse_point
 
 
+@dataclass(frozen=True, slots=True)
+class DirectoryFilter:
+    name: str = ""
+    extensions: tuple[str, ...] = ()
+    kind: str = "all"
+
+    @property
+    def active(self):
+        return bool(self.name or self.extensions or self.kind != "all")
+
+    def accepts(self, entry):
+        return (
+            self.name.casefold() in entry.name.casefold()
+            and (self.kind == "all" or entry.is_directory == (self.kind == "folders"))
+            and (
+                not self.extensions
+                or (
+                    not entry.is_directory
+                    and any(
+                        entry.name.casefold().endswith(ext) for ext in self.extensions
+                    )
+                )
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DirectoryListing:
+    inventory: tuple
+    visible: tuple
+
+
 @dataclass(slots=True)
 class DirectoryEntry:
     path: Path
@@ -71,10 +103,11 @@ class IndexSignals(QObject):
 
 
 class DirectoryIndexJob(QRunnable):
-    def __init__(self, node, generation, hidden, options):
+    def __init__(self, node, generation, hidden, options, local_filter=None):
         super().__init__()
         self.node, self.generation = node, generation
         self.hidden, self.options = hidden, options
+        self.local_filter = local_filter or DirectoryFilter()
         self.cancelled = threading.Event()
         self.signals = IndexSignals()
 
@@ -83,8 +116,9 @@ class DirectoryIndexJob(QRunnable):
         column, descending, grouping, folders_first = self.options
         details_needed = column in (2, 3) or grouping in ("Date", "Size")
         try:
+            cached = getattr(self.node, "inventory", None)
             with os.scandir(self.node.path) as iterator:
-                for item in iterator:
+                for item in () if cached is not None else iterator:
                     if self.cancelled.is_set():
                         return
                     if not self.hidden and is_hidden(item):
@@ -110,6 +144,8 @@ class DirectoryIndexJob(QRunnable):
                         entries.append(entry)
                     except OSError:
                         continue
+            if cached is not None:
+                entries = list(cached)
             entries.sort(
                 key=lambda item: (entry_group(item, grouping), entry_key(item, column)),
                 reverse=descending,
@@ -122,6 +158,13 @@ class DirectoryIndexJob(QRunnable):
             self.signals.finished.emit(
                 self.node,
                 self.generation,
-                None if self.cancelled.is_set() else entries,
+                None
+                if self.cancelled.is_set()
+                else DirectoryListing(
+                    tuple(entries),
+                    tuple(
+                        entry for entry in entries if self.local_filter.accepts(entry)
+                    ),
+                ),
                 error,
             )

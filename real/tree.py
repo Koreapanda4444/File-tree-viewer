@@ -16,7 +16,7 @@ from PySide6.QtCore import (
     Slot,
 )
 
-from real.directory_index import DirectoryIndexJob
+from real.directory_index import DirectoryFilter, DirectoryIndexJob
 from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
 from ui.i18n import tr
@@ -34,7 +34,8 @@ class FileNode:
     is_link: bool = False
     row: int = 0
     children: list[FileNode] = field(default_factory=list)
-    entries: list | None = None
+    entries: list | tuple | None = None
+    inventory: tuple | None = None
     job: DirectoryIndexJob | None = None
     fully_loaded: bool = False
     details_loaded: bool = False
@@ -66,6 +67,7 @@ class FileNode:
 class FileTreeModel(QAbstractItemModel):
     directory_error = Signal(str)
     directory_loaded = Signal(object)
+    listing_counts = Signal(int, int)
     headers = ("Name", "Type", "Size", "Modified")
 
     def __init__(
@@ -86,6 +88,7 @@ class FileTreeModel(QAbstractItemModel):
         self.index_pool = QThreadPool(self)
         self.index_pool.setMaxThreadCount(2)
         self.sort_options = (0, False, "None", True)
+        self.local_filter = DirectoryFilter()
 
     @property
     def root_path(self) -> Path | None:
@@ -136,6 +139,7 @@ class FileTreeModel(QAbstractItemModel):
         node = self.node_from_index(index)
         if node is None or not node.is_directory:
             return
+        node.inventory = None
         self.release_children(index)
         self.fetchMore(index)
 
@@ -155,12 +159,16 @@ class FileTreeModel(QAbstractItemModel):
         node = self.node_from_index(index)
         return node.path if node is not None else None
 
-    def release_children(self, parent: QModelIndex) -> None:
+    def release_children(
+        self, parent: QModelIndex, *, preserve_inventory=False
+    ) -> None:
         node = self.node_from_index(parent)
         if node is None or not node.is_directory:
             return
 
         node.close_iterator()
+        if not preserve_inventory:
+            node.inventory = None
         node.load_generation += 1
         node.fetch_pending = False
         if node.children:
@@ -249,7 +257,11 @@ class FileTreeModel(QAbstractItemModel):
         if node.entries is None:
             node.fetch_pending = True
             job = DirectoryIndexJob(
-                node, node.load_generation, self.show_hidden, self.sort_options
+                node,
+                node.load_generation,
+                self.show_hidden,
+                self.sort_options,
+                self.local_filter if node is self.root else DirectoryFilter(),
             )
             node.job = job
             job.signals.finished.connect(self._index_finished)
@@ -269,7 +281,10 @@ class FileTreeModel(QAbstractItemModel):
         node.fetch_pending = False
         if entries is None:
             return
-        node.entries = entries
+        node.inventory = entries.inventory
+        node.entries = entries.visible
+        if node is self.root:
+            self.listing_counts.emit(len(entries.visible), len(entries.inventory))
         if error:
             self.directory_error.emit(f"Cannot read {node.path}: {error}")
         self._publish_page(node, index)
@@ -300,6 +315,15 @@ class FileTreeModel(QAbstractItemModel):
         node.fully_loaded = len(node.children) == len(node.entries)
         if node.fully_loaded:
             node.entries = []
+
+    def set_local_filter(self, options):
+        if options == self.local_filter:
+            return
+        self.local_filter = options
+        if self.root is not None:
+            root = self.index(0, 0)
+            self.release_children(root, preserve_inventory=True)
+            self.fetchMore(root)
 
     def set_sort_options(self, column, descending, grouping, folders_first):
         options = (column, descending, grouping, folders_first)

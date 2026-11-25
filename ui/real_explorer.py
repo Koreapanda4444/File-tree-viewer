@@ -84,7 +84,8 @@ class RealExplorerPage(ExplorerPage):
     location_changed = Signal(object)
     locations_changed = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, pane_id="left") -> None:
+        self.pane_id = pane_id
         super().__init__(virtual=False)
 
         self.locations = LocationStore()

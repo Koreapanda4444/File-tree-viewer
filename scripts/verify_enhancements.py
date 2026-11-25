@@ -150,6 +150,33 @@ class WindowChecks(unittest.TestCase):
         dialog.close()
         self.assertIsNone(dialog.preview.source)
 
+    def test_independent_explorer_state_roundtrip(self):
+        from ui.explorer_panes import restore_pane, save_pane
+        from ui.i18n import choice_text, set_choice_text
+        from ui.preferences import application_settings
+        from ui.real_explorer import RealExplorerPage
+
+        other = RealExplorerPage("right")
+        left = self.window.real_page
+        a, b = self.base / "a", self.base / "b"
+        a.mkdir()
+        b.mkdir()
+        self.assertTrue(left.set_root(a))
+        self.assertTrue(other.set_root(b))
+        left.sort_field.setCurrentIndex(2)
+        set_choice_text(left.folder_panel.mode, "List")
+        self.assertEqual(other.sort_field.currentIndex(), 0)
+        self.assertEqual(choice_text(other.folder_panel.mode), "Details")
+        settings = application_settings()
+        save_pane(left, settings, "left")
+        self.assertTrue(restore_pane(other, settings, "left"))
+        self.assertEqual(other.model.root_path, a)
+        self.assertEqual(other.sort_field.currentIndex(), 2)
+        self.assertIsNot(other.history, left.history)
+        wait_for(other.prepare_close)
+        other.finalize_close()
+        other.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -73,6 +73,7 @@ from ui.reveal import FileRevealer
 from ui.search_options import SearchOptionsDialog
 from ui.search_tools import SearchTools
 from ui.tasks import prepare_worker_thread
+from write_policy import policy, writes_allowed
 
 
 class RealExplorerPage(ExplorerPage):
@@ -898,7 +899,7 @@ class RealExplorerPage(ExplorerPage):
             return
 
         self._set_preview_text(result.text)
-        self.preview.setReadOnly(not result.editable)
+        self.preview.setReadOnly(policy.read_only or not result.editable)
         if result.truncated:
             self.preview_status.setText(
                 tr(
@@ -930,7 +931,7 @@ class RealExplorerPage(ExplorerPage):
         if self.preview_loading:
             return
         result = self.current_preview_result
-        editable = bool(result and result.editable)
+        editable = bool(result and result.editable) and not policy.read_only
         self.save_file_button.setEnabled(
             editable and self.preview.document().isModified()
         )
@@ -1186,6 +1187,18 @@ class RealExplorerPage(ExplorerPage):
         self.delete_button.setEnabled(bool(selected) and not blocked)
         self.undo_button.setEnabled(bool(self.undo_stack) and not blocked)
         self.transfer_policy.setEnabled(not blocked)
+        if policy.read_only:
+            for button in (
+                self.new_file_button,
+                self.new_folder_button,
+                self.rename_button,
+                self.copy_button,
+                self.move_button,
+                self.delete_button,
+                self.undo_button,
+                self.save_file_button,
+            ):
+                button.setEnabled(False)
         if hasattr(self, "file_commands"):
             self.file_commands.update_actions()
 
@@ -1203,6 +1216,8 @@ class RealExplorerPage(ExplorerPage):
         dialog.deleteLater()
 
     def mutations_available(self):
+        if not writes_allowed(self):
+            return False
         workspace = getattr(self, "workspace", None)
         return (
             not self.close_requested

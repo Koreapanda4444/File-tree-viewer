@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from ui.appearance import install_appearance
 from ui.chrome import WorkspaceHeader
 from ui.command_palette import install_command_palette
-from ui.commands import identify, menu_command
+from ui.commands import identify, identify_page, menu_command
 from ui.data_migration import import_previous_data
 from ui.explorer_base import ExplorerPage
 from ui.explorer_panes import RealWorkspace
@@ -41,6 +41,7 @@ from ui.theme import ThemeManager
 from ui.tree_export import TreeExportDialog
 from ui.virtual_explorer import VirtualExplorerPage
 from version import __version__
+from write_policy import policy
 
 __all__ = ["ExplorerPage", "MainWindow", "RealExplorerPage", "VirtualExplorerPage"]
 
@@ -49,6 +50,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         set_language(Preferences.load(application_settings()).language)
+        self.write_policy = policy
         self.appearance = install_appearance()
         self.setWindowTitle(tr("File Tree Viewer") + " " + __version__)
         self.auxiliary_close_pending = False
@@ -223,6 +225,18 @@ class MainWindow(QMainWindow):
         )
         self.command_action = install_command_palette(self)
         settings_menu.addAction(self.command_action)
+        self.read_only_action = identify(
+            QAction(tr("Read-only mode"), self, checkable=True), "settings.read_only"
+        )
+        self.read_only_action.setToolTip(
+            tr(
+                "Restricts this application's file changes; external programs can still write."
+            )
+        )
+        self.read_only_action.setChecked(policy.read_only)
+        self.read_only_action.triggered.connect(self.set_read_only)
+        settings_menu.addAction(self.read_only_action)
+        self.menuBar().setCornerWidget(self.make_read_only_button())
         self.task_monitor = TaskMonitor(self)
         self.statusBar().addPermanentWidget(self.task_monitor)
         for page in (*self.real_workspace.panes, self.virtual_page, self.plan_page):
@@ -237,7 +251,73 @@ class MainWindow(QMainWindow):
             help_menu, "help.about", tr("About File Tree Viewer"), self.show_about
         )
         self.statusBar().showMessage(tr("Ready"))
+        self.refresh_write_state()
         QTimer.singleShot(0, lambda: self.real_workspace.restore(self.settings))
+
+    def make_read_only_button(self):
+        from PySide6.QtWidgets import QToolButton
+
+        button = QToolButton()
+        button.setDefaultAction(self.read_only_action)
+        return button
+
+    def set_read_only(self, enabled):
+        busy = (
+            any(p.operation_is_running for p in self.real_workspace.panes)
+            or self.plan_page.apply_is_running
+            or self.plan_page.undo_is_running
+            or self.virtual_page.task_is_running
+        )
+        busy = busy or any(
+            getattr(dialog, "thread", None) is not None
+            for dialog in self.findChildren(QDialog)
+            if type(dialog).__name__ == "SyncReviewDialog"
+        )
+        if (
+            busy
+            or (
+                enabled
+                and any(
+                    not p._confirm_editor_transition()
+                    for p in self.real_workspace.panes
+                )
+            )
+            or not policy.set_read_only(enabled)
+        ):
+            self.read_only_action.setChecked(policy.read_only)
+            self.statusBar().showMessage(
+                tr("Wait for file-changing tasks before switching read-only mode")
+            )
+            return False
+        self.read_only_action.setChecked(policy.read_only)
+        self.refresh_write_state()
+        self.statusBar().showMessage(
+            tr("Read-only mode enabled")
+            if enabled
+            else tr("Normal file operations enabled")
+        )
+        return True
+
+    def refresh_write_state(self):
+        for page in self.real_workspace.panes:
+            page.update_action_buttons()
+            page.editor_text_changed()
+            result = page.current_preview_result
+            page.preview.setReadOnly(
+                policy.read_only or not (result and result.editable)
+            )
+            identify_page(page, "real")
+        self.virtual_page.update_action_buttons()
+        self.plan_page.update_buttons()
+        for scope, page in (("virtual", self.virtual_page), ("plan", self.plan_page)):
+            identify_page(page, scope)
+        for page in (*self.real_workspace.panes, self.virtual_page, self.plan_page):
+            if policy.read_only:
+                for value in vars(page).values():
+                    spec = getattr(value, "command_spec", None)
+                    if spec is not None and spec.mutates_files:
+                        value.setEnabled(False)
+        self.real_workspace.update_controls()
 
     @property
     def real_page(self):

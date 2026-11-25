@@ -12,6 +12,7 @@ from pathlib import Path
 from file_content import ContentCancelled, read_file_bytes
 from fs_ops import file_signature, require_unchanged
 from fs_paths import checked_boundary
+from write_policy import mutating
 
 MAX_EDIT_BYTES = 8 * 1_024 * 1_024
 LARGE_PREVIEW_BYTES = 1 * 1_024 * 1_024
@@ -193,6 +194,7 @@ def detect_newline(text: str) -> str:
     return "\n"
 
 
+@mutating
 def save_text_atomic(
     path: Path,
     text: str,

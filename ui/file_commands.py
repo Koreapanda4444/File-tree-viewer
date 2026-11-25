@@ -8,6 +8,7 @@ from fs_ops import require_unchanged
 from fs_paths import normalized_path
 from real.file_clipboard import file_mime, read_file_mime
 from ui.i18n import tr
+from write_policy import policy, writes_allowed
 
 
 class FileCommands(QObject):
@@ -102,6 +103,8 @@ class FileCommands(QObject):
 
     def transfer(self, paths, action, destination, *, cut_token=None):
         page = self.page
+        if not writes_allowed(page):
+            return False
         if (
             action not in ("copy", "move")
             or destination is None
@@ -288,7 +291,13 @@ class FileCommands(QObject):
             "Open": ready and len(page.selected_paths()) == 1,
         }
         for name, enabled in states.items():
-            self.actions[name].setEnabled(enabled)
+            self.actions[name].setEnabled(
+                enabled
+                and not (
+                    policy.read_only
+                    and name in ("Cut", "Paste", "Rename", "Delete", "Undo")
+                )
+            )
 
     def focus_search(self):
         self.page.search_input.setFocus()

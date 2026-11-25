@@ -54,6 +54,9 @@ class WindowChecks(unittest.TestCase):
         self.addCleanup(self.hook_patch.stop)
         self.addCleanup(lambda: self.assertEqual(self.qt_errors, []))
         self.addCleanup(self.close_window)
+        from write_policy import policy
+
+        self.addCleanup(lambda: policy.set_read_only(False))
 
     def close_window(self):
         self.window.close()
@@ -324,6 +327,26 @@ class WindowChecks(unittest.TestCase):
         self.assertFalse(w.left.model.local_filter.active)
         self.assertEqual(left.name.text(), "")
         self.assertEqual(right.name.text(), "")
+
+    def test_read_only_state_and_active_mutation_lease(self):
+        from file_operations import create_item
+        from write_policy import ReadOnlyError, policy
+
+        root = self.base / "protected"
+        root.mkdir()
+        self.window.real_page.set_root(root)
+        self.assertTrue(self.window.set_read_only(True))
+        self.assertTrue(policy.read_only)
+        self.assertFalse(self.window.real_page.new_file_button.isEnabled())
+        with self.assertRaises(ReadOnlyError):
+            create_item(root, "blocked.txt", directory=False)
+        self.assertFalse((root / "blocked.txt").exists())
+        self.assertTrue(self.window.set_read_only(False))
+        with policy.mutation():
+            self.assertFalse(self.window.set_read_only(True))
+            self.assertFalse(policy.read_only)
+        create_item(root, "allowed.txt", directory=False)
+        self.assertTrue((root / "allowed.txt").exists())
 
 
 if __name__ == "__main__":

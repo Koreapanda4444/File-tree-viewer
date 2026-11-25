@@ -19,6 +19,7 @@ from fs_ops import (
     tree_fingerprint,
 )
 from fs_paths import checked_boundary, normalized_path, validate_name
+from write_policy import mutating
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,7 @@ class OperationItem:
     message: str = ""
 
 
+@mutating
 def create_item(parent: Path, name: str, *, directory: bool) -> OperationRecord:
     clean_name = validate_name(name)
     if not parent.is_dir():
@@ -71,6 +73,7 @@ def create_item(parent: Path, name: str, *, directory: bool) -> OperationRecord:
     return OperationRecord(action, [record_change(None, target)])
 
 
+@mutating
 def rename_item(source: Path, new_name: str) -> OperationRecord:
     clean_name = validate_name(new_name)
     target = source.with_name(clean_name)
@@ -135,6 +138,7 @@ class FileOperationTask:
     def cancel(self) -> None:
         self._cancelled.set()
 
+    @mutating
     def run(
         self, *, progress=None, item_finished=None
     ) -> tuple[list[FileChange], list[str]]:

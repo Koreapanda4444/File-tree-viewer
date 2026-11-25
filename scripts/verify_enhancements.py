@@ -451,6 +451,39 @@ class WindowChecks(unittest.TestCase):
         self.assertIsNone(self.window.plan_page.apply_thread)
         self.assertIsNone(self.window.plan_page.undo_thread)
 
+    def test_streaming_hash_cancellation_and_external_change(self):
+        import hashlib
+        import threading
+
+        from file_hashing import hash_file
+        from snapshot import SnapshotCancelled
+
+        source = self.base / "large.bin"
+        block = b"abc123" * 200000
+        source.write_bytes(block * 4)
+        progress = []
+        result = hash_file(
+            source, progress=lambda done, total: progress.append((done, total))
+        )
+        self.assertEqual(result.digest, hashlib.sha256(block * 4).hexdigest())
+        self.assertGreater(len(progress), 2)
+        self.assertEqual(progress[-1], (source.stat().st_size, source.stat().st_size))
+        event = threading.Event()
+        with self.assertRaises(SnapshotCancelled):
+            hash_file(source, cancelled=event, progress=lambda done, total: event.set())
+
+        def modify(done, total):
+            if done:
+                source.write_bytes(b"externally changed")
+
+        with self.assertRaises(OSError):
+            hash_file(source, progress=modify)
+        with self.assertRaises(OSError):
+            result.verify()
+        empty = self.base / "empty"
+        empty.touch()
+        self.assertEqual(hash_file(empty).digest, hashlib.sha256(b"").hexdigest())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -355,6 +355,7 @@ def hash_snapshot_file(
     expected_modified_ns: int,
     cancelled: threading.Event | None,
     expected_identity: str | None = None,
+    progress=None,
 ) -> str:
     try:
         resolved = path.resolve(strict=True)
@@ -381,7 +382,11 @@ def hash_snapshot_file(
         raise FileChangedError("The item is no longer a regular file")
     verify_snapshot_details(details, expected_size, expected_modified_ns)
 
+    check_cancelled(cancelled)
     digest = hashlib.sha256()
+    processed = 0
+    if progress is not None:
+        progress(0, expected_size)
     flags = (
         os.O_RDONLY
         | getattr(os, "O_BINARY", 0)
@@ -399,6 +404,10 @@ def hash_snapshot_file(
         while chunk := stream.read(HASH_CHUNK_SIZE):
             check_cancelled(cancelled)
             digest.update(chunk)
+            processed += len(chunk)
+            if progress is not None:
+                progress(processed, expected_size)
+        check_cancelled(cancelled)
         verify_snapshot_details(
             os.fstat(stream.fileno()), expected_size, expected_modified_ns
         )

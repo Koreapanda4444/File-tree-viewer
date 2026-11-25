@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import stat
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 from diagnostics import DiagnosticCancelled, FileChangedError, hash_snapshot_file
-from fs_ops import file_signature
+from fs_ops import file_signature, require_unchanged
 from fs_paths import checked_boundary
 from snapshot import SnapshotCancelled
 from snapshot_store import check_cancelled
@@ -52,3 +53,39 @@ class FileHashCache:
         while len(self.values) > self.limit:
             self.values.popitem(last=False)
         return value
+
+
+@dataclass(frozen=True, slots=True)
+class FileHashResult:
+    path: Path
+    digest: str
+    size: int
+    signature: dict[str, int]
+
+    def verify(self):
+        require_unchanged(self.path, self.signature)
+
+
+def hash_file(path, *, cancelled=None, progress=None):
+    path = Path(path).absolute()
+    checked_boundary(path.parent, path, allow_leaf_link=False)
+    signature = file_signature(path)
+    if not stat.S_ISREG(signature["st_mode"]):
+        raise ValueError("Choose a regular file")
+    try:
+        digest = hash_snapshot_file(
+            path.parent,
+            path,
+            expected_size=signature["st_size"],
+            expected_modified_ns=signature["st_mtime_ns"],
+            expected_identity=f"{signature['st_dev']}:{signature['st_ino']}",
+            cancelled=cancelled,
+            progress=progress,
+        )
+    except DiagnosticCancelled as error:
+        raise SnapshotCancelled from error
+    except FileChangedError as error:
+        raise FileExistsError(str(error)) from error
+    result = FileHashResult(path, digest, signature["st_size"], signature)
+    result.verify()
+    return result

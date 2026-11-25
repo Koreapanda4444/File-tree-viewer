@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from math import sqrt
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt, Signal, Slot
@@ -39,12 +40,24 @@ class FilePreviewWorker(QObject):
             reader.setAutoTransform(True)
             size = reader.size()
             if size.isValid() and size.width() * size.height() <= 50000000:
-                if size.width() > 1024 or size.height() > 1024:
-                    size.scale(1024, 1024, Qt.AspectRatioMode.KeepAspectRatio)
+                original_size = (size.width(), size.height())
+                pixels = size.width() * size.height()
+                if pixels > 8_000_000:
+                    scale = sqrt(8_000_000 / pixels)
+                    size.scale(
+                        max(1, int(size.width() * scale)),
+                        max(1, int(size.height() * scale)),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                    )
                 reader.setScaledSize(size)
                 image = reader.read()
                 if not image.isNull():
-                    result = replace(result, image=image, image_bytes=None)
+                    result = replace(
+                        result,
+                        image=image,
+                        image_bytes=None,
+                        image_original_size=original_size,
+                    )
                 else:
                     result = replace(
                         result,

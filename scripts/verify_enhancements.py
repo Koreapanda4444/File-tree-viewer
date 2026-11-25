@@ -97,6 +97,33 @@ class WindowChecks(unittest.TestCase):
         palette.deleteLater()
         set_language("en")
 
+    def test_image_zoom_pan_and_reset(self):
+        from PySide6.QtGui import QImage
+
+        from ui.image_preview import ImagePreview
+
+        viewer = ImagePreview()
+        viewer.resize(420, 300)
+        viewer.show()
+        image = QImage(1000, 500, QImage.Format.Format_RGB32)
+        image.fill(0xFF448866)
+        viewer.set_image(image)
+        APP.processEvents()
+        self.assertLess(viewer.zoom, 1)
+        viewer.actual_size()
+        self.assertEqual(viewer.zoom, 1)
+        self.assertGreater(viewer.view.horizontalScrollBar().maximum(), 0)
+        viewer.zoom_by(2)
+        self.assertEqual(viewer.source.size(), image.size())
+        self.assertEqual(viewer.zoom, 2)
+        viewer.set_image(image)
+        self.assertTrue(viewer.fit_mode)
+        viewer.clear()
+        self.assertIsNone(viewer.source)
+        self.assertFalse(viewer.buttons["in"].isEnabled())
+        viewer.close()
+        viewer.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

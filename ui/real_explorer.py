@@ -869,7 +869,7 @@ class RealExplorerPage(ExplorerPage):
         if result.image is not None:
             self._set_preview_text("")
             self.preview.hide()
-            self.image_preview.set_image(result.image)
+            self.image_preview.set_image(result.image, result.image_original_size)
             self.image_preview.show()
             self.preview_status.setText(
                 tr(

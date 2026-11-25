@@ -35,6 +35,7 @@ class PreviewResult:
     signature: dict[str, int] | None = None
     image_bytes: bytes | None = None
     image: object | None = None
+    image_original_size: tuple[int, int] | None = None
 
 
 class FilePreviewTask:

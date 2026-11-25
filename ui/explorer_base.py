@@ -233,7 +233,6 @@ class ExplorerPage(QWidget):
         self.preview.setPlaceholderText(tr("Select a file to preview it"))
         preview_layout.addWidget(self.preview)
         self.image_preview = ImagePreview()
-        self.image_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_preview.setMinimumSize(1, 1)
         self.image_preview.hide()
         preview_layout.addWidget(self.image_preview)

@@ -142,7 +142,17 @@ class TaskMonitor(QWidget):
     def focus_task(self):
         self.refresh()
         if self.selected is not None:
-            self.window.tabs.setCurrentWidget(self.selected[0])
+            page = self.selected[0]
+            if page in self.window.real_workspace.panes:
+                if (
+                    page is self.window.real_workspace.right
+                    and not self.window.real_workspace.dual
+                ):
+                    self.window.real_workspace.set_dual(True)
+                self.window.real_workspace.activate(page)
+                self.window.tabs.setCurrentWidget(self.window.real_workspace)
+            else:
+                self.window.tabs.setCurrentWidget(page)
 
     def cancel_task(self):
         self.refresh()

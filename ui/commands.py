@@ -122,5 +122,11 @@ def command_available(window, target, spec):
         or not getattr(target, "command_enabled", lambda: True)()
     ):
         return False
+    if (
+        spec.identifier.startswith("real.")
+        and isinstance(target, QPushButton)
+        and not window.real_page.isAncestorOf(target)
+    ):
+        return False
     guard = getattr(window, "write_policy", None)
     return not (spec.mutates_files and guard is not None and guard.read_only)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtGui import QAction
 
 from ui.commands import identify
@@ -40,7 +41,7 @@ class PanelManager:
         for key, splitter, names in panel_splitters(window):
             splitter.setChildrenCollapsible(True)
             group = []
-            submenu = menu.addMenu(key.replace("_", " ").title())
+            submenu = menu.addMenu(tr(key.replace("_", " ").title()))
             for index, name in enumerate(names):
                 widget = splitter.widget(index)
                 action = QAction(tr(name), window, checkable=True)
@@ -51,8 +52,8 @@ class PanelManager:
                 action.setChecked(shown)
                 widget.setVisible(shown)
                 action.toggled.connect(
-                    lambda checked, s=splitter, i=index, g=group: self.toggle(
-                        s, i, g, checked
+                    lambda checked, k=key, s=splitter, i=index, g=group: self.toggle(
+                        self.current_splitter(k, s), i, g, checked
                     )
                 )
                 submenu.addAction(action)
@@ -60,11 +61,26 @@ class PanelManager:
             if not any(action.isChecked() for action in group):
                 group[0].setChecked(True)
             self.groups.append((key, splitter, group))
+        window.real_workspace.active_changed.connect(self.active_changed)
         menu.addSeparator()
         identify(
             menu.addAction(tr("Restore All Panels"), self.restore),
             "view.restore_panels",
         )
+
+    def current_splitter(self, key, fallback):
+        return {
+            "real_content": self.window.real_page.content_splitter,
+            "real_navigation": self.window.real_page.navigation_splitter,
+        }.get(key, fallback)
+
+    def active_changed(self, page):
+        for key, original, actions in self.groups:
+            if key.startswith("real_"):
+                splitter = self.current_splitter(key, original)
+                for i, action in enumerate(actions):
+                    with QSignalBlocker(action):
+                        action.setChecked(not splitter.widget(i).isHidden())
 
     def toggle(self, splitter, index, group, checked):
         if not checked and not any(action.isChecked() for action in group):
@@ -79,6 +95,7 @@ class PanelManager:
 
     def restore(self):
         for key, splitter, actions in self.groups:
+            splitter = self.current_splitter(key, splitter)
             for action in actions:
                 action.setChecked(True)
             splitter.setSizes([400] * splitter.count())
@@ -87,5 +104,6 @@ class PanelManager:
         for key, splitter, actions in self.groups:
             for index, action in enumerate(actions):
                 self.settings.setValue(
-                    "panels/" + key + "/" + str(index), action.isChecked()
+                    "panels/" + key + "/" + str(index),
+                    not splitter.widget(index).isHidden(),
                 )

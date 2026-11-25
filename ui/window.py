@@ -181,8 +181,9 @@ class MainWindow(QMainWindow):
             self.inspect_file_hash,
         )
         for pane in self.real_workspace.panes:
-            pane.hash_requested.connect(self.inspect_file_hash)
+            pane.hash_requested.connect(lambda p=pane: self.inspect_hash_from_pane(p))
         workspace_menu.addSeparator()
+        self.pane_actions = []
         for name, title in (
             ("copy", "Copy to other pane"),
             ("move", "Move to other pane"),
@@ -198,6 +199,8 @@ class MainWindow(QMainWindow):
                 mutates_files=name in ("copy", "move"),
             )
             action.command_enabled = button.isEnabled
+            self.pane_actions.append((action, button))
+        self.real_workspace.state_timer.timeout.connect(self.update_pane_actions)
         self.tabs.setDocumentMode(True)
         self.theme_manager = ThemeManager(self)
         self.settings = application_settings()
@@ -245,7 +248,7 @@ class MainWindow(QMainWindow):
         self.read_only_action.setChecked(policy.read_only)
         self.read_only_action.triggered.connect(self.set_read_only)
         settings_menu.addAction(self.read_only_action)
-        self.menuBar().setCornerWidget(self.make_read_only_button())
+        self.workspace_header.layout().insertWidget(2, self.make_read_only_button())
         self.task_monitor = TaskMonitor(self)
         self.statusBar().addPermanentWidget(self.task_monitor)
         for page in (*self.real_workspace.panes, self.virtual_page, self.plan_page):
@@ -262,6 +265,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("Ready"))
         self.refresh_write_state()
         QTimer.singleShot(0, lambda: self.real_workspace.restore(self.settings))
+
+    def update_pane_actions(self):
+        for action, button in self.pane_actions:
+            action.setEnabled(button.isEnabled())
 
     def make_read_only_button(self):
         from PySide6.QtWidgets import QToolButton
@@ -335,6 +342,10 @@ class MainWindow(QMainWindow):
     def stage_from_pane(self, page, action):
         self.real_workspace.activate(page)
         self.staging.request(action)
+
+    def inspect_hash_from_pane(self, pane):
+        self.real_workspace.activate(pane)
+        self.inspect_file_hash()
 
     def inspect_file_hash(self):
         from ui.file_hash import FileHashDialog

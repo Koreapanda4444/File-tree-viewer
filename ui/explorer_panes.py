@@ -21,7 +21,7 @@ from ui.i18n import choice_text, set_choice_text, tr
 from ui.real_explorer import RealExplorerPage
 
 
-def save_pane(page, settings, key):
+def save_pane(page, settings, key, *, panels=None):
     document = {
         "root": str(page.model.root_path) if page.model.root_path else None,
         "history": [str(path) for path in page.history.paths],
@@ -33,6 +33,14 @@ def save_pane(page, settings, key):
         "folders_first": page.folders_first.isChecked(),
         "hidden": page.show_hidden.isChecked(),
         "filter": page.directory_filter.state(),
+        "panels": panels
+        or [
+            not widget.isHidden()
+            for widget in (
+                page.navigation_splitter.widget(0),
+                page.content_splitter.widget(1),
+            )
+        ],
     }
     settings.setValue("panes/" + key, json.dumps(document, ensure_ascii=False))
     settings.beginGroup("pane_layout/" + key)
@@ -79,6 +87,14 @@ def restore_pane(page, settings, key):
         if not page.set_root(root):
             return False
         page.directory_filter.restore(state.get("filter", {}))
+        panels = state.get("panels", [True, True])
+        if isinstance(panels, (list, tuple)) and len(panels) == 2:
+            for widget, visible in zip(
+                (page.navigation_splitter.widget(0), page.content_splitter.widget(1)),
+                panels,
+                strict=True,
+            ):
+                widget.setVisible(visible is True)
         page.history.paths = list(map(Path, history))
         page.history.position = position if history else -1
         page.update_navigation_buttons()
@@ -306,8 +322,15 @@ class RealWorkspace(QWidget):
         return self.other.set_root(self.active.model.root_path)
 
     def save(self, settings):
-        for page in self.panes:
-            save_pane(page, settings, page.pane_id)
+        for index, page in enumerate(self.panes):
+            save_pane(
+                page,
+                settings,
+                page.pane_id,
+                panels=self.compact_saved[index]
+                if self.dual and self.compact_saved
+                else None,
+            )
         settings.setValue("panes/dual", self.dual)
         settings.setValue("panes/active", self.active.pane_id)
         settings.setValue("panes/splitter", self.splitter.saveState())

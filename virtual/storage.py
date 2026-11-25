@@ -13,6 +13,7 @@ from typing import Any, TextIO
 from fs_ops import create_exclusive, move_no_replace
 from fs_paths import checked_boundary
 from fs_paths import validate_windows_name as validate_name
+from write_policy import mutating
 
 WORKSPACE_FORMAT = "file-tree-viewer-virtual-v1"
 
@@ -270,6 +271,7 @@ def load_workspace_data(path: Path) -> dict[str, Any]:
     return root
 
 
+@mutating
 def export_workspace(destination: Path, root_data: dict[str, Any]) -> Path:
     checked_boundary(destination, destination, allow_leaf_link=False)
     if not destination.is_dir():
@@ -298,6 +300,7 @@ def export_workspace(destination: Path, root_data: dict[str, Any]) -> Path:
     return output
 
 
+@mutating
 def export_workspace_root(destination: Path, root: VirtualNode) -> Path:
     checked_boundary(destination, destination, allow_leaf_link=False)
     if not destination.is_dir():

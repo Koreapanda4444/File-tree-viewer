@@ -67,6 +67,8 @@ class FileCommands(QObject):
         return action
 
     def copy(self, cut=False):
+        if cut and not writes_allowed(self.page):
+            return
         if self.page.operation_is_running or self.page.search_is_running:
             return
         paths = self.page._operable_selected_paths()
@@ -87,6 +89,8 @@ class FileCommands(QObject):
         )
 
     def paste(self, destination=None):
+        if not writes_allowed(self.page):
+            return
         if isinstance(destination, bool):
             destination = None
         try:
@@ -221,9 +225,9 @@ class FileCommands(QObject):
         ready = not busy and page.model.root_path is not None
         menu = QMenu(page)
 
-        def add(name, callback, enabled):
+        def add(name, callback, enabled, *, mutation=False):
             action = menu.addAction(tr(name))
-            action.setEnabled(enabled)
+            action.setEnabled(enabled and not (mutation and policy.read_only))
             action.triggered.connect(callback)
             return action
 
@@ -232,7 +236,7 @@ class FileCommands(QObject):
         add("Copy Path", self.copy_paths, bool(paths))
         menu.addSeparator()
         add("Copy", lambda: self.copy(False), ready and bool(mutable))
-        add("Cut", lambda: self.copy(True), ready and bool(mutable))
+        add("Cut", lambda: self.copy(True), ready and bool(mutable), mutation=True)
         target = (
             paths[0]
             if len(paths) == 1 and paths[0].is_dir() and not paths[0].is_symlink()
@@ -242,11 +246,22 @@ class FileCommands(QObject):
             "Paste Into Folder" if target != page.model.root_path else "Paste",
             lambda: self.paste(target),
             ready and self.actions["Paste"].isEnabled(),
+            mutation=True,
         )
-        add("Copy To…", lambda: page.transfer_selected("copy"), ready and bool(mutable))
-        add("Move To…", lambda: page.transfer_selected("move"), ready and bool(mutable))
-        add("Rename", page.rename_selected, ready and len(mutable) == 1)
-        add("Delete", page.delete_selected, ready and bool(mutable))
+        add(
+            "Copy To…",
+            lambda: page.transfer_selected("copy"),
+            ready and bool(mutable),
+            mutation=True,
+        )
+        add(
+            "Move To…",
+            lambda: page.transfer_selected("move"),
+            ready and bool(mutable),
+            mutation=True,
+        )
+        add("Rename", page.rename_selected, ready and len(mutable) == 1, mutation=True)
+        add("Delete", page.delete_selected, ready and bool(mutable), mutation=True)
         staged = menu.addMenu(tr("Add to Plan"))
         for operation in ("copy", "move", "rename", "delete"):
             action = staged.addAction(tr(operation.title()) + "…")
@@ -257,8 +272,8 @@ class FileCommands(QObject):
                 lambda checked=False, a=operation: page.stage_requested.emit(a)
             )
         menu.addSeparator()
-        add("New File", page.create_new_file, ready)
-        add("New Folder", page.create_new_folder, ready)
+        add("New File", page.create_new_file, ready, mutation=True)
+        add("New Folder", page.create_new_folder, ready, mutation=True)
         add("Refresh", page.refresh_root, ready)
         return menu
 

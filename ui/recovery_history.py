@@ -20,6 +20,7 @@ from snapshot import SnapshotCancelled
 from ui.i18n import tr
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
+from write_policy import policy, writes_allowed
 
 
 class RecoveryHistoryWorker(CancellableWorker):
@@ -151,14 +152,14 @@ class RecoveryHistoryDialog(QDialog):
             return
         self.table.setEnabled(True)
         self.refresh_button.setEnabled(True)
-        self.recover_button.setEnabled(True)
+        self.recover_button.setEnabled(not policy.read_only)
         if self.checking:
             self.checked_record = result
             self.details.setPlainText(
                 error
                 or "Undo checks passed for recorded paths and all synchronization participants. The execution checks them again."
             )
-            self.undo_button.setEnabled(result is not None)
+            self.undo_button.setEnabled(not policy.read_only and result is not None)
             self.check_button.setEnabled(self.table.currentRow() >= 0)
             return
         self.rows = result or []
@@ -193,6 +194,8 @@ class RecoveryHistoryDialog(QDialog):
             self.start(self.rows[index]["journal"])
 
     def undo_selected(self):
+        if not writes_allowed(self):
+            return
         record = self.checked_record
         if record is None:
             return
@@ -210,6 +213,8 @@ class RecoveryHistoryDialog(QDialog):
             self.undo_requested.emit(record)
 
     def recover(self):
+        if not writes_allowed(self):
+            return
         self.accept()
         self.recover_requested.emit(self.root)
 

@@ -41,7 +41,7 @@ from ui.theme import ThemeManager
 from ui.tree_export import TreeExportDialog
 from ui.virtual_explorer import VirtualExplorerPage
 from version import __version__
-from write_policy import policy
+from write_policy import policy, writes_allowed
 
 __all__ = ["ExplorerPage", "MainWindow", "RealExplorerPage", "VirtualExplorerPage"]
 
@@ -476,6 +476,8 @@ class MainWindow(QMainWindow):
             self.finish_auxiliary_close()
 
     def undo_history_transaction(self, record):
+        if not writes_allowed(self):
+            return
         if self.staging.busy() or self.real_page.operation_is_running:
             self.statusBar().showMessage(tr("Wait for Real and Plan tasks before Undo"))
             return
@@ -485,6 +487,8 @@ class MainWindow(QMainWindow):
         self.plan_page.start_plan_undo(record)
 
     def review_history_recovery(self, root):
+        if not writes_allowed(self):
+            return
         if self.staging.busy() or self.real_page.operation_is_running:
             self.statusBar().showMessage(
                 tr("Wait for Real and Plan tasks before recovery")

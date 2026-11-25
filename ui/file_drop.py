@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QAbstractItemView, QMenu
 from fs_ops import require_unchanged
 from real.file_clipboard import read_file_mime
 from ui.i18n import tr
+from write_policy import policy, writes_allowed
 
 
 class FileDropController(QObject):
@@ -35,7 +36,8 @@ class FileDropController(QObject):
         if view is None:
             return super().eventFilter(watched, event)
         if (
-            self.page.operation_is_running
+            policy.read_only
+            or self.page.operation_is_running
             or self.page.search_is_running
             or not event.mimeData().hasUrls()
         ):
@@ -75,6 +77,8 @@ class FileDropController(QObject):
 
     def drop_files(self, view, event):
         event.ignore()
+        if not writes_allowed(self.page):
+            return
         if not event.possibleActions() & Qt.DropAction.CopyAction:
             return
         try:

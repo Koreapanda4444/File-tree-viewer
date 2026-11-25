@@ -26,6 +26,7 @@ from ui.preferences import application_settings
 from ui.sync_preview import SyncPreviewDialog
 from ui.tasks import CancellableWorker, prepare_worker_thread
 from ui.widgets import PlainLabel
+from write_policy import policy, writes_allowed
 
 INVALID_INDEX = QModelIndex()
 
@@ -186,6 +187,7 @@ class SyncReviewDialog(QDialog):
             lambda checked: self.apply_button.setEnabled(
                 checked
                 and plan.can_apply
+                and not policy.read_only
                 and self.application_result is None
                 and self.thread is None
             )
@@ -198,8 +200,12 @@ class SyncReviewDialog(QDialog):
             button.setEnabled(False)
         if application_result is not None:
             self.reviewed.setEnabled(False)
-            self.undo_button.setEnabled(application_result.status == "completed")
-            self.recover_button.setEnabled(bool(application_result.recovery_errors))
+            self.undo_button.setEnabled(
+                not policy.read_only and application_result.status == "completed"
+            )
+            self.recover_button.setEnabled(
+                not policy.read_only and bool(application_result.recovery_errors)
+            )
             self.summary.setText(
                 tr(
                     "Synchronization {value0}: {value1:,} processed item(s)",
@@ -242,6 +248,8 @@ class SyncReviewDialog(QDialog):
                 self.done(QDialog.DialogCode.Rejected)
 
     def start_execution(self, action):
+        if not writes_allowed(self):
+            return
         if self.thread is not None or (
             action == "apply"
             and (
@@ -347,8 +355,12 @@ class SyncReviewDialog(QDialog):
             )
             for root in result.roots:
                 self.filesystem_changed.emit(root)
-            self.undo_button.setEnabled(result.status == "completed")
-            self.recover_button.setEnabled(bool(result.recovery_errors))
+            self.undo_button.setEnabled(
+                not policy.read_only and result.status == "completed"
+            )
+            self.recover_button.setEnabled(
+                not policy.read_only and bool(result.recovery_errors)
+            )
         else:
             self.summary.setText(error)
             self.reviewed.setEnabled(self.application_result is None)
@@ -356,6 +368,7 @@ class SyncReviewDialog(QDialog):
                 self.application_result is None
                 and self.reviewed.isChecked()
                 and self.plan.can_apply
+                and not policy.read_only
             )
         if self.close_requested:
             self.done(QDialog.DialogCode.Rejected)

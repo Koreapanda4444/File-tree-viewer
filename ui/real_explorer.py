@@ -1351,6 +1351,8 @@ class RealExplorerPage(ExplorerPage):
         )
 
     def transfer_selected(self, action: str) -> None:
+        if not writes_allowed(self):
+            return
         sources = self._operable_selected_paths()
         if not sources or self.search_is_running or self.operation_is_running:
             return
@@ -1373,6 +1375,8 @@ class RealExplorerPage(ExplorerPage):
         )
 
     def delete_selected(self) -> None:
+        if not writes_allowed(self):
+            return
         sources = self._operable_selected_paths()
         if not sources or self.search_is_running or self.operation_is_running:
             return
@@ -1396,6 +1400,8 @@ class RealExplorerPage(ExplorerPage):
             self._start_file_operation("delete", sources=sources)
 
     def undo_last_operation(self) -> None:
+        if not writes_allowed(self):
+            return
         if not self.undo_stack or self.search_is_running or self.operation_is_running:
             return
         if not self._confirm_editor_transition():

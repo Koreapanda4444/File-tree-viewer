@@ -39,6 +39,7 @@ from snapshot import SnapshotCancelled
 from snapshot_store import check_cancelled
 from sync_baseline import baseline_path, save_sync_baseline
 from sync_plan import SyncAction, SyncOperation
+from write_policy import mutating
 
 TERMINAL_STATES = {"completed", "rolled_back", "undone"}
 
@@ -259,6 +260,7 @@ def synchronization_problem(record):
     return ""
 
 
+@mutating
 def apply_sync_plan(plan, *, cancelled=None, progress=None):
     from recovery import inspect_recovery
 
@@ -498,6 +500,7 @@ def apply_sync_plan(plan, *, cancelled=None, progress=None):
             )
 
 
+@mutating
 def restore_group(
     records, descriptor, completed, error="", *, progress=None, undo=False
 ):
@@ -571,6 +574,7 @@ def restore_group(
     )
 
 
+@mutating
 def recover_sync_group(marker, *, undo=False, progress=None):
     from recovery import clear_abandoned_lock, inspect_recovery
 

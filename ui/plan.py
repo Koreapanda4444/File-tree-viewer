@@ -89,6 +89,7 @@ from ui.tasks import prepare_worker_thread
 from ui.widgets import FlowLayout
 from ui.widgets import PlainLabel as QLabel
 from ui.workers import SnapshotWorker
+from write_policy import policy, writes_allowed
 
 __all__ = [
     "INVALID_INDEX",
@@ -1464,6 +1465,8 @@ class PlanExplorerPage(QWidget):
         result_dialog.deleteLater()
 
     def confirm_plan_apply(self) -> None:
+        if not writes_allowed(self):
+            return
         if (
             self.snapshot is None
             or not len(self.plan)
@@ -1479,6 +1482,8 @@ class PlanExplorerPage(QWidget):
         self.start_plan_simulation("apply")
 
     def confirm_plan_apply_result(self, simulation: PlanSimulation) -> None:
+        if not writes_allowed(self):
+            return
         if self.snapshot is None:
             return
         if not simulation.can_apply:
@@ -1518,6 +1523,8 @@ class PlanExplorerPage(QWidget):
         self.start_plan_apply()
 
     def start_plan_apply(self) -> None:
+        if not writes_allowed(self):
+            return
         if (
             self.snapshot is None
             or self.apply_is_running
@@ -1660,6 +1667,8 @@ class PlanExplorerPage(QWidget):
         self.start_snapshot(result.root)
 
     def confirm_plan_undo(self) -> None:
+        if not writes_allowed(self):
+            return
         record = self.last_application
         if (
             record is None
@@ -1725,6 +1734,8 @@ class PlanExplorerPage(QWidget):
         self.start_plan_undo(record)
 
     def recover_interrupted(self) -> None:
+        if not writes_allowed(self):
+            return
         if self.recovery_scan is None:
             return
         root = self.recovery_scan.root
@@ -1761,6 +1772,8 @@ class PlanExplorerPage(QWidget):
             or self.plan_io_is_running
             or self.simulation_is_running
         ):
+            return
+        if not writes_allowed(self):
             return
         if recovery_root is None and record is None:
             return
@@ -2193,6 +2206,13 @@ class PlanExplorerPage(QWidget):
         self.clear_button.setEnabled(ready and bool(len(self.plan)))
         self.save_plan_button.setEnabled(ready and bool(len(self.plan)))
         self.load_plan_button.setEnabled(ready)
+        if policy.read_only:
+            for button in (
+                self.apply_button,
+                self.undo_plan_button,
+                self.recovery_button,
+            ):
+                button.setEnabled(False)
 
     def prepare_close(self) -> bool:
         self.close_cancelled = False

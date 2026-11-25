@@ -25,6 +25,7 @@ from virtual.workspace import (
     format_size,
     node_size,
 )
+from write_policy import policy, writes_allowed
 
 
 class VirtualExplorerPage(ExplorerPage):
@@ -402,6 +403,7 @@ class VirtualExplorerPage(ExplorerPage):
         self.move_button.setEnabled(bool(selected) and not blocked)
         self.delete_button.setEnabled(bool(selected) and not blocked)
         self.undo_button.setEnabled(bool(self.undo_stack) and not blocked)
+        self.export_button.setEnabled(not blocked and not policy.read_only)
 
     def selected_nodes(self) -> list[VirtualNode]:
         selection = self.tree.selectionModel()
@@ -490,6 +492,8 @@ class VirtualExplorerPage(ExplorerPage):
             self._start_task("load", Path(selected))
 
     def export_workspace_dialog(self) -> None:
+        if not writes_allowed(self):
+            return
         if self.task_is_running or not self._confirm_editor_transition():
             return
         selected = QFileDialog.getExistingDirectory(
@@ -534,6 +538,8 @@ class VirtualExplorerPage(ExplorerPage):
         path: Path,
         data: dict | VirtualNode | None = None,
     ) -> None:
+        if action == "export" and not writes_allowed(self):
+            return
         worker = VirtualTaskWorker(action, path, data)
         worker.finished.connect(self.receive_task_result)
         thread = prepare_worker_thread(

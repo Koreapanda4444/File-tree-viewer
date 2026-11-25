@@ -32,6 +32,7 @@ from journal import append_event, atomic_json, read_events
 from plan_diff import SimulationCancelled, simulate_plan, source_live_problem
 from planning import ConflictPolicy, FilePlan, PlanAction, PlanOperation
 from snapshot import FileSnapshot
+from write_policy import mutating
 
 ProgressCallback = Callable[[str, int, int, str], None]
 INTERNAL_DIRECTORY = ".file-tree-viewer"
@@ -136,6 +137,7 @@ class PlanApplicationRecord:
         atomic_json(self.journal_path, self.as_dict())
 
 
+@mutating
 def apply_plan(
     snapshot: FileSnapshot,
     plan: FilePlan,
@@ -213,6 +215,7 @@ def _apply_locked(snapshot, plan, *, cancelled, progress) -> PlanApplicationReco
     return record
 
 
+@mutating
 def undo_application(
     record: PlanApplicationRecord,
     *,

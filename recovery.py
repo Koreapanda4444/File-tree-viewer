@@ -20,6 +20,7 @@ from plan_apply import (
     reverse_recorded_mutation,
     validate_application_record,
 )
+from write_policy import mutating
 
 UNFINISHED_STATUSES = {
     ApplicationStatus.RUNNING,
@@ -173,6 +174,7 @@ def process_is_running(pid: int) -> bool:
     return True
 
 
+@mutating
 def clear_abandoned_lock(root: Path) -> None:
     path = root / ".file-tree-viewer" / "transaction.lock"
     if not path_exists(path):
@@ -195,6 +197,7 @@ def clear_abandoned_lock(root: Path) -> None:
     path.unlink()
 
 
+@mutating
 def reconcile_pending(record: PlanApplicationRecord) -> None:
     for mutation in tuple(record.pending_mutations):
         target = required_path(mutation.target)
@@ -281,6 +284,7 @@ def reconcile_pending(record: PlanApplicationRecord) -> None:
         record.reversing_mutation_ids.remove(mutation.key)
 
 
+@mutating
 def recover_root(root: Path | str, *, progress=None) -> RecoveryResult:
     root_path = normalize_root(root)
     if root_path is None:

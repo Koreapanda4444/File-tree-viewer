@@ -348,6 +348,109 @@ class WindowChecks(unittest.TestCase):
         create_item(root, "allowed.txt", directory=False)
         self.assertTrue((root / "allowed.txt").exists())
 
+    def test_read_only_rejects_engines_and_allows_reports_and_snapshots(self):
+        from file_operations import FileOperationTask, rename_item
+        from file_preview import save_text_atomic
+        from plan_apply import apply_plan, undo_application
+        from recovery import recover_root
+        from snapshot import build_snapshot
+        from snapshot_store import save_snapshot
+        from sync_apply import apply_sync_plan, recover_sync_group
+        from tree_export import build_tree, write_tree
+        from virtual.storage import (
+            VirtualNode,
+            export_workspace_root,
+            save_workspace_root,
+        )
+        from write_policy import ReadOnlyError
+
+        root = self.base / "safe"
+        root.mkdir()
+        source = root / "source.txt"
+        source.write_text("preserve")
+        target = self.base / "target"
+        target.mkdir()
+        task = FileOperationTask("copy", sources=[source], destination=target)
+        self.assertTrue(self.window.set_read_only(True))
+        calls = (
+            task.run,
+            lambda: rename_item(source, "changed.txt"),
+            lambda: save_text_atomic(source, "changed", encoding="utf-8", newline="\n"),
+            lambda: apply_plan(None, None),
+            lambda: undo_application(None),
+            lambda: recover_root(root),
+            lambda: apply_sync_plan(None),
+            lambda: recover_sync_group(root / "sync.json"),
+            lambda: export_workspace_root(target, VirtualNode("VM:", True)),
+        )
+        for callback in calls:
+            with self.assertRaises(ReadOnlyError):
+                callback()
+        self.assertEqual(source.read_text(), "preserve")
+        self.assertEqual(list(target.iterdir()), [])
+        snapshot = build_snapshot(root)
+        try:
+            save_snapshot(
+                snapshot, self.base / "report.ftvsnapshot", name="Read only snapshot"
+            )
+            self.assertTrue((self.base / "report.ftvsnapshot").exists())
+            write_tree(build_tree(root), self.base / "tree.txt")
+            self.assertTrue((self.base / "tree.txt").exists())
+        finally:
+            snapshot.close()
+        save_workspace_root(self.base / "virtual.json", VirtualNode("VM:", True))
+        self.assertTrue((self.base / "virtual.json").exists())
+
+    def test_read_only_shortcuts_context_menu_and_deferred_worker(self):
+        from PySide6.QtCore import QItemSelectionModel
+
+        from real.operations import FileOperationWorker
+
+        root = self.base / "source"
+        root.mkdir()
+        source = root / "file.txt"
+        source.write_text("safe")
+        target = self.base / "target"
+        target.mkdir()
+        page = self.window.real_page
+        page.set_root(root)
+        wait_for(lambda: page.model.index_for_path(source).isValid())
+        index = page.browse_model.mapFromSource(page.model.index_for_path(source))
+        page.tree.selectionModel().setCurrentIndex(
+            index,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        wait_for(lambda: not page.preview_is_running)
+        worker = FileOperationWorker("copy", sources=[source], destination=target)
+        results = []
+        worker.finished.connect(lambda *args: results.append(args))
+        self.assertTrue(self.window.set_read_only(True))
+        with (
+            patch("ui.real_explorer.QFileDialog.getExistingDirectory") as chooser,
+            patch("ui.real_explorer.QMessageBox.question") as question,
+        ):
+            page.transfer_selected("copy")
+            page.delete_selected()
+            page.file_commands.paste(target)
+            self.assertFalse(page.file_commands.transfer([source], "move", target))
+            chooser.assert_not_called()
+            question.assert_not_called()
+        menu = page.file_commands.build_menu()
+        actions = {a.text(): a for a in menu.actions()}
+        self.assertFalse(actions["Delete"].isEnabled())
+        self.assertFalse(page.file_commands.actions["Paste"].isEnabled())
+        self.assertFalse(page.preview.isReadOnly() is False)
+        worker.run()
+        self.assertTrue(results[0][2])
+        self.assertEqual(list(target.iterdir()), [])
+        self.assertEqual(source.read_text(), "safe")
+        menu.deleteLater()
+        self.window.plan_page.start_plan_apply()
+        self.window.plan_page.start_plan_undo(record=object())
+        self.assertIsNone(self.window.plan_page.apply_thread)
+        self.assertIsNone(self.window.plan_page.undo_thread)
+
 
 if __name__ == "__main__":
     unittest.main()

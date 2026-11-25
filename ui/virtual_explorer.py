@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import time
 from pathlib import Path
+
 from PySide6.QtCore import (
     QItemSelectionModel,
     QModelIndex,
@@ -10,6 +12,8 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
+
+from ui.explorer_base import ExplorerPage
 from ui.i18n import tr
 from ui.tasks import prepare_worker_thread
 from virtual.workspace import (
@@ -21,7 +25,6 @@ from virtual.workspace import (
     format_size,
     node_size,
 )
-from ui.explorer_base import ExplorerPage
 
 
 class VirtualExplorerPage(ExplorerPage):

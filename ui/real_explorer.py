@@ -1,9 +1,11 @@
 from __future__ import annotations
+
 import json
 import os
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
+
 from PySide6.QtCore import (
     QItemSelectionModel,
     QModelIndex,
@@ -30,6 +32,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
 from file_metadata import format_timestamp, inspect_file_metadata
 from fs_ops import file_signature
 from operation_history import record_events
@@ -50,6 +53,7 @@ from search.history import SearchRequest
 from search.matching import NameMatcher, SearchPatternError
 from search.options import SearchOptions
 from ui.completion import PathCompletion
+from ui.explorer_base import ExplorerPage
 from ui.explorer_state import ExplorerState
 from ui.feedback import show_error
 from ui.file_commands import FileCommands
@@ -67,7 +71,6 @@ from ui.reveal import FileRevealer
 from ui.search_options import SearchOptionsDialog
 from ui.search_tools import SearchTools
 from ui.tasks import prepare_worker_thread
-from ui.explorer_base import ExplorerPage
 
 
 class RealExplorerPage(ExplorerPage):

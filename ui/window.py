@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from dataclasses import replace
 from pathlib import Path
+
 from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent
 from PySide6.QtWidgets import (
@@ -13,10 +15,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
 from ui.appearance import install_appearance
 from ui.chrome import WorkspaceHeader
 from ui.command_palette import install_command_palette
+from ui.commands import identify, menu_command
 from ui.data_migration import import_previous_data
+from ui.explorer_base import ExplorerPage
 from ui.feedback import TaskMonitor, show_error
 from ui.folder_compare import FolderComparisonDialog
 from ui.i18n import set_language, tr
@@ -29,15 +34,14 @@ from ui.preferences import (
     restore_layout,
     save_layout,
 )
+from ui.real_explorer import RealExplorerPage
 from ui.staging import StagingController
 from ui.theme import ThemeManager
 from ui.tree_export import TreeExportDialog
-from version import __version__
-from ui.explorer_base import ExplorerPage
-from ui.real_explorer import RealExplorerPage
 from ui.virtual_explorer import VirtualExplorerPage
+from version import __version__
 
-__all__ = ["ExplorerPage", "RealExplorerPage", "VirtualExplorerPage", "MainWindow"]
+__all__ = ["ExplorerPage", "MainWindow", "RealExplorerPage", "VirtualExplorerPage"]
 
 
 class MainWindow(QMainWindow):
@@ -85,6 +89,9 @@ class MainWindow(QMainWindow):
             ("Real File System", "Virtual File System", "Plan")
         ):
             action = QAction(tr(title), self, checkable=True)
+            identify(
+                action, ("workspace.real", "workspace.virtual", "workspace.plan")[index]
+            )
             action.setShortcut(f"Ctrl+{index + 1}")
             action.triggered.connect(
                 lambda checked=False, i=index: self.tabs.setCurrentIndex(i)
@@ -96,30 +103,66 @@ class MainWindow(QMainWindow):
             lambda i: self.workspace_actions.actions()[i].setChecked(True)
         )
         workspace_menu.addSeparator()
-        workspace_menu.addAction(
-            tr("Import Real Root into Plan"), self.import_real_root
+        menu_command(
+            workspace_menu,
+            "workspace.import_real",
+            tr("Import Real Root into Plan"),
+            self.import_real_root,
         )
-        workspace_menu.addAction(
-            tr("Open Snapshot Root in Real"), self.open_snapshot_root
+        menu_command(
+            workspace_menu,
+            "workspace.open_snapshot",
+            tr("Open Snapshot Root in Real"),
+            self.open_snapshot_root,
         )
-        workspace_menu.addAction(tr("Export Folder Tree…"), self.export_folder_tree)
+        menu_command(
+            workspace_menu,
+            "workspace.export_tree",
+            tr("Export Folder Tree…"),
+            self.export_folder_tree,
+        )
         self.real_page.tree_export_button.clicked.connect(self.export_folder_tree)
         self.virtual_page.tree_export_button.clicked.connect(self.export_folder_tree)
-        workspace_menu.addAction(tr("Compare Folders…"), self.compare_folders_dialog)
-        workspace_menu.addAction(tr("Analyze Disk Usage…"), self.analyze_disk_usage)
-        workspace_menu.addAction(tr("Operation History…"), self.show_history)
-        workspace_menu.addAction(tr("Recovery History…"), self.show_recovery_history)
+        menu_command(
+            workspace_menu,
+            "workspace.compare_folders",
+            tr("Compare Folders…"),
+            self.compare_folders_dialog,
+        )
+        menu_command(
+            workspace_menu,
+            "workspace.disk_usage",
+            tr("Analyze Disk Usage…"),
+            self.analyze_disk_usage,
+        )
+        menu_command(
+            workspace_menu,
+            "workspace.history",
+            tr("Operation History…"),
+            self.show_history,
+        )
+        menu_command(
+            workspace_menu,
+            "workspace.recovery_history",
+            tr("Recovery History…"),
+            self.show_recovery_history,
+        )
         self.staging = StagingController(self)
         self.plan_page.sync_workspace.filesystem_changed.connect(
             self.sync_filesystem_changed
         )
-        workspace_menu.addAction(
-            tr("Add Virtual Workspace to Plan…"), self.staging.request_virtual
+        menu_command(
+            workspace_menu,
+            "workspace.stage_virtual",
+            tr("Add Virtual Workspace to Plan…"),
+            self.staging.request_virtual,
         )
         self.real_page.stage_requested.connect(self.staging.request)
         for action in ("copy", "move", "rename", "delete"):
-            workspace_menu.addAction(
-                tr("Stage Real {value0}…", value0=action.title()),
+            menu_command(
+                workspace_menu,
+                "workspace.stage_" + action,
+                tr("Stage Real {value0}…", value0=tr(action.title())),
                 lambda checked=False, a=action: self.staging.request(a),
             )
         self.tabs.setDocumentMode(True)
@@ -130,9 +173,17 @@ class MainWindow(QMainWindow):
         restore_layout(self, self.settings)
         self.panel_manager = PanelManager(self, self.settings)
         settings_menu = self.menuBar().addMenu(tr("Settings"))
-        settings_menu.addAction(tr("Preferences..."), self.edit_preferences)
-        settings_menu.addAction(
-            tr("Import Previous Data…"), lambda: import_previous_data(self)
+        menu_command(
+            settings_menu,
+            "settings.preferences",
+            tr("Preferences..."),
+            self.edit_preferences,
+        )
+        menu_command(
+            settings_menu,
+            "settings.import_previous",
+            tr("Import Previous Data…"),
+            lambda: import_previous_data(self),
         )
         self.command_action = install_command_palette(self)
         settings_menu.addAction(self.command_action)
@@ -146,7 +197,9 @@ class MainWindow(QMainWindow):
                 )
             )
         help_menu = self.menuBar().addMenu(tr("Help"))
-        help_menu.addAction(tr("About File Tree Viewer"), self.show_about)
+        menu_command(
+            help_menu, "help.about", tr("About File Tree Viewer"), self.show_about
+        )
         self.statusBar().showMessage(tr("Ready"))
         QTimer.singleShot(
             0, lambda: self.real_page.explorer_state.load_session(self.settings)

@@ -18,11 +18,11 @@ from PySide6.QtCore import (
     Slot,
 )
 
-from search.content import find_file_content
 from file_content import ContentCancelled
 from fs_paths import is_hidden, is_reparse_point
 from real.file_clipboard import model_file_mime
 from real.icons import FileIconCache
+from search.content import find_file_content
 from search.matching import NameMatcher, SearchPatternError
 from search.options import SearchOptions
 from ui.i18n import tr

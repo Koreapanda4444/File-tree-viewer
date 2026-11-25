@@ -12,3 +12,5 @@ release/
 
 .file-tree-viewer/
 /data/
+
+.ruff_cache/

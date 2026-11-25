@@ -18,6 +18,14 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ui.commands import (
+    command_available,
+    identify,
+    identify_page,
+    legacy_aliases,
+    migrate_keys,
+    walk_actions,
+)
 from ui.i18n import add_choice, tr
 from ui.preferences import application_settings
 
@@ -29,6 +37,8 @@ class Command:
     callback: object
     available: object
     dangerous: bool = False
+    confirmation: str = "none"
+    aliases: tuple[str, ...] = ()
 
 
 def load_keys(settings, key):
@@ -55,51 +65,54 @@ def collect_commands(window):
         menu = menu_action.menu()
         if menu is None:
             continue
-        for action in menu.actions():
-            if action.isSeparator() or action.menu() is not None:
+        for action in walk_actions(menu):
+            spec = getattr(action, "command_spec", None)
+            if spec is None or spec.identifier in seen:
                 continue
+            seen.add(spec.identifier)
             title = (
                 menu.title().replace("&", "") + " / " + action.text().replace("&", "")
             )
-            if title in seen:
-                continue
-            seen.add(title)
             commands.append(
                 Command(
-                    title,
+                    spec.identifier,
                     title,
                     action.trigger,
-                    action.isEnabled,
-                    any(
-                        word in title.lower()
-                        for word in ("delete", "reset", "undo", "recover", "apply")
-                    ),
+                    lambda a=action, s=spec: command_available(window, a, s),
+                    spec.mutates_files,
+                    spec.confirmation,
+                    legacy_aliases(menu.title(), action.text()),
                 )
             )
     page = window.tabs.currentWidget()
+    if page is window.real_page:
+        scope = "real"
+    elif page is window.virtual_page:
+        scope = "virtual"
+    else:
+        scope = "plan"
+    identify_page(page, scope)
+    prefix = window.tabs.tabText(window.tabs.currentIndex())
     for button in page.findChildren(QPushButton):
-        title = button.text().replace("&", "")
-        key = window.tabs.tabText(window.tabs.currentIndex()) + " / " + title
-        if not title or key in seen or not button.isVisibleTo(page):
+        spec = getattr(button, "command_spec", None)
+        title = button.text().replace("&", "") or button.toolTip()
+        if (
+            spec is None
+            or not title
+            or spec.identifier in seen
+            or not button.isVisibleTo(page)
+        ):
             continue
-        seen.add(key)
+        seen.add(spec.identifier)
         commands.append(
             Command(
-                key,
-                key,
+                spec.identifier,
+                prefix + " / " + title,
                 button.click,
-                button.isEnabled,
-                any(
-                    word in title.lower()
-                    for word in (
-                        "delete",
-                        "reset",
-                        "undo",
-                        "recover",
-                        "apply",
-                        "remove",
-                    )
-                ),
+                lambda b=button, s=spec: command_available(window, b, s),
+                spec.mutates_files,
+                spec.confirmation,
+                legacy_aliases(prefix, title),
             )
         )
     return commands
@@ -113,6 +126,9 @@ class CommandPalette(QDialog):
         self.recent = load_keys(self.settings, "recent")
         self.favorites = load_keys(self.settings, "favorites")
         self.commands = collect_commands(window)
+        self.recent = migrate_keys(self.recent, self.commands)
+        self.favorites = migrate_keys(self.favorites, self.commands)
+        self.save()
         for key in dict.fromkeys([*self.favorites, *self.recent]):
             if key.startswith("folder:"):
                 path = Path(key[len("folder:") :])
@@ -239,7 +255,7 @@ class CommandPalette(QDialog):
         command = self.selected()
         if command is None or not command.available():
             return
-        if command.dangerous:
+        if command.confirmation == "palette":
             answer = QMessageBox.question(
                 self,
                 tr("Confirm Command"),
@@ -253,11 +269,14 @@ class CommandPalette(QDialog):
         self.recent = [command.key] + [key for key in self.recent if key != command.key]
         self.save()
         self.accept()
-        QTimer.singleShot(0, command.callback)
+        QTimer.singleShot(
+            0, lambda: command.callback() if command.available() else None
+        )
 
 
 def install_command_palette(window):
     action = QAction(tr("Quick Commands…"), window)
+    identify(action, "settings.quick_commands")
     action.setShortcut("Ctrl+P")
 
     def show():

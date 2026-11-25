@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
 from ui.address import AddressBar
 from ui.file_views import FolderViews
 from ui.i18n import add_choice, tr

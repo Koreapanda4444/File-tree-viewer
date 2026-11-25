@@ -721,6 +721,26 @@ class WindowChecks(unittest.TestCase):
             self.assertTrue(fresh.is_file())
         self.assertEqual((root / "original.txt").read_text(), "preserve")
 
+    def test_deferred_command_does_not_run_after_window_is_hidden(self):
+        from ui.command_palette import CommandPalette
+
+        palette = CommandPalette(self.window)
+        command = next(c for c in palette.commands if c.key == "real.new_folder")
+        root = self.base / "commands"
+        root.mkdir()
+        self.window.real_page.set_root(root)
+        self.assertTrue(command.available())
+        calls = []
+        command.callback = lambda: calls.append(True)
+        palette.visible_commands = [command]
+        palette.list.setCurrentRow(0)
+        palette.run_selected()
+        self.window.hide()
+        APP.processEvents()
+        self.assertFalse(calls)
+        self.window.show()
+        palette.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -124,6 +124,32 @@ class WindowChecks(unittest.TestCase):
         viewer.close()
         viewer.deleteLater()
 
+    def test_standalone_image_detects_external_changes(self):
+        from PySide6.QtGui import QImage
+
+        from real.preview import FilePreviewWorker
+        from ui.image_preview import ImagePreviewDialog
+
+        path = self.base / "image.png"
+        image = QImage(2048, 128, QImage.Format.Format_RGB32)
+        image.fill(0xFF336699)
+        self.assertTrue(image.save(str(path)))
+        worker = FilePreviewWorker(path)
+        results = []
+        worker.finished.connect(results.append)
+        worker.run()
+        result = results[0]
+        self.assertEqual(result.image.width(), 2048)
+        dialog = ImagePreviewDialog(result, self.window)
+        dialog.show()
+        self.assertFalse(dialog.stale)
+        path.write_bytes(b"changed")
+        dialog.check_source()
+        self.assertTrue(dialog.stale)
+        self.assertIsNotNone(dialog.preview.source)
+        dialog.close()
+        self.assertIsNone(dialog.preview.source)
+
 
 if __name__ == "__main__":
     unittest.main()

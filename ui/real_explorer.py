@@ -61,6 +61,7 @@ from ui.file_compare import FileComparisonDialog
 from ui.file_drop import FileDropController
 from ui.file_groups import FileGroupDelegate
 from ui.i18n import add_choices, choice_text, tr
+from ui.image_preview import ImagePreviewDialog
 from ui.live_search import LiveSearch
 from ui.locations import LocationsButton, LocationStore
 from ui.navigation_tabs import FolderTabs
@@ -134,6 +135,8 @@ class RealExplorerPage(ExplorerPage):
         self.pending_folder = None
         self.operation_results = OperationResultsModel(self)
         self.operation_results_button.clicked.connect(self.show_operation_results)
+        self.image_dialog = None
+        self.image_preview.open_requested.connect(self.open_image_window)
         self.current_metadata = None
         self.metadata_button.clicked.connect(self.show_file_metadata)
 
@@ -906,6 +909,16 @@ class RealExplorerPage(ExplorerPage):
             )
         self.editor_text_changed()
 
+    def open_image_window(self):
+        result = self.current_preview_result
+        if result is None or result.image is None:
+            return
+        if self.image_dialog is not None:
+            self.image_dialog.close()
+        dialog = self.image_dialog = ImagePreviewDialog(result, self)
+        dialog.finished.connect(lambda: setattr(self, "image_dialog", None))
+        dialog.show()
+
     def editor_text_changed(self) -> None:
         if self.preview_loading:
             return
@@ -1566,6 +1579,8 @@ class RealExplorerPage(ExplorerPage):
             self.model.release_children(self.browse_model.mapToSource(index))
 
     def prepare_close(self) -> bool:
+        if self.image_dialog is not None:
+            self.image_dialog.close()
         self.close_cancelled = False
         if not self._confirm_editor_transition():
             self.close_cancelled = True

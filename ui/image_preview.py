@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QDialog,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fs_ops import require_unchanged
 from ui.i18n import tr
 
 
@@ -140,3 +142,48 @@ class ImagePreview(QWidget):
     def refresh_image(self):
         if self.fit_mode:
             self.fit_image()
+
+
+class ImagePreviewDialog(QDialog):
+    """A single shared decoded frame; never rereads or edits the source file."""
+
+    def __init__(self, result, parent=None):
+        super().__init__(parent)
+        self.result = result
+        self.stale = False
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setWindowTitle(tr("Image Preview") + " — " + result.path.name)
+        self.resize(1000, 760)
+        layout = QVBoxLayout(self)
+        self.status = QLabel(str(result.path))
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.preview = ImagePreview()
+        self.preview.buttons["open"].hide()
+        self.preview.set_image(result.image, result.image_original_size)
+        layout.addWidget(self.preview, 1)
+        self.timer = QTimer(self)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.check_source)
+        self.timer.start()
+        self.check_source()
+
+    def check_source(self):
+        try:
+            if self.result.signature is None:
+                raise OSError("Missing source signature")
+            require_unchanged(self.result.path, self.result.signature)
+        except OSError:
+            self.stale = True
+            self.status.setText(
+                tr(
+                    "The source changed or is unavailable. This window shows the previously decoded image; reopen it to refresh."
+                )
+            )
+            self.timer.stop()
+
+    def closeEvent(self, event):
+        self.timer.stop()
+        self.preview.clear()
+        self.result = None
+        super().closeEvent(event)

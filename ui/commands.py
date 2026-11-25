@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from functools import cache
 
 from PySide6.QtWidgets import QPushButton
 
@@ -82,11 +83,16 @@ def identify_page(page, scope):
         )
 
 
-def legacy_aliases(prefix, title):
+@cache
+def korean_catalog():
     with resource_path("ui", "translations", "ko.json").open(
         encoding="utf-8"
     ) as stream:
-        korean = json.load(stream)
+        return json.load(stream)
+
+
+def legacy_aliases(prefix, title):
+    korean = korean_catalog()
     prefixes = {prefix, source_text(prefix), korean.get(source_text(prefix), prefix)}
     titles = {title, source_text(title), korean.get(source_text(title), title)}
     return tuple(

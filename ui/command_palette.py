@@ -135,7 +135,7 @@ class CommandPalette(QDialog):
                 self.commands.append(
                     Command(
                         key,
-                        "Go to folder: " + str(path),
+                        tr("Go to folder: {path}", path=path),
                         lambda p=path: self.navigate(p),
                         lambda: True,
                     )
@@ -192,7 +192,7 @@ class CommandPalette(QDialog):
                     0,
                     Command(
                         "folder:" + str(path),
-                        "Go to folder: " + str(path),
+                        tr("Go to folder: {path}", path=path),
                         lambda: self.navigate(path),
                         lambda: True,
                     ),
@@ -202,7 +202,7 @@ class CommandPalette(QDialog):
             item = QListWidgetItem(
                 ("★ " if command.key in self.favorites else "")
                 + command.title
-                + (" — confirmation required" if command.dangerous else "")
+                + (tr(" — changes files") if command.dangerous else "")
             )
             if not command.available():
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
@@ -259,8 +259,7 @@ class CommandPalette(QDialog):
             answer = QMessageBox.question(
                 self,
                 tr("Confirm Command"),
-                command.title
-                + "? Review any following operation dialog before applying changes.",
+                tr("Run {command}?", command=command.title),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )

@@ -1091,7 +1091,9 @@ class RealExplorerPage(ExplorerPage):
             table.setItem(row, 1, QTableWidgetItem(value))
         layout.addWidget(table)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        copy = buttons.addButton("Copy JSON", QDialogButtonBox.ButtonRole.ActionRole)
+        copy = buttons.addButton(
+            tr("Copy JSON"), QDialogButtonBox.ButtonRole.ActionRole
+        )
         copy.clicked.connect(
             lambda: QApplication.clipboard().setText(
                 json.dumps(metadata.as_dict(), ensure_ascii=False, indent=2)
@@ -1326,9 +1328,11 @@ class RealExplorerPage(ExplorerPage):
             return
 
         if len(sources) == 1:
-            question = f'Move "{sources[0].name}" to the Recycle Bin?'
+            question = tr('Move "{name}" to the Recycle Bin?', name=sources[0].name)
         else:
-            question = f"Move {len(sources)} selected items to the Recycle Bin?"
+            question = tr(
+                "Move {count} selected items to the Recycle Bin?", count=len(sources)
+            )
         answer = QMessageBox.question(
             self,
             tr("Delete"),

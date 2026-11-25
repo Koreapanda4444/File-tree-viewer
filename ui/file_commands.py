@@ -56,7 +56,7 @@ class FileCommands(QObject):
         return self.page.tree, self.page.folder_view, self.page.folder_icons
 
     def bind(self, name, shortcut, callback):
-        action = QAction(name, self)
+        action = QAction(tr(name), self)
         action.setShortcut(shortcut)
         action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         action.triggered.connect(callback)
@@ -210,7 +210,7 @@ class FileCommands(QObject):
         menu = QMenu(page)
 
         def add(name, callback, enabled):
-            action = menu.addAction(name)
+            action = menu.addAction(tr(name))
             action.setEnabled(enabled)
             action.triggered.connect(callback)
             return action
@@ -237,7 +237,7 @@ class FileCommands(QObject):
         add("Delete", page.delete_selected, ready and bool(mutable))
         staged = menu.addMenu(tr("Add to Plan"))
         for operation in ("copy", "move", "rename", "delete"):
-            action = staged.addAction(operation.title() + "…")
+            action = staged.addAction(tr(operation.title()) + "…")
             action.setEnabled(
                 ready and bool(mutable) and (operation != "rename" or len(mutable) == 1)
             )

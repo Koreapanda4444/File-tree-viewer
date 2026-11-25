@@ -63,6 +63,40 @@ class WindowChecks(unittest.TestCase):
         self.window.real_page.delete_button.setText("Changed display")
         self.assertIn("real.delete", [c.key for c in collect_commands(self.window)])
 
+    def test_localized_commands_and_deferred_availability(self):
+        from ui.command_palette import Command, CommandPalette
+        from ui.i18n import set_language
+
+        set_language("ko")
+        page = self.window.real_page
+        page.file_commands.actions["Delete"].setText("삭제")
+        commands = collect_commands(self.window)
+        item = next(c for c in commands if c.key == "real.delete")
+        self.assertEqual(
+            migrate_keys(["실제 파일 / 삭제", "Real File System / Delete"], commands),
+            [item.key],
+        )
+        palette = CommandPalette(self.window)
+        enabled, calls = [True], []
+        command = Command(
+            "test.native",
+            "삭제",
+            lambda: calls.append(True),
+            lambda: enabled[0],
+            True,
+            "handler",
+        )
+        palette.visible_commands = [command]
+        palette.list.setCurrentRow(0)
+        with patch("ui.command_palette.QMessageBox.question") as question:
+            palette.run_selected()
+            enabled[0] = False
+            APP.processEvents()
+            question.assert_not_called()
+        self.assertFalse(calls)
+        palette.deleteLater()
+        set_language("en")
+
 
 if __name__ == "__main__":
     unittest.main()

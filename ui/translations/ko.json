@@ -647,5 +647,14 @@
   "Create File": "파일 생성",
   "Create Folder": "폴더 생성",
   "Snapshot Root": "스냅샷 루트",
-  "{extension} File": "{extension} 파일"
+  "{extension} File": "{extension} 파일",
+  "Go to folder: {path}": "폴더로 이동: {path}",
+  " — changes files": " — 파일 변경",
+  "Run {command}?": "{command} 명령을 실행할까요?",
+  "Move \"{name}\" to the Recycle Bin?": "\"{name}\" 항목을 휴지통으로 이동할까요?",
+  "Move {count} selected items to the Recycle Bin?": "선택한 항목 {count}개를 휴지통으로 이동할까요?",
+  "Paste Into Folder": "폴더에 붙여넣기",
+  "Copy To…": "다른 폴더로 복사…",
+  "Move To…": "다른 폴더로 이동…",
+  "Copy JSON": "JSON 복사"
 }

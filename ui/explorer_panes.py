@@ -32,6 +32,7 @@ def save_pane(page, settings, key):
         "group": choice_text(page.group_field),
         "folders_first": page.folders_first.isChecked(),
         "hidden": page.show_hidden.isChecked(),
+        "filter": page.directory_filter.state(),
     }
     settings.setValue("panes/" + key, json.dumps(document, ensure_ascii=False))
     settings.beginGroup("pane_layout/" + key)
@@ -77,6 +78,7 @@ def restore_pane(page, settings, key):
         page.show_hidden.setChecked(state.get("hidden") is True)
         if not page.set_root(root):
             return False
+        page.directory_filter.restore(state.get("filter", {}))
         page.history.paths = list(map(Path, history))
         page.history.position = position if history else -1
         page.update_navigation_buttons()

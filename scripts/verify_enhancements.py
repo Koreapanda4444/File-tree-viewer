@@ -296,6 +296,35 @@ class WindowChecks(unittest.TestCase):
         wait_for(lambda: model.index_pool.activeThreadCount() == 0)
         model.close()
 
+    def test_filters_are_independent_and_navigation_policy_is_explicit(self):
+        w = self.window.real_workspace
+        root = self.base / "list"
+        root.mkdir()
+        (root / "keep.txt").touch()
+        (root / "other.bin").touch()
+        nested = root / "nested"
+        nested.mkdir()
+        (nested / "keep.txt").touch()
+        w.left.set_root(root)
+        w.set_dual(True)
+        w.right.set_root(root)
+        left, right = w.left.directory_filter, w.right.directory_filter
+        left.name.setText("keep")
+        left.extensions.setText(".txt")
+        wait_for(
+            lambda: not left.timer.isActive() and not w.left.model.root.fetch_pending
+        )
+        self.assertEqual([n.name for n in w.left.model.root.children], ["keep.txt"])
+        self.assertFalse(w.right.model.local_filter.active)
+        left.retain.setChecked(True)
+        w.left.set_root(nested)
+        self.assertTrue(w.left.model.local_filter.active)
+        left.retain.setChecked(False)
+        w.left.set_root(root)
+        self.assertFalse(w.left.model.local_filter.active)
+        self.assertEqual(left.name.text(), "")
+        self.assertEqual(right.name.text(), "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,6 +45,14 @@ class WindowChecks(unittest.TestCase):
         self.window = MainWindow()
         self.window.show()
         APP.processEvents()
+        self.qt_errors = []
+        self.hook_patch = patch(
+            "sys.excepthook",
+            side_effect=lambda kind, value, tb: self.qt_errors.append(str(value)),
+        )
+        self.hook_patch.start()
+        self.addCleanup(self.hook_patch.stop)
+        self.addCleanup(lambda: self.assertEqual(self.qt_errors, []))
         self.addCleanup(self.close_window)
 
     def close_window(self):
@@ -197,6 +205,61 @@ class WindowChecks(unittest.TestCase):
         self.assertTrue(workspace.set_dual(True))
         self.assertEqual(workspace.right.model.root_path, b)
         self.assertIn("real.delete", [c.key for c in collect_commands(self.window)])
+
+    def test_cross_pane_copy_move_conflicts_and_undo(self):
+        from PySide6.QtCore import QItemSelectionModel
+
+        workspace = self.window.real_workspace
+        left, right = workspace.panes
+        a, b = self.base / "source", self.base / "destination"
+        a.mkdir()
+        b.mkdir()
+        source = a / "hello.txt"
+        source.write_text("original", encoding="utf-8")
+        left.set_root(a)
+        workspace.set_dual(True)
+        right.set_root(b)
+        wait_for(lambda: left.model.index_for_path(source).isValid())
+        index = left.browse_model.mapFromSource(left.model.index_for_path(source))
+        left.tree.selectionModel().setCurrentIndex(
+            index,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        wait_for(lambda: not left.preview_is_running)
+        workspace.activate(left)
+        self.assertTrue(workspace.transfer_to_other("copy"))
+        self.assertFalse(workspace.set_dual(False))
+        self.assertFalse(
+            right._start_file_operation("copy", sources=[source], destination=b)
+        )
+        wait_for(lambda: not left.operation_is_running)
+        self.assertEqual((b / source.name).read_text(), "original")
+        self.assertTrue(source.exists())
+        self.assertTrue(left.undo_stack)
+        left.undo_last_operation()
+        wait_for(lambda: not left.operation_is_running)
+        self.assertFalse((b / source.name).exists())
+        self.assertTrue(left.file_commands.transfer([source], "move", b))
+        wait_for(lambda: not left.operation_is_running)
+        self.assertFalse(source.exists())
+        left.undo_last_operation()
+        wait_for(lambda: not left.operation_is_running)
+        self.assertEqual(source.read_text(), "original")
+        (b / source.name).write_text("existing", encoding="utf-8")
+        with patch("ui.real_explorer.show_error"):
+            left.file_commands.transfer([source], "copy", b)
+            wait_for(lambda: not left.operation_is_running)
+        self.assertEqual((b / source.name).read_text(), "existing")
+        self.assertEqual(source.read_text(), "original")
+        self.assertFalse(workspace.validate_transfer([source], a))
+        nested = a / "nested"
+        nested.mkdir()
+        self.assertFalse(workspace.validate_transfer([a], nested))
+        self.assertTrue(workspace.swap_paths())
+        self.assertEqual(left.model.root_path, b)
+        self.assertTrue(workspace.open_same_path())
+        self.assertEqual(right.model.root_path, b)
 
 
 if __name__ == "__main__":

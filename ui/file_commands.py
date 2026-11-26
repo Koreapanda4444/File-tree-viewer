@@ -120,7 +120,7 @@ class FileCommands(QObject):
         except (OSError, ValueError) as error:
             self.page._show_operation_error("Cannot paste files", error)
             return
-        target = destination or self.page.model.root_path
+        target = destination or self.page.current_directory
         token = payload["token"] if payload and cut else None
         self.transfer(paths, "move" if cut else "copy", target, cut_token=token)
 
@@ -258,6 +258,11 @@ class FileCommands(QObject):
         )
         add("Inspect Metadata", self.inspect_selected, not busy and len(paths) == 1)
         add("Copy Path", self.copy_paths, bool(paths))
+        add(
+            "Reveal selection in tree",
+            page.reveal_in_tree,
+            not busy and len(paths) == 1,
+        )
         if len(paths) == 1 and paths[0].suffix.lower() == ".zip":
             add("Browse ZIP…", lambda: page.archive_requested.emit(paths[0]), not busy)
         add("File Hash — SHA-256…", page.hash_requested.emit, not busy and bool(paths))
@@ -277,7 +282,7 @@ class FileCommands(QObject):
         target = (
             paths[0]
             if len(paths) == 1 and paths[0].is_dir() and not paths[0].is_symlink()
-            else page.model.root_path
+            else page.current_directory
         )
         add(
             "Paste Into Folder" if target != page.model.root_path else "Paste",

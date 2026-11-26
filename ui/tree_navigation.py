@@ -58,6 +58,8 @@ class TreeNavigation(QObject):
 
     def add_actions(self, menu):
         for title, callback in (
+            ("Reveal selection in tree", self.page.reveal_in_tree),
+            ("Expand parent path", self.page.reveal_in_tree),
             ("Expand selected folder", lambda: self.start(1)),
             ("Collapse selected folder", lambda: self.start(1, collapse=True)),
             ("Expand to depth…", self.choose_depth),

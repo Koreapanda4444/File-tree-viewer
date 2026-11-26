@@ -412,16 +412,53 @@ class RealExplorerPage(ExplorerPage):
         if not path.exists() and not path.is_symlink():
             self.status_changed.emit(tr("Item no longer exists: {value0}", value0=path))
             return
-        if path.is_dir() and not path.is_symlink():
-            self.set_root(path)
-            return
-        if path.parent != self.model.root_path or self.search_view_active:
-            if not self.set_root(path.parent):
+        root = self.model.root_path
+        if root is None or not path.is_relative_to(root) or self.search_view_active:
+            anchor = path if path.is_dir() and not path.is_symlink() else path.parent
+            if not self.set_root(anchor):
                 return
-        elif not self._confirm_editor_transition():
+        elif (
+            path != self.current_preview_path and not self._confirm_editor_transition()
+        ):
             return
+        self.tree_navigation.cancel()
+        self.explorer_state.stop()
         self.status_changed.emit(tr("Locating {value0}…", value0=path.name))
         self.file_revealer.start(path)
+
+    def reveal_in_tree(self):
+        paths = self.selected_paths()
+        if len(paths) != 1 or self.operation_is_running or self.search_is_running:
+            return False
+        path = paths[0]
+        if self.search_view_active:
+            self.clear_search()
+            if self.search_view_active:
+                return False
+        self.tree_navigation.cancel()
+        self.explorer_state.stop()
+        return self.file_revealer.start(path)
+
+    @property
+    def current_directory(self):
+        if not self.search_view_active:
+            path = self._path_from_index(self.folder_view.rootIndex())
+            if path is not None:
+                return path
+        return self.model.root_path
+
+    def sync_folder_selection(self, path):
+        if path is None or self.search_view_active:
+            return
+        node = self.model.nodes_by_path.get(path)
+        if node is None:
+            return
+        folder = node if node.is_directory and not node.is_link else node.parent
+        if folder is not None:
+            index = self.browse_model.mapFromSource(
+                self.model.index_for_path(folder.path)
+            )
+            self.folder_panel.set_root(index)
 
     def sort_by_header(self, column):
         if self.sort_field.currentIndex() == column:
@@ -475,11 +512,20 @@ class RealExplorerPage(ExplorerPage):
 
     def reveal_file_index(self, index):
         index = self.browse_model.mapFromSource(index)
+        ancestors, parent = [], index.parent()
+        while parent.isValid() and len(ancestors) < 128:
+            ancestors.append(parent)
+            parent = parent.parent()
+        for parent in reversed(ancestors):
+            self.tree.expand(parent)
+        if not getattr(self, "quick_look_selecting", False):
+            self.explorer_layout.set_panel(0, True)
         self.tree.setCurrentIndex(index)
+        self.sync_folder_selection(self._path_from_index(index))
         self.tree.scrollTo(index)
         self.folder_panel.active_view.scrollTo(index)
         if not getattr(self, "quick_look_selecting", False):
-            self.folder_panel.active_view.setFocus()
+            self.explorer_layout.focus_files()
         self.quick_look_selecting = False
         self.status_changed.emit(
             tr("Selected: {value0}", value0=self._path_from_index(index))
@@ -827,6 +873,7 @@ class RealExplorerPage(ExplorerPage):
 
         self.preview_index = QPersistentModelIndex(current)
         self._show_path(path)
+        self.sync_folder_selection(path)
 
     def _show_path(self, path: Path | None) -> None:
         self.current_preview_path = path
@@ -1692,7 +1739,7 @@ class RealExplorerPage(ExplorerPage):
             if path.is_dir() and not path.is_symlink():
                 return path
             return path.parent
-        return self.model.root_path
+        return self.current_directory
 
     def _operable_selected_paths(self) -> list[Path]:
         root = self.model.root_path

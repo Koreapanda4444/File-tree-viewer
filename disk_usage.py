@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from analysis import EXTENSION_LIMIT, ExtensionUsage, file_extension
 from file_content import stat_identity
 from fs_ops import file_signature, require_unchanged
 from fs_paths import checked_boundary, is_link_stat
@@ -97,6 +98,9 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
             "CREATE TABLE seen(device TEXT,inode TEXT,PRIMARY KEY(device,inode)) WITHOUT ROWID"
         )
         database.execute("INSERT INTO entries VALUES ('','',1,0,0,0,'')")
+        database.execute(
+            "CREATE TABLE extensions(extension TEXT PRIMARY KEY, files INTEGER, logical INTEGER) WITHOUT ROWID"
+        )
         stack = [(root, False)]
         count = 0
         stats = {
@@ -106,6 +110,8 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
             "allocated_estimated": False,
             "unique_estimated": False,
             "changed": False,
+            "maximum_depth": 0,
+            "maximum_folder_depth": 0,
         }
         if verify:
             database.execute(
@@ -141,6 +147,8 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
                         if item.name.casefold() == ".file-tree-viewer":
                             continue
                         name = (Path(relative) / item.name).as_posix()
+                        depth = name.count("/") + 1
+                        stats["maximum_depth"] = max(stats["maximum_depth"], depth)
                         directory = False
                         logical = unique = allocated = 0
                         error = ""
@@ -152,11 +160,18 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
                             elif stat.S_ISDIR(details.st_mode):
                                 directory = True
                                 stats["folders"] += 1
+                                stats["maximum_folder_depth"] = max(
+                                    stats["maximum_folder_depth"], depth
+                                )
                             elif stat.S_ISREG(details.st_mode):
                                 if os.name == "nt" and not details.st_ino:
                                     details = os.stat(item.path, follow_symlinks=False)
                                 logical = details.st_size
                                 stats["files"] += 1
+                                database.execute(
+                                    "INSERT INTO extensions VALUES (?,1,?) ON CONFLICT(extension) DO UPDATE SET files=files+1,logical=logical+excluded.logical",
+                                    (file_extension(item.name), logical),
+                                )
                                 if verify:
                                     database.execute(
                                         "INSERT INTO observations VALUES (?,?,?,?,?,?)",
@@ -226,6 +241,16 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
                     )
                 if progress and number % 256 == 0:
                     progress("Verifying folder observations", number)
+        stats["extension_group_count"] = database.execute(
+            "SELECT COUNT(*) FROM extensions"
+        ).fetchone()[0]
+        stats["extensions"] = tuple(
+            ExtensionUsage(*row)
+            for row in database.execute(
+                "SELECT * FROM extensions ORDER BY logical DESC, files DESC, extension LIMIT ?",
+                (EXTENSION_LIMIT,),
+            )
+        )
         database.commit()
         check_cancelled(cancelled)
         return DiskUsage(root, temporary, database_path, stats)
@@ -252,6 +277,10 @@ class FolderSize:
     skipped: int
     changed: bool
     unique_estimated: bool
+    maximum_depth: int = 0
+    maximum_folder_depth: int = 0
+    extension_group_count: int = 0
+    extensions: tuple[ExtensionUsage, ...] = ()
 
     @property
     def complete(self):
@@ -280,6 +309,10 @@ def inspect_folder_size(root, *, cancelled=None, progress=None):
             stats["skipped"],
             stats["changed"],
             stats["unique_estimated"],
+            stats["maximum_depth"],
+            stats["maximum_folder_depth"],
+            stats["extension_group_count"],
+            stats["extensions"],
         )
     finally:
         usage.close()

@@ -218,6 +218,20 @@ class MainWindow(QMainWindow):
             pane.archive_requested.connect(
                 lambda path, p=pane: self.open_archive_from_pane(p, path)
             )
+        self.structure_action = menu_command(
+            workspace_menu,
+            "workspace.structure_summary",
+            tr("Show structure summary…"),
+            lambda: self.inspect_folder_size(summary=True),
+        )
+        self.structure_action.command_enabled = lambda: (
+            self.tabs.currentWidget() is self.real_workspace
+            and self.real_page.model.root_path is not None
+        )
+        for pane in self.real_workspace.panes:
+            pane.structure_requested.connect(
+                lambda p=pane: self.inspect_structure_from_pane(p)
+            )
         self.folder_size_action = menu_command(
             workspace_menu,
             "workspace.folder_size",
@@ -420,7 +434,11 @@ class MainWindow(QMainWindow):
         self.real_workspace.activate(pane)
         self.inspect_folder_size()
 
-    def inspect_folder_size(self):
+    def inspect_structure_from_pane(self, pane):
+        self.real_workspace.activate(pane)
+        self.inspect_folder_size(summary=True)
+
+    def inspect_folder_size(self, *, summary=False):
         from ui.folder_size import FolderSizeDialog
 
         if self.tabs.currentWidget() is not self.real_workspace:
@@ -428,7 +446,9 @@ class MainWindow(QMainWindow):
         page = self.real_page
         paths = page.selected_paths()
         root = (
-            paths[0] if len(paths) == 1 and paths[0].is_dir() else page.model.root_path
+            paths[0]
+            if len(paths) == 1 and paths[0].is_dir()
+            else page.current_directory
         )
         if root is None or root.is_symlink() or page.close_requested:
             return
@@ -436,7 +456,7 @@ class MainWindow(QMainWindow):
             self.folder_size_dialog.raise_()
             return
         dialog = self.folder_size_dialog = FolderSizeDialog(
-            root, self.folder_size_cache, self
+            root, self.folder_size_cache, self, summary=summary
         )
         dialog.updated.connect(self.refresh_folder_sizes)
         try:

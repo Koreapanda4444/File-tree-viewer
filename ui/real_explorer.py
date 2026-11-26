@@ -79,6 +79,7 @@ from write_policy import policy, writes_allowed
 
 
 class RealExplorerPage(ExplorerPage):
+    structure_requested = Signal()
     folder_size_requested = Signal()
     filesystem_changed = Signal(object)
     quick_look_requested = Signal()

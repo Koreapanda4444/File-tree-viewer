@@ -25,16 +25,19 @@ from virtual.storage import format_size
 class FolderSizeDialog(QDialog):
     updated = Signal()
 
-    def __init__(self, root, cache, parent=None):
+    def __init__(self, root, cache, parent=None, *, summary=False):
         super().__init__(parent)
         self.root, self.cache = root, cache
+        self.summary = summary
         self.thread = self.worker = None
         self.result = self.outcome = None
         self.closing = False
         self.cached_result = False
         self.cancel_requested = False
-        self.setWindowTitle(tr("Folder Size"))
-        self.resize(700, 420)
+        self.setWindowTitle(
+            tr("Subtree Structure Summary") if summary else tr("Folder Size")
+        )
+        self.resize(740, 680) if summary else self.resize(700, 420)
         layout = QVBoxLayout(self)
         path = PlainLabel(str(root))
         path.setWordWrap(True)
@@ -43,6 +46,10 @@ class FolderSizeDialog(QDialog):
         self.details = PlainLabel()
         self.details.setWordWrap(True)
         layout.addWidget(self.details, 1)
+        self.structure = PlainLabel()
+        self.structure.setWordWrap(True)
+        self.structure.setVisible(summary)
+        layout.addWidget(self.structure)
         self.bar = QProgressBar()
         self.bar.setRange(0, 0)
         layout.addWidget(self.bar)
@@ -87,6 +94,7 @@ class FolderSizeDialog(QDialog):
         self.cancel_requested = False
         self.cached_result = False
         self.details.clear()
+        self.structure.clear()
         self.status.setText(tr("Calculating folder size…"))
         self.bar.show()
         self.refresh.setEnabled(False)
@@ -154,6 +162,28 @@ class FolderSizeDialog(QDialog):
                 .strftime("%H:%M:%S"),
             )
         )
+        if self.summary:
+            groups = result.extensions[:8]
+            rows = [
+                tr(
+                    "{extension}: {files:,} files · {size}",
+                    extension=tr(group.extension),
+                    files=group.file_count,
+                    size=format_size(group.total_size),
+                )
+                for group in groups
+            ]
+            self.structure.setText(
+                tr(
+                    "Maximum folder depth: {folders:,} · Maximum entry depth: {entries:,}\nTop extensions ({shown:,} of {total:,}):",
+                    folders=result.maximum_folder_depth,
+                    entries=result.maximum_depth,
+                    shown=len(groups),
+                    total=result.extension_group_count,
+                )
+                + "\n"
+                + "\n".join(rows)
+            )
         self.status.setText(
             tr("Cached result — Recalculate for current totals")
             if cached

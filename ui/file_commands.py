@@ -274,6 +274,11 @@ class FileCommands(QObject):
             and paths[0].is_dir()
             and not paths[0].is_symlink(),
         )
+        add(
+            "Show structure summary…",
+            page.structure_requested.emit,
+            not busy and page.model.root_path is not None,
+        )
         navigation = menu.addMenu(tr("Tree navigation"))
         page.tree_navigation.add_actions(navigation)
         menu.addSeparator()

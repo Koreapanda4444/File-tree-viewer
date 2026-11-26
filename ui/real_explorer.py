@@ -481,14 +481,6 @@ class RealExplorerPage(ExplorerPage):
         )
 
     def quick_look_paths(self, path):
-        if self.search_view_active:
-            model = self.tree.model()
-            return tuple(
-                p
-                for row in range(model.rowCount())
-                if (p := self._path_from_index(model.index(row, 0))) is not None
-                and p.is_file()
-            )
         node = self.model.nodes_by_path.get(path.parent)
         if node is None or node.inventory is None:
             return (path,)
@@ -499,15 +491,24 @@ class RealExplorerPage(ExplorerPage):
             and (node is not self.model.root or self.model.local_filter.accepts(entry))
         )
 
+    def quick_look_neighbor(self, path, direction):
+        if self.search_view_active:
+            return self.search_results.file_neighbor(
+                path, direction, self.tree.currentIndex()
+            )
+        paths = self.quick_look_paths(path)
+        try:
+            position = paths.index(path) + direction
+        except ValueError:
+            return None
+        return paths[position] if 0 <= position < len(paths) else None
+
     def select_quick_path(self, path):
         index = self.model.index_for_path(path)
         if self.search_view_active:
-            model = self.tree.model()
-            for row in range(model.rowCount()):
-                candidate = model.index(row, 0)
-                if self._path_from_index(candidate) == path:
-                    self.tree.setCurrentIndex(candidate)
-                    return
+            candidate = self.search_results.file_index(path)
+            if candidate.isValid():
+                self.tree.setCurrentIndex(candidate)
         elif index.isValid():
             self.tree.setCurrentIndex(self.browse_model.mapFromSource(index))
         else:

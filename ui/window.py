@@ -207,8 +207,12 @@ class MainWindow(QMainWindow):
             action.command_enabled = button.isEnabled
             self.pane_actions.append((action, button))
         self.real_workspace.state_timer.timeout.connect(self.update_pane_actions)
-        menu_command(
+        self.archive_action = menu_command(
             workspace_menu, "workspace.archive", tr("Browse ZIP…"), self.open_archive
+        )
+        self.archive_action.command_enabled = lambda: (
+            self.tabs.currentWidget() is self.real_workspace
+            and not self.real_page.close_requested
         )
         for pane in self.real_workspace.panes:
             pane.archive_requested.connect(
@@ -509,14 +513,9 @@ class MainWindow(QMainWindow):
             or pane.close_requested
         ):
             return
-        paths = pane.quick_look_paths(dialog.path)
-        try:
-            position = paths.index(dialog.path) + direction
-        except ValueError:
+        path = pane.quick_look_neighbor(dialog.path, direction)
+        if path is None or not pane._confirm_editor_transition():
             return
-        if not 0 <= position < len(paths) or not pane._confirm_editor_transition():
-            return
-        path = paths[position]
         dialog.set_path(path)
         pane.select_quick_path(path)
 

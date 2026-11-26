@@ -153,6 +153,8 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
                                 directory = True
                                 stats["folders"] += 1
                             elif stat.S_ISREG(details.st_mode):
+                                if os.name == "nt" and not details.st_ino:
+                                    details = os.stat(item.path, follow_symlinks=False)
                                 logical = details.st_size
                                 stats["files"] += 1
                                 if verify:

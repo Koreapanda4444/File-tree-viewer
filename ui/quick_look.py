@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QHBoxLayout,
-    QLabel,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -16,9 +15,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from real.preview import localized_preview_text
 from ui.i18n import tr
 from ui.image_preview import ImagePreview
 from ui.preview_session import PreviewSession
+from ui.widgets import PlainLabel
 from virtual.storage import format_size
 
 
@@ -32,7 +33,7 @@ class QuickLookDialog(QDialog):
         self.setWindowTitle(tr("Quick Look"))
         self.resize(900, 650)
         layout = QVBoxLayout(self)
-        self.title = QLabel()
+        self.title = PlainLabel()
         self.title.setWordWrap(True)
         self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.title)
@@ -46,7 +47,7 @@ class QuickLookDialog(QDialog):
         self.bar = QProgressBar()
         self.bar.setRange(0, 0)
         layout.addWidget(self.bar)
-        self.status = QLabel()
+        self.status = PlainLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         row = QHBoxLayout()
@@ -113,7 +114,7 @@ class QuickLookDialog(QDialog):
             self.image.set_image(result.image, result.image_original_size)
             self.image.show()
         else:
-            self.text.setPlainText(result.text)
+            self.text.setPlainText(localized_preview_text(result.text))
         self.status.setText(
             tr("PDF · first page only")
             if result.text == "PDF · first page only"

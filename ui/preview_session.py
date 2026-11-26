@@ -26,6 +26,7 @@ class PreviewSession(QObject):
         self.pending = False
         self.closing = False
         self.outcome = None
+        self.failure = ""
         self.timer = QTimer(self)
         self.timer.setInterval(750)
         self.timer.timeout.connect(self.check_source)
@@ -51,6 +52,7 @@ class PreviewSession(QObject):
         self.pending = False
         self.running_generation = self.generation
         self.outcome = None
+        self.failure = ""
         self.worker = FilePreviewWorker(self.path, pdf=True)
         self.worker.finished.connect(self.receive)
         self.thread = prepare_worker_thread(
@@ -62,7 +64,7 @@ class PreviewSession(QObject):
         self.outcome = result
 
     def task_failed(self, error):
-        self.status_changed.emit(error)
+        self.failure = error
 
     def finished(self):
         self.thread = self.worker = None
@@ -73,11 +75,12 @@ class PreviewSession(QObject):
         if self.pending:
             self.start()
             return
-        if (
-            result is None
-            or self.running_generation != self.generation
-            or result.cancelled
+        if self.running_generation != self.generation or (
+            result is not None and result.cancelled
         ):
+            return
+        if result is None:
+            self.status_changed.emit(self.failure or tr("Preview unavailable"))
             return
         if result.error:
             self.status_changed.emit(

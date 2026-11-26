@@ -303,6 +303,26 @@ class SearchResultsModel(QAbstractItemModel):
             self.endInsertRows()
             self.dataChanged.emit(parent, parent, [Qt.ItemDataRole.DisplayRole])
 
+    def file_index(self, path):
+        row = self._database.execute(
+            "SELECT position FROM results WHERE category=1 AND path=? ORDER BY position LIMIT 1",
+            (str(path),),
+        ).fetchone()
+        return self.index(row[0], 0, self.index(1, 0)) if row else QModelIndex()
+
+    def file_neighbor(self, path, direction, current):
+        index = (
+            current if self.path_from_index(current) == path else self.file_index(path)
+        )
+        if not index.isValid():
+            return None
+        operator, order = (">", "ASC") if direction > 0 else ("<", "DESC")
+        row = self._database.execute(
+            f"SELECT path FROM results WHERE category=1 AND position{operator}? AND path<>? ORDER BY position {order} LIMIT 1",
+            (index.row(), str(path)),
+        ).fetchone()
+        return Path(row[0]) if row else None
+
     def clear(self) -> None:
         self.beginResetModel()
         self._database.execute("DELETE FROM results")

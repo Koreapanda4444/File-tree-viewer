@@ -79,6 +79,13 @@ def decode_preview_image(result, *, pdf=False):
     return result
 
 
+def localized_preview_text(text):
+    from ui.i18n import tr
+
+    header, separator, tail = text.partition("\n\n")
+    return tr(header) + separator + tail
+
+
 def decode_pdf_page(result):
     # Qt's bundled PDF engine; only one page and a bounded raster are retained.
     try:

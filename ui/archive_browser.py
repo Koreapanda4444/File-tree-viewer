@@ -4,7 +4,15 @@ import time
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QAbstractItemModel,
+    QModelIndex,
+    QSignalBlocker,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -12,7 +20,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QLineEdit,
     QPlainTextEdit,
     QProgressBar,
@@ -27,12 +34,14 @@ from file_preview import preview_bytes
 from fs_ops import require_unchanged
 from fs_paths import validate_windows_name
 from operation_history import record_events
-from real.preview import decode_preview_image
+from real.preview import decode_preview_image, localized_preview_text
 from snapshot import SnapshotCancelled
 from snapshot_store import check_cancelled
+from ui.commands import identify
 from ui.i18n import tr
 from ui.image_preview import ImagePreview
 from ui.tasks import CancellableWorker, prepare_worker_thread
+from ui.widgets import PlainLabel
 from virtual.storage import format_size
 from write_policy import policy, writes_allowed
 
@@ -179,7 +188,7 @@ class ArchiveDialog(QDialog):
         self.setWindowTitle(tr("ZIP Explorer") + " — " + path.name)
         self.resize(1120, 760)
         layout = QVBoxLayout(self)
-        self.summary = QLabel(tr("Reading ZIP directory…"))
+        self.summary = PlainLabel(tr("Reading ZIP directory…"))
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         row = QHBoxLayout()
@@ -209,7 +218,7 @@ class ArchiveDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([230, 850])
         layout.addWidget(splitter, 2)
-        self.details = QLabel(tr("Choose an item to inspect ZIP metadata."))
+        self.details = PlainLabel(tr("Choose an item to inspect ZIP metadata."))
         self.details.setWordWrap(True)
         self.details.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
@@ -228,7 +237,7 @@ class ArchiveDialog(QDialog):
         self.bar = QProgressBar()
         self.bar.setRange(0, 0)
         layout.addWidget(self.bar)
-        self.status = QLabel()
+        self.status = PlainLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.controls = QHBoxLayout()
@@ -239,6 +248,10 @@ class ArchiveDialog(QDialog):
         self.extract_selection = QPushButton(tr("Extract selection…"))
         self.extract_all = QPushButton(tr("Extract all…"))
         self.external = QPushButton(tr("Open ZIP externally"))
+        identify(
+            self.extract_selection, "archive.extract_selection", mutates_files=True
+        )
+        identify(self.extract_all, "archive.extract_all", mutates_files=True)
         self.extract_selection.clicked.connect(lambda: self.choose_extraction(False))
         self.extract_all.clicked.connect(lambda: self.choose_extraction(True))
         self.external.clicked.connect(
@@ -274,6 +287,16 @@ class ArchiveDialog(QDialog):
         )
         self.thread.start()
 
+    def task_failed(self, error):
+        runner = self.sender()
+        if getattr(runner, "worker", None) is self.preview_worker:
+            self.preview_outcome = (
+                (self.preview_generation, self.pending_preview_key, None, False),
+                error,
+            )
+        else:
+            self.outcome = None, error
+
     def receive(self, result, error):
         self.outcome = result, error
 
@@ -284,7 +307,9 @@ class ArchiveDialog(QDialog):
         result, error = self.outcome or (None, tr("ZIP task failed"))
         if self.operation == "extract":
             self.status.setText(
-                error if result is None else tr("ZIP extracted to {path}", path=result)
+                tr("ZIP operation failed: {error}", error=tr(error))
+                if result is None
+                else tr("ZIP extracted to {path}", path=result)
             )
             if result is not None:
                 self.filesystem_changed.emit(result.parent)
@@ -293,7 +318,7 @@ class ArchiveDialog(QDialog):
                 self.done(QDialog.DialogCode.Rejected)
             return
         if result is None:
-            self.status.setText(error)
+            self.status.setText(tr("ZIP operation failed: {error}", error=tr(error)))
         else:
             self.archive = result
             self.folder_model = ArchiveModel(result, self, folders_only=True)
@@ -338,6 +363,11 @@ class ArchiveDialog(QDialog):
             self.status.setText(tr("Folder not found inside ZIP"))
             return
         self.current_folder = key
+        self.files.clearSelection()
+        self.files.setCurrentIndex(INVALID)
+        with QSignalBlocker(self.tree.selectionModel()):
+            self.tree.setCurrentIndex(self.folder_model.index_for(key))
+        self.details.setText("/" + key)
         self.location.setText("/" + key)
         self.files.setRootIndex(self.file_model.index_for(key))
         self.up.setEnabled(bool(key))
@@ -362,7 +392,12 @@ class ArchiveDialog(QDialog):
     def selected_keys(self):
         selection = self.files.selectionModel()
         return (
-            [self.file_model.key(index) for index in selection.selectedRows(0)]
+            [
+                self.file_model.key(index)
+                for index in selection.selectedRows(0)
+                if self.archive.entries[self.file_model.key(index)].parent
+                == self.current_folder
+            ]
             if self.archive is not None and selection is not None
             else []
         )
@@ -437,7 +472,11 @@ class ArchiveDialog(QDialog):
             ):
                 self.pending_preview_key = None
                 if result is None:
-                    self.status.setText(error or tr("ZIP preview cancelled"))
+                    self.status.setText(
+                        tr("ZIP operation failed: {error}", error=tr(error))
+                        if error
+                        else tr("ZIP preview cancelled")
+                    )
                 elif result.image is not None:
                     self.preview.hide()
                     self.image.set_image(result.image, result.image_original_size)
@@ -448,7 +487,7 @@ class ArchiveDialog(QDialog):
                         else tr("Truncated ZIP preview; CRC not verified")
                     )
                 else:
-                    self.preview.setPlainText(result.text)
+                    self.preview.setPlainText(localized_preview_text(result.text))
                     self.status.setText(
                         tr("ZIP preview CRC verified")
                         if crc_checked

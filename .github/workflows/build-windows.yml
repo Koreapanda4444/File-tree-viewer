@@ -21,6 +21,7 @@ jobs:
       - run: ruff check .
       - run: python -X faulthandler scripts/verify_enhancements.py -v
       - run: python -X faulthandler scripts/verify_exploration.py -v
+      - run: python -X faulthandler scripts/verify_tree_navigation.py -v
       - name: Build the existing portable application
         shell: cmd
         run: build_windows.bat

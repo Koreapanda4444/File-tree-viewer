@@ -272,6 +272,7 @@ def organize_explorer_actions(window, workspace_menu):
         for action in entries + dynamic:
             action.setEnabled(action.command_enabled())
 
+    window.refresh_explorer_actions = refresh
     window.real_workspace.state_timer.timeout.connect(refresh)
     window.tabs.currentChanged.connect(refresh)
     refresh()

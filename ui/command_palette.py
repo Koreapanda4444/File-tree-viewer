@@ -60,6 +60,9 @@ def load_keys(settings, key):
 
 
 def collect_commands(window):
+    refresh = getattr(window, "refresh_explorer_actions", None)
+    if refresh is not None:
+        refresh()
     commands, seen = [], set()
     for menu_action in window.menuBar().actions():
         menu = menu_action.menu()

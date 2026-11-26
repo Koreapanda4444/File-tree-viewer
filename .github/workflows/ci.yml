@@ -26,3 +26,4 @@ jobs:
       - run: python -m compileall -q -x '(^|[/\\])(\.git|\.venv|build|dist|release)([/\\]|$)' .
       - run: python -X faulthandler scripts/verify_enhancements.py -v
       - run: python -X faulthandler scripts/verify_exploration.py -v
+      - run: python -X faulthandler scripts/verify_tree_navigation.py -v

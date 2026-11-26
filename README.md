@@ -26,12 +26,29 @@ paged onto the screen, and remain separate from recursive search.
 
 Image previews support zoom buttons, wheel zoom, 100%, fit, scroll/drag panning
 and a separate read-only window. Very large images use a bounded decoded preview.
-**Workspace → File Hash — SHA-256** calculates a streaming hash, compares it with
+**Workspace → Compare and analyze → File Hash — SHA-256** calculates a streaming hash, compares it with
 an entered hash or another file, and supports cancellation and copying.
+
+### Tree-centered navigation
+
+Choose **Tree Focus**, **Explorer** or **Compact** from the Real layout selector
+or **View → Explorer layout**. These configurations reuse the same model and
+selection. Both panes retain their own tree visibility, layout and navigation;
+switching out of dual-pane mode restores the previous single-pane layout.
+
+**Tree actions** expands a selected folder to a bounded depth, collapses loaded
+subtrees or reveals the selected path. Nested path lookup expands ancestors without
+changing the explorer root. Folder selection updates the adjacent listing, with a
+persistent path label and shared selection. **Show structure summary…** reuses
+folder-size inspection/cache to show counts, depth, bytes and leading extensions.
+
+**Files** holds common file operations. **Workspace** groups exploration, Plan/design,
+comparison/analysis and history/recovery tools; existing commands and shortcuts remain.
+See the [tree navigation guide](docs/usage.md#tree-focused-navigation) for scope and limits.
 
 ### ZIP, Quick Look and folder totals
 
-Double-click a ZIP in Real or choose **Workspace → Browse ZIP…** to browse its
+Double-click a ZIP in Real or choose **Workspace → Explore → Browse ZIP…** to browse its
 read-only folder tree, metadata and bounded previews. Extract selected files,
 folders or the whole archive into a **new output folder**, with progress and
 cancellation. Existing outputs are preserved; extraction is blocked in read-only mode.
@@ -157,3 +174,8 @@ Quick Look switching/shortcuts and folder inspection/cache behavior using isolat
 temporary fixtures. CI runs both suites on Windows and Linux. Portable EXE and ZIP
 checks also exercise ZIP previews/extraction, text/image/Hex/PDF Quick Look and
 folder totals inside the packaged application. Builds do not publish a Release or tag.
+
+Tree UX checks run with `python scripts/verify_tree_navigation.py`. CI retains the
+existing 44 checks and adds layout, path reveal, large-tree budgets, cancellation,
+cache/summary consistency and theme checks. The Windows packaging smoke also exercises
+tree layouts, bounded expansion, nested reveal, dual-pane trees and structure summaries.

@@ -82,3 +82,6 @@ multiple physical monitor DPI configurations require environment-specific checks
 
 
 ZIP browsing/extraction, Quick Look text/image/Hex/PDF decoding and background folder totals are also exercised inside the packaged EXE during `--verify-startup`. Run `python scripts/verify_exploration.py` alongside the existing regression suite for source checks. ZIP extraction requires a new output folder and is blocked in read-only mode; PDF previews show only the first page. See the usage guide for size limits and cache freshness.
+
+
+The packaged startup check also runs Tree Focus/Explorer/Compact, nested path reveal, bounded expansion, preserved dual-pane trees and the shared structure summary. Source tree UX checks are in `scripts/verify_tree_navigation.py`; both existing regression suites remain enabled.

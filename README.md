@@ -29,6 +29,26 @@ and a separate read-only window. Very large images use a bounded decoded preview
 **Workspace → File Hash — SHA-256** calculates a streaming hash, compares it with
 an entered hash or another file, and supports cancellation and copying.
 
+### ZIP, Quick Look and folder totals
+
+Double-click a ZIP in Real or choose **Workspace → Browse ZIP…** to browse its
+read-only folder tree, metadata and bounded previews. Extract selected files,
+folders or the whole archive into a **new output folder**, with progress and
+cancellation. Existing outputs are preserved; extraction is blocked in read-only mode.
+
+Press **Space** while a Real file view has focus for **Quick Look**. Use arrow keys
+for previous/next files and Space or Esc to close. Text, images, Hex and a bounded
+first-page PDF preview share the existing preview engines. Text inputs keep their
+normal Space behavior. Both explorer panes are supported.
+
+Right-click a folder and choose **Calculate folder size…**, or use the Workspace
+command for the current folder. Background inspection reports logical/unique bytes,
+available allocated blocks, file/folder counts and partial results. Explicitly
+calculated totals also appear in Details and Size. A bounded, short-lived cache
+avoids repeated scans; **Recalculate** requests current data.
+
+See the [usage guide](docs/usage.md#zip-archive-explorer) for limits and freshness rules.
+
 ### Read-only browsing
 
 The header's **Read-only mode** button blocks actual file changes through Real,
@@ -131,3 +151,9 @@ All fixtures live in disposable directories. [CI](https://github.com/Koreapanda4
 runs on Windows and Linux; [Build Windows](https://github.com/Koreapanda4444/File-tree-viewer/actions/workflows/build-windows.yml)
 verifies the actual x64 executable and ZIP. Successful build artifacts contain the
 portable ZIP and SHA-256 checksum (14-day retention). No release or tag is created.
+
+The additional `python scripts/verify_exploration.py` suite covers ZIP safety,
+Quick Look switching/shortcuts and folder inspection/cache behavior using isolated
+temporary fixtures. CI runs both suites on Windows and Linux. Portable EXE and ZIP
+checks also exercise ZIP previews/extraction, text/image/Hex/PDF Quick Look and
+folder totals inside the packaged application. Builds do not publish a Release or tag.

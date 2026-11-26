@@ -120,3 +120,101 @@ value against the first file, or compare two files. Results are verified against
 file state before display and rechecked before comparison/copy. Subsequent file
 changes invalidate the displayed result. Closing an active dialog cancels and
 waits for the worker to finish.
+
+
+## ZIP archive explorer
+
+Open a Real ZIP by double-click, its **Browse ZIP…** context item, or **Workspace →
+Browse ZIP…**. Enter an internal path, select a folder in the tree, or double-click
+folders in the file list. The list shows names/extensions, original/compressed size
+and compression method; selection details include CRC. The ZIP stays separate from
+Real's file model. Closing returns to the existing Real location. **Open ZIP externally**
+and Real's existing **Open** command remain available.
+
+Only the selected member is decompressed for preview. Text, image, Hex and first-page
+PDF previews are read-only. A complete read verifies CRC; a truncated read is explicitly
+marked **CRC not verified**. Unsupported members show metadata and a reason.
+
+**Extract selection…** keeps selected internal paths, including parent folders.
+**Extract all…** includes the entire archive. Choose a parent directory and one **new**
+output folder name. A private staging directory is published without replacement only
+after all selected bytes pass validation/CRC. Cancel/error removes owned temporary output;
+if external replacement makes cleanup unsafe, the error identifies the retained staging
+path. Existing files/folders are never overwritten. Extraction is logged and invalidates
+relevant folder totals, but is not added to session Real Undo. It is blocked by the common
+read-only policy. The original ZIP is never rewritten.
+
+Default bounds apply before directory allocation and while reading/extracting:
+
+| Limit | Value |
+| --- | --- |
+| Central directory | 16 MiB |
+| Total indexed entries, including implicit folders | 50,000 |
+| Internal directory depth | 128 |
+| Uncompressed member size | 512 MiB |
+| Uncompressed selected extraction batch | 4 GiB |
+| Compression ratio | 1,000:1, with a 1 MiB small-member allowance |
+| Decompressed preview | 8 MiB |
+
+Stored and Deflate members are supported. Encrypted, special/link and unsupported
+compression members remain inspectable but cannot be previewed/extracted. Multi-part,
+embedded/self-extracting and malformed layouts are rejected. Paths reject traversal,
+absolute/drive/UNC forms, reserved Windows names, internal recovery paths and duplicate,
+case-folded or Unicode-normalized collisions. Source identity, directory contents and
+output boundaries are rechecked before publication. Image decoder limits also apply.
+
+## Quick Look
+
+Select one file in the active Real pane and press **Space**, or choose **Quick Look**
+from its context menu/Workspace/Quick Commands. Space works only in explorer views;
+address/search/name fields, inline editors and the editable preview keep text input.
+In Quick Look, Space or Esc closes it; arrows or **Previous/Next** select neighboring
+files in current sorting/filter order (including unloaded pages), or current search results.
+Selection stays synchronized with its originating pane; focusing the other pane updates
+Quick Look to that pane's selection. Folders clear the file preview.
+
+The window shows the name/path, type, size, loading/error state, **Refresh** and
+**Open externally**. It never edits or automatically opens files in another application.
+Image zoom, fit and panning reuse `ImagePreview`. Text/image/Hex reading uses the same
+bounded engines as the docked preview: up to 8 MiB for complete files, otherwise a
+1 MiB partial read; Hex displays at most 4 KiB. PDF uses Qt's bundled PDF engine for
+**the first page only**, with a raster no larger than 1600 × 1600 and a complete input
+no larger than 8 MiB. Encrypted, damaged or larger PDFs show information/Hex instead.
+No additional renderer dependency is installed.
+
+Rapid switches coalesce to the latest request and cancel previous reads. File identity
+is checked before display and every 750 ms afterward. A change/removal clears the old
+result and requires Refresh. Closing cancels and waits for the worker; native decoding
+or blocked OS calls may finish their current call before cancellation takes effect.
+
+## On-demand folder size
+
+Right-click one real folder → **Calculate folder size…**, or use the Workspace/Quick
+Commands entry for the selected folder (current folder when no folder is selected).
+**Cancel** stops a scan; closing waits for worker cleanup. Read-only mode permits it.
+Folders are never recursively measured merely because they are displayed.
+
+The result reports the scan interval, file/folder counts and:
+
+- **Logical size**: regular-file length summed for every path.
+- **Unique size**: hard links counted once per device/file identifier within the selected root.
+  Missing identifiers are explicitly marked as estimated.
+- **Allocated size**: unique regular-file blocks reported by the OS. If any needed block
+  count is unavailable (including Windows configurations without `st_blocks`), the total
+  says **Unavailable**, rather than substituting logical size as an exact allocated value.
+
+Directory blocks, links, junctions/reparse points, special files and `.file-tree-viewer`
+recovery data are excluded consistently with disk analysis. Access/skipped errors and
+detected changes produce an explicit partial result. Metadata is checked again after
+scanning, but the interval is not an atomic snapshot and cannot catch all external changes.
+
+Only complete, uncancelled results enter an in-memory **128-entry LRU cache**, with a
+**30-second TTL**. Loaded-directory watcher events, Real changes, Plan/synchronization/
+recovery and extraction invalidate related totals. Directory identity is checked on reuse;
+root modification time alone never proves recursive freshness. Unwatched descendant
+edits may remain unnoticed until expiry. **Recalculate** always performs a new scan.
+
+Valid totals appear with **Σ** in Size and Details, with their calculation time in the
+tooltip. Expired/invalidated totals disappear. Displayed totals do not change the
+existing metadata-based sorting policy. The result dialog retains its dated result with
+an expiry warning and a Recalculate button. No cache or new data format is persisted.

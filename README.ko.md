@@ -18,6 +18,25 @@ File Tree Viewer는 실제 파일 탐색기, 가상 폴더 트리 편집기와 S
 텍스트 파일 비교와 메타데이터 확인을 할 수 있습니다. 복사·이동·이름 변경 등의 명령은 선택한 실제 파일에
 적용되며, 지원하는 작업은 현재 세션에서 Undo할 수 있습니다.
 
+### ZIP·빠른 미리보기·폴더 용량
+
+Real의 ZIP 파일을 더블클릭하거나 **Workspace → ZIP 내부 탐색…**을 선택해
+압축을 풀지 않고 트리·메타데이터·제한된 미리보기를 확인합니다. 선택 파일·폴더·전체
+항목을 **새 출력 폴더**로 추출하며 진행률·취소를 지원합니다. 기존 출력은 보존하고
+읽기 전용 모드에서는 추출을 차단합니다.
+
+Real 파일 목록에 포커스를 두고 **Space**를 누르면 **빠른 미리보기**가 열립니다.
+방향키로 이전·다음 파일을 확인하고 Space·Esc로 닫습니다. 기존 엔진을 재사용해
+텍스트·이미지·Hex·PDF 첫 페이지를 읽기 전용으로 표시합니다. 입력창의 Space 동작을
+유지하며 단일·듀얼 패널 모두 지원합니다.
+
+폴더 우클릭 → **폴더 용량 계산…** 또는 Workspace 명령으로 선택/현재 폴더를
+백그라운드 조사합니다. 논리적·중복 제외 크기, 제공 가능한 할당량, 파일·폴더 수와
+부분 결과를 구분합니다. 계산한 합계는 Details·Size 열에도 표시하고 제한된 캐시로
+재사용합니다. **다시 계산**으로 최신 정보를 요청할 수 있습니다.
+
+제한과 캐시 기준은 [사용 설명서](docs/ko/usage.md#zip-내부-탐색)에 정리되어 있습니다.
+
 ### Virtual File System
 
 실제 파일을 바꾸지 않고 메모리에서 폴더 트리와 텍스트 파일을 만들고 편집합니다.
@@ -117,3 +136,9 @@ python scripts/verify_enhancements.py
 검증은 독립 임시 폴더에서 수행합니다. 명령·이미지·듀얼 패널·필터·읽기 전용·해시와 기존 Plan 적용·Rollback·Undo·동기화를 확인합니다. [CI](https://github.com/Koreapanda4444/File-tree-viewer/actions/workflows/ci.yml)는 Windows·Linux에서 실행합니다.
 
 `build_windows.bat`은 기존 폴더형 EXE를 빌드한 뒤 실행·설정/기록 이동·압축 해제 검증을 거쳐 `release/FileTreeViewer-1.0.0-windows-x64.zip`과 `SHA256SUMS`를 만듭니다. [Build Windows](https://github.com/Koreapanda4444/File-tree-viewer/actions/workflows/build-windows.yml)의 성공 실행에서도 ZIP·체크섬을 받을 수 있습니다(14일 보관). 정식 Release와 태그는 생성하지 않습니다.
+
+신규 검증은 `python scripts/verify_exploration.py`로 실행합니다. ZIP 경로·추출 안전성,
+빠른 미리보기 전환·단축키, 폴더 계산·캐시를 독립된 임시 파일로 검사합니다.
+Windows·Linux CI는 기존 회귀 스크립트와 신규 스크립트를 모두 실행합니다.
+포터블 EXE·ZIP 검사에서도 패키징된 앱으로 ZIP·텍스트/이미지/Hex/PDF·폴더 합계를
+직접 실행하며, Release나 버전 태그는 만들지 않습니다.

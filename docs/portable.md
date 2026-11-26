@@ -79,3 +79,6 @@ relocated settings/history, checksum/ZIP validation and an extracted-EXE startup
 Source regression checks run with `python scripts/verify_enhancements.py`. Actual
 network shares, device removal/power loss, native Windows drag interaction and
 multiple physical monitor DPI configurations require environment-specific checks.
+
+
+ZIP browsing/extraction, Quick Look text/image/Hex/PDF decoding and background folder totals are also exercised inside the packaged EXE during `--verify-startup`. Run `python scripts/verify_exploration.py` alongside the existing regression suite for source checks. ZIP extraction requires a new output folder and is blocked in read-only mode; PDF previews show only the first page. See the usage guide for size limits and cache freshness.

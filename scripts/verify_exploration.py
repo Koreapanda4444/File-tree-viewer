@@ -218,6 +218,85 @@ class ArchiveChecks(unittest.TestCase):
         self.assertFalse((destination / "output").exists())
 
 
+class FolderSizeChecks(unittest.TestCase):
+    setUp = ArchiveChecks.setUp
+
+    def test_empty_nested_and_hard_link_sizes(self):
+        from disk_usage import inspect_folder_size
+
+        empty = inspect_folder_size(self.root)
+        self.assertEqual((empty.logical, empty.files, empty.folders), (0, 0, 0))
+        folder = self.root / "nested"
+        folder.mkdir()
+        path = self.root / "file"
+        path.write_bytes(b"1234567")
+        try:
+            os.link(path, folder / "hard")
+        except OSError:
+            self.skipTest("Hard links unavailable")
+        result = inspect_folder_size(self.root)
+        self.assertEqual(
+            (result.logical, result.unique, result.files, result.folders), (14, 7, 2, 1)
+        )
+        self.assertTrue(result.complete)
+        self.assertTrue(result.completed >= result.started)
+
+    def test_links_errors_and_changed_files_are_partial(self):
+        from unittest.mock import patch
+
+        from disk_usage import inspect_folder_size
+
+        path = self.root / "file"
+        path.write_bytes(b"123")
+        for number in range(260):
+            (self.root / str(number)).write_bytes(b"x")
+        modified = False
+
+        def change(phase, count):
+            nonlocal modified
+            if not modified and phase == "Scanning disk usage":
+                for item in self.root.iterdir():
+                    item.write_bytes(b"changed externally")
+                modified = True
+
+        result = inspect_folder_size(self.root, progress=change)
+        self.assertTrue(result.changed)
+        self.assertFalse(result.complete)
+        original = os.scandir
+
+        def denied(folder):
+            if not isinstance(folder, int) and Path(folder) == self.root / "denied":
+                raise PermissionError("test permission denial")
+            return original(folder)
+
+        (self.root / "denied").mkdir()
+        with patch("disk_usage.os.scandir", side_effect=denied):
+            result = inspect_folder_size(self.root)
+        self.assertGreater(result.errors, 0)
+        self.assertFalse(result.complete)
+        link = self.root / "loop"
+        try:
+            link.symlink_to(self.root, target_is_directory=True)
+        except OSError:
+            return
+        result = inspect_folder_size(self.root)
+        self.assertEqual(result.skipped, 1)
+        self.assertFalse(result.complete)
+
+    def test_cancelled_folder_inspection_and_read_only(self):
+        from disk_usage import inspect_folder_size
+
+        event = threading.Event()
+        for number in range(300):
+            (self.root / str(number)).touch()
+        with self.assertRaises(SnapshotCancelled):
+            inspect_folder_size(
+                self.root, cancelled=event, progress=lambda *_: event.set()
+            )
+        policy.set_read_only(True)
+        self.assertEqual(inspect_folder_size(self.root).files, 300)
+
+
 import verify_enhancements as support
 
 

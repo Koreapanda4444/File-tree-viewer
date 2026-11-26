@@ -5,8 +5,11 @@ import sqlite3
 import stat
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
+from file_content import stat_identity
+from fs_ops import file_signature
 from fs_paths import checked_boundary, is_link_stat
 from snapshot_store import check_cancelled
 
@@ -23,11 +26,12 @@ class UsageEntry:
 
 
 class DiskUsage:
-    def __init__(self, root, temporary, database_path):
+    def __init__(self, root, temporary, database_path, stats=None):
         self.root = root
         self.temporary = temporary
         self.database_path = database_path
         self.closed = False
+        self.stats = stats or {}
 
     def query(self, sql, parameters=()):
         if self.closed:
@@ -72,7 +76,7 @@ class DiskUsage:
             self.temporary.cleanup()
 
 
-def scan_disk_usage(root, *, cancelled=None, progress=None):
+def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
     root = Path(root).expanduser().absolute()
     checked_boundary(root, root, allow_leaf_link=False)
     if not root.is_dir():
@@ -93,6 +97,18 @@ def scan_disk_usage(root, *, cancelled=None, progress=None):
         database.execute("INSERT INTO entries VALUES ('','',1,0,0,0,'')")
         stack = [(root, False)]
         count = 0
+        stats = {
+            "files": 0,
+            "folders": 0,
+            "skipped": 0,
+            "allocated_estimated": False,
+            "unique_estimated": False,
+            "changed": False,
+        }
+        if verify:
+            database.execute(
+                "CREATE TABLE observations(path TEXT PRIMARY KEY, device TEXT, inode TEXT, mode INTEGER, size INTEGER, modified TEXT) WITHOUT ROWID"
+            )
         while stack:
             check_cancelled(cancelled)
             current, exiting = stack.pop()
@@ -111,6 +127,12 @@ def scan_disk_usage(root, *, cancelled=None, progress=None):
             stack.append((current, True))
             try:
                 checked_boundary(root, current, allow_leaf_link=False)
+                if verify:
+                    observed = stat_identity(current.lstat())
+                    database.execute(
+                        "INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                        (relative, *map(str, observed)),
+                    )
                 with os.scandir(current) as iterator:
                     for item in iterator:
                         check_cancelled(cancelled)
@@ -124,10 +146,18 @@ def scan_disk_usage(root, *, cancelled=None, progress=None):
                             details = item.stat(follow_symlinks=False)
                             if is_link_stat(details):
                                 error = "Link or reparse point skipped"
+                                stats["skipped"] += 1
                             elif stat.S_ISDIR(details.st_mode):
                                 directory = True
+                                stats["folders"] += 1
                             elif stat.S_ISREG(details.st_mode):
                                 logical = details.st_size
+                                stats["files"] += 1
+                                if verify:
+                                    database.execute(
+                                        "INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                                        (name, *map(str, stat_identity(details))),
+                                    )
                                 fresh = True
                                 if details.st_ino:
                                     cursor = database.execute(
@@ -135,9 +165,13 @@ def scan_disk_usage(root, *, cancelled=None, progress=None):
                                         (str(details.st_dev), str(details.st_ino)),
                                     )
                                     fresh = cursor.rowcount == 1
+                                else:
+                                    stats["unique_estimated"] = True
                                 if fresh:
                                     unique = logical
                                     allocated = getattr(details, "st_blocks", None)
+                                    if allocated is None:
+                                        stats["allocated_estimated"] = True
                                     allocated = (
                                         logical
                                         if allocated is None
@@ -145,6 +179,7 @@ def scan_disk_usage(root, *, cancelled=None, progress=None):
                                     )
                             else:
                                 error = "Special file skipped"
+                                stats["skipped"] += 1
                         except OSError as failure:
                             error = str(failure)
                         database.execute(
@@ -168,12 +203,79 @@ def scan_disk_usage(root, *, cancelled=None, progress=None):
                 database.execute(
                     "UPDATE entries SET error=? WHERE path=?", (str(failure), relative)
                 )
+        if verify:
+            for number, row in enumerate(
+                database.execute("SELECT * FROM observations"), 1
+            ):
+                check_cancelled(cancelled)
+                name, *expected = row
+                try:
+                    checked_boundary(root, root / name, allow_leaf_link=False)
+                    if tuple(map(str, stat_identity((root / name).lstat()))) != tuple(
+                        map(str, expected)
+                    ):
+                        raise FileExistsError("Item changed during inspection")
+                except (OSError, ValueError) as error:
+                    stats["changed"] = True
+                    database.execute(
+                        "UPDATE entries SET error=? WHERE path=?", (str(error), name)
+                    )
+                if progress and number % 256 == 0:
+                    progress("Verifying folder observations", number)
         database.commit()
         check_cancelled(cancelled)
-        return DiskUsage(root, temporary, database_path)
+        return DiskUsage(root, temporary, database_path, stats)
     except BaseException:
         database.close()
         temporary.cleanup()
         raise
     finally:
         database.close()
+
+
+@dataclass(frozen=True, slots=True)
+class FolderSize:
+    root: Path
+    signature: dict
+    started: str
+    completed: str
+    logical: int
+    unique: int
+    allocated: int | None
+    files: int
+    folders: int
+    errors: int
+    skipped: int
+    changed: bool
+    unique_estimated: bool
+
+    @property
+    def complete(self):
+        return not self.errors and not self.changed
+
+
+def inspect_folder_size(root, *, cancelled=None, progress=None):
+    root = Path(root).expanduser().absolute()
+    signature = file_signature(root)
+    started = datetime.now(timezone.utc).isoformat()
+    usage = scan_disk_usage(root, cancelled=cancelled, progress=progress, verify=True)
+    try:
+        entry, stats = usage.entry(), usage.stats
+        check_cancelled(cancelled)
+        return FolderSize(
+            root,
+            signature,
+            started,
+            datetime.now(timezone.utc).isoformat(),
+            entry.logical,
+            entry.unique,
+            None if stats["allocated_estimated"] else entry.allocated,
+            stats["files"],
+            stats["folders"],
+            usage.error_count,
+            stats["skipped"],
+            stats["changed"],
+            stats["unique_estimated"],
+        )
+    finally:
+        usage.close()

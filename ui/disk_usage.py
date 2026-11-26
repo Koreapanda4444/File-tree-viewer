@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from disk_usage import scan_disk_usage
+from disk_usage import inspect_folder_size, scan_disk_usage
 from snapshot import SnapshotCancelled
 from ui.analysis import format_size
 from ui.i18n import tr
@@ -29,14 +29,16 @@ class DiskUsageWorker(CancellableWorker):
     progress = Signal(str, int)
     finished = Signal(object, str)
 
-    def __init__(self, root):
+    def __init__(self, root, *, folder_only=False):
         super().__init__()
         self.root = root
+        self.folder_only = folder_only
 
     @Slot()
     def run(self):
         try:
-            result = scan_disk_usage(
+            inspect = inspect_folder_size if self.folder_only else scan_disk_usage
+            result = inspect(
                 self.root, cancelled=self._cancelled, progress=self.progress.emit
             )
         except SnapshotCancelled:

@@ -379,6 +379,156 @@ class ExplorationChecks(unittest.TestCase):
         self.assertEqual(dialog.preview.toPlainText(), "")
         self.assertFalse(dialog.extract_all.isEnabled())
 
+    def test_quick_look_image_pdf_limits_and_worker_close(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QImage, QPainter, QPdfWriter
+        from PySide6.QtTest import QTest
+
+        from file_preview import FilePreviewTask, preview_bytes
+        from ui.quick_look import QuickLookDialog
+
+        image_path = self.base / "image.png"
+        image = QImage(400, 200, QImage.Format.Format_RGB32)
+        image.fill(0xFF3B7957)
+        self.assertTrue(image.save(str(image_path)))
+        pdf = self.base / "sample.pdf"
+        writer = QPdfWriter(str(pdf))
+        painter = QPainter(writer)
+        painter.drawText(100, 200, "first page")
+        writer.newPage()
+        painter.drawText(100, 200, "second page")
+        painter.end()
+        del painter, writer
+        for path in (image_path, pdf):
+            dialog = QuickLookDialog(path, self.window)
+            dialog.show()
+            support.wait_for(lambda current=dialog: current.session.thread is None)
+            self.assertIsNotNone(dialog.session.result.image)
+            self.assertIsNotNone(dialog.image.source)
+            self.assertLessEqual(dialog.image.source.width(), 1600)
+            QTest.keyClick(
+                dialog.text if dialog.text.isVisible() else dialog.image,
+                Qt.Key.Key_Escape,
+            )
+            support.wait_for(lambda current=dialog: not current.isVisible())
+            dialog.deleteLater()
+        limited = FilePreviewTask(pdf, max_edit_bytes=5, preview_bytes=4).run()
+        self.assertTrue(limited.truncated)
+        self.assertIsNone(limited.document_bytes)
+        self.assertFalse(
+            preview_bytes(
+                image_path, image_path.read_bytes(), size=image_path.stat().st_size
+            ).editable
+        )
+        dialog = QuickLookDialog(image_path, self.window)
+        dialog.show()
+        dialog.reject()
+        support.wait_for(
+            lambda: dialog.session.thread is None and not dialog.isVisible()
+        )
+        dialog.deleteLater()
+
+    def test_preview_session_coalesces_switches_and_discards_stale_results(self):
+        from ui.preview_session import PreviewSession
+
+        path = self.base / "latest.txt"
+        path.write_text("latest")
+        other = self.base / "other.bin"
+        other.write_bytes(b"\0\1")
+        session = PreviewSession(self.window)
+        seen = []
+        session.ready.connect(seen.append)
+        for _ in range(40):
+            session.request(other)
+            session.request(path)
+        support.wait_for(lambda: session.thread is None)
+        self.assertEqual([result.path for result in seen], [path])
+        path.write_text("changed")
+        session.check_source()
+        self.assertIsNone(session.result)
+        session.request(path)
+        session.stop()
+        support.wait_for(lambda: session.thread is None)
+        self.assertIsNone(session.result)
+
+    def test_search_quick_look_neighbors_and_local_filter(self):
+        from real.search import SearchResult
+
+        page = self.window.real_page
+        paths = [self.base / (name + ".txt") for name in ("a", "b", "c")]
+        for path in paths:
+            path.write_text(path.name)
+        page.search_results.append_results(
+            [SearchResult(path=str(p), name=p.name, is_directory=False) for p in paths]
+        )
+        index = page.search_results.file_index(paths[1])
+        self.assertEqual(
+            page.search_results.file_neighbor(paths[1], 1, index), paths[2]
+        )
+        self.assertEqual(
+            page.search_results.file_neighbor(paths[1], -1, index), paths[0]
+        )
+        page.set_root(self.base)
+        support.wait_for(lambda: page.model.root.inventory is not None)
+        from real.directory_index import DirectoryFilter
+
+        page.model.set_local_filter(DirectoryFilter(name="b"))
+        support.wait_for(
+            lambda: (
+                page.model.root.inventory is not None
+                and not page.model.root.fetch_pending
+            )
+        )
+        self.assertEqual(page.quick_look_paths(paths[1]), (paths[1],))
+
+    def test_new_commands_localization_themes_and_archive_folder_selection(self):
+        from ui.command_palette import collect_commands
+        from ui.i18n import set_language, tr
+
+        commands = {c.key: c for c in collect_commands(self.window)}
+        self.assertTrue(
+            {"workspace.archive", "workspace.quick_look", "workspace.folder_size"}
+            <= commands.keys()
+        )
+        for language in ("ko", "en"):
+            set_language(language)
+            self.assertEqual(
+                tr("Quick Look"), "빠른 미리보기" if language == "ko" else "Quick Look"
+            )
+            self.assertEqual(tr("Close"), "닫기" if language == "ko" else "Close")
+        dialog = self.archive_dialog()
+        dialog.files.setCurrentIndex(dialog.file_model.index_for("binary.bin"))
+        dialog.navigate("folder")
+        self.assertEqual(dialog.selected_keys(), [])
+        self.assertFalse(dialog.extract_selection.isEnabled())
+        for theme in ("Light", "Dark", "System"):
+            self.window.theme_manager.apply(theme)
+            self.assertFalse(dialog.windowIcon().isNull())
+
+    def test_folder_worker_close_and_cache_expiry_with_unwatched_changes(self):
+        from disk_usage import FolderSizeCache, inspect_folder_size
+        from ui.folder_size import FolderSizeDialog
+
+        root = self.base / "sizing"
+        root.mkdir()
+        (root / "sub").mkdir()
+        path = root / "sub/file"
+        path.write_bytes(b"a")
+        clock = [0.0]
+        cache = FolderSizeCache(ttl=2, clock=lambda: clock[0])
+        result = inspect_folder_size(root)
+        self.assertTrue(cache.put(result))
+        path.write_bytes(b"bigger")
+        self.assertIsNotNone(cache.get(root))
+        clock[0] = 3
+        self.assertIsNone(cache.get(root))
+        dialog = FolderSizeDialog(root, cache, self.window)
+        dialog.show()
+        dialog.reject()
+        support.wait_for(lambda: dialog.thread is None and not dialog.isVisible())
+        self.assertIsNone(cache.get(root))
+        dialog.deleteLater()
+
     def test_folder_size_dialog_details_and_invalidation(self):
         from PySide6.QtCore import Qt
 
@@ -439,7 +589,7 @@ class ExplorationChecks(unittest.TestCase):
         QTest.keyClick(page.folder_panel.active_view, Qt.Key.Key_Space)
         support.wait_for(lambda: self.window.quick_look_dialog is not None)
         dialog = self.window.quick_look_dialog
-        support.wait_for(lambda: dialog.session.thread is None)
+        support.wait_for(lambda current=dialog: current.session.thread is None)
         self.assertEqual(dialog.text.toPlainText(), "255")
         QTest.keyClick(dialog.text, Qt.Key.Key_Right)
         support.wait_for(
@@ -477,7 +627,7 @@ class ExplorationChecks(unittest.TestCase):
         support.wait_for(lambda: right.current_preview_path == target)
         self.window.open_quick_look_from_pane(right)
         dialog = self.window.quick_look_dialog
-        support.wait_for(lambda: dialog.session.thread is None)
+        support.wait_for(lambda current=dialog: current.session.thread is None)
         self.assertEqual(dialog.path, target)
         self.assertIn("00000000", dialog.text.toPlainText())
         target.unlink()
@@ -492,7 +642,7 @@ class ExplorationChecks(unittest.TestCase):
         for key in ["binary.bin", "folder/hello.txt"] * 5:
             dialog.request_preview(key)
         dialog.reject()
-        support.wait_for(lambda: not dialog.isVisible())
+        support.wait_for(lambda current=dialog: not current.isVisible())
         self.assertIsNone(dialog.preview_thread)
         self.assertIsNone(dialog.thread)
 

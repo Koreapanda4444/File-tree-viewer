@@ -16,6 +16,104 @@ from ui.window import MainWindow
 from version import __version__
 
 
+def verify_exploration(app, window):
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
+    from PySide6.QtGui import QImage, QPainter, QPdfWriter
+
+    from archive import extract_members
+    from disk_usage import FolderSizeCache
+    from ui.archive_browser import ArchiveDialog
+    from ui.folder_size import FolderSizeDialog
+    from ui.quick_look import QuickLookDialog
+
+    def wait(condition):
+        deadline = time.monotonic() + 20
+        while not condition() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.002)
+        if not condition():
+            raise RuntimeError("Exploration verification timed out")
+
+    errors, dialogs = [], []
+    original_hook = sys.excepthook
+    sys.excepthook = lambda kind, value, traceback: errors.append(str(value))
+    temporary = tempfile.TemporaryDirectory(prefix="ftv-exploration-")
+    try:
+        root = Path(temporary.name)
+        (root / "text.txt").write_text("Quick Look 한글", encoding="utf-8")
+        (root / "binary.bin").write_bytes(b"\0\1\2")
+        image = QImage(80, 40, QImage.Format.Format_RGB32)
+        image.fill(0xFF3B7957)
+        if not image.save(str(root / "image.png")):
+            raise RuntimeError("PNG encoder is missing")
+        writer = QPdfWriter(str(root / "document.pdf"))
+        painter = QPainter(writer)
+        painter.drawText(100, 200, "PDF Quick Look")
+        painter.end()
+        del painter, writer
+        with zipfile.ZipFile(root / "자료.zip", "w") as archive:
+            archive.write(root / "text.txt", "folder/text.txt")
+            archive.writestr("empty/", "")
+        archive = ArchiveDialog(root / "자료.zip", window)
+        dialogs.append(archive)
+        archive.show()
+        wait(lambda: archive.thread is None)
+        if archive.archive is None:
+            raise RuntimeError(archive.status.text())
+        archive.navigate("folder")
+        archive.request_preview("folder/text.txt")
+        wait(lambda: archive.preview_thread is None)
+        if archive.preview.toPlainText() != "Quick Look 한글":
+            raise RuntimeError("ZIP content preview failed")
+        extract_members(archive.archive, [""], root / "extracted")
+        if (root / "extracted/folder/text.txt").read_text(
+            encoding="utf-8"
+        ) != "Quick Look 한글":
+            raise RuntimeError("ZIP extraction failed")
+        archive.reject()
+        for name in ("text.txt", "binary.bin", "image.png", "document.pdf"):
+            look = QuickLookDialog(root / name, window)
+            dialogs.append(look)
+            look.show()
+            wait(lambda current=look: current.session.thread is None)
+            if look.session.result is None:
+                raise RuntimeError(look.status.text())
+            if name.endswith((".png", ".pdf")) and look.session.result.image is None:
+                raise RuntimeError("Packaged image/PDF decoder is missing")
+            look.reject()
+        folder = FolderSizeDialog(root / "extracted", FolderSizeCache(), window)
+        dialogs.append(folder)
+        folder.show()
+        wait(lambda: folder.thread is None)
+        if (
+            folder.result is None
+            or not folder.result.complete
+            or folder.result.files != 1
+        ):
+            raise RuntimeError("Packaged folder inspection failed")
+        folder.reject()
+        if errors:
+            raise RuntimeError("; ".join(errors))
+    finally:
+        for dialog in dialogs:
+            dialog.reject()
+            session = getattr(dialog, "session", None)
+            wait(
+                lambda d=dialog, s=session: (
+                    vars(d).get("thread") is None
+                    and vars(d).get("preview_thread") is None
+                    and (s is None or s.thread is None)
+                )
+            )
+            dialog.deleteLater()
+        app.processEvents()
+        sys.excepthook = original_hook
+        temporary.cleanup()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="File Tree Viewer desktop application")
     parser.add_argument(
@@ -62,6 +160,7 @@ def main() -> int:
             if not window.set_read_only(True) or not window.set_read_only(False):
                 raise RuntimeError("Read-only mode transition failed")
             window.real_workspace.set_dual(False)
+            verify_exploration(app, window)
             window.close()
             deadline = time.monotonic() + 30
             while window.isVisible() and time.monotonic() < deadline:

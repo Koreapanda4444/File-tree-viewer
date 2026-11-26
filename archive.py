@@ -316,18 +316,23 @@ def read_member(index, key, *, limit=None, cancelled=None):
     return ArchiveContent(data[:limit], entry.size, truncated, not truncated)
 
 
-def extraction_entries(index, selections):
+def extraction_entries(index, selections, *, cancelled=None):
     selections = tuple(dict.fromkeys(selections))
     if not selections or any(key not in index.entries for key in selections):
         raise ValueError("Select entries from the current archive")
+    selected = set(selections)
     result = []
     for key, entry in index.entries.items():
-        if key and any(
-            not chosen
-            or key == chosen
-            or (index.entries[chosen].directory and key.startswith(chosen + "/"))
-            for chosen in selections
-        ):
+        check_cancelled(cancelled)
+        parts = key.split("/")
+        included = (
+            "" in selected
+            or key in selected
+            or any(
+                "/".join(parts[:depth]) in selected for depth in range(1, len(parts))
+            )
+        )
+        if key and included:
             if entry.blocked:
                 raise ValueError(f"{entry.path}: {entry.blocked}")
             result.append(entry)
@@ -360,9 +365,10 @@ def _clean_staging(path, identity):
 def extract_members(index, selections, destination, *, cancelled=None, progress=None):
     """Publish into a NEW directory only after the complete selection passes CRC."""
     check_cancelled(cancelled)
-    entries = extraction_entries(index, selections)
+    entries = extraction_entries(index, selections, cancelled=cancelled)
     destination = Path(destination).absolute()
     validate_windows_name(destination.name)
+    checked_boundary(destination.parent, destination, allow_leaf_link=False)
     parent = destination.parent.resolve(strict=True)
     destination = parent / destination.name
     checked_boundary(parent, destination, allow_leaf_link=False)
@@ -429,8 +435,6 @@ def extract_members(index, selections, destination, *, cancelled=None, progress=
         move_no_replace(
             stage, destination, allow_cross_device=False, cancelled=cancelled
         )
-        if progress:
-            progress(done, total, "")
         return destination
     except BaseException as failure:
         try:

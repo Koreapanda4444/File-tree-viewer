@@ -198,7 +198,7 @@ class ExplorerLayout(QObject):
         return {
             "version": 1,
             "contexts": contexts,
-            "columns": [self.page.tree.columnWidth(i) for i in range(4)],
+            "columns": self.page.tree_column_widths(),
         }
 
     def load_state(self, document):
@@ -250,9 +250,10 @@ class ExplorerLayout(QObject):
             self.mode = current["mode"]
             self.configurations = deepcopy(current["configurations"])
             self.apply()
-            if columns and not self.page.search_view_active:
-                for column, width in enumerate(columns):
-                    self.page.tree.setColumnWidth(column, width)
+            if columns:
+                self.page._tree_column_widths = list(columns)
+                if not self.page.search_view_active:
+                    self.page._configure_tree_columns()
             return True
         except (KeyError, TypeError, ValueError):
             return False

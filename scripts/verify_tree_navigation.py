@@ -327,6 +327,17 @@ class TreeChecks(unittest.TestCase):
         self.assertEqual(page.tree.columnWidth(0), 800)
         self.assertEqual(page.tree.verticalScrollBar().value(), vertical)
         self.assertEqual(page.selected_paths(), [root / "long_file_name_100.txt"])
+        widths = page.tree_column_widths()
+        self.assertTrue(page.set_root(root / "docs"))
+        wait_for(lambda: page.model.root.inventory is not None)
+        self.assertEqual(page.tree_column_widths(), widths)
+        page.search_input.setText("README")
+        page.start_search()
+        wait_for(lambda: not page.search_is_running)
+        self.assertTrue(page.search_view_active)
+        self.assertEqual(page.explorer_layout.export_state()["columns"], widths)
+        page.clear_search()
+        self.assertEqual(page.tree_column_widths(), widths)
 
     def test_bounded_depth_expansion_and_subtree_collapse(self):
         root = self.root()

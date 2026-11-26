@@ -117,6 +117,10 @@ def migrate_keys(keys, commands):
 
 def command_available(window, target, spec):
     try:
+        if hasattr(target, "command_enabled"):
+            refresh = getattr(window, "refresh_explorer_actions", None)
+            if refresh is not None:
+                refresh()
         if (
             not window.isVisible()
             or not target.isEnabled()

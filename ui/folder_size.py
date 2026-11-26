@@ -37,7 +37,7 @@ class FolderSizeDialog(QDialog):
         self.setWindowTitle(
             tr("Subtree Structure Summary") if summary else tr("Folder Size")
         )
-        self.resize(740, 680) if summary else self.resize(700, 420)
+        self.resize(740, 540) if summary else self.resize(700, 420)
         layout = QVBoxLayout(self)
         path = PlainLabel(str(root))
         path.setWordWrap(True)
@@ -45,11 +45,13 @@ class FolderSizeDialog(QDialog):
         layout.addWidget(path)
         self.details = PlainLabel()
         self.details.setWordWrap(True)
-        layout.addWidget(self.details, 1)
+        layout.addWidget(self.details, 0 if summary else 1)
         self.structure = PlainLabel()
         self.structure.setWordWrap(True)
         self.structure.setVisible(summary)
         layout.addWidget(self.structure)
+        if summary:
+            layout.addStretch(1)
         self.bar = QProgressBar()
         self.bar.setRange(0, 0)
         layout.addWidget(self.bar)

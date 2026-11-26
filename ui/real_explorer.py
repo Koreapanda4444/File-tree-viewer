@@ -532,7 +532,7 @@ class RealExplorerPage(ExplorerPage):
         self.tree.scrollTo(index)
         self.folder_panel.active_view.scrollTo(index)
         if not getattr(self, "quick_look_selecting", False):
-            self.explorer_layout.focus_files()
+            self.tree.setFocus()
         self.quick_look_selecting = False
         self.status_changed.emit(
             tr("Selected: {value0}", value0=self._path_from_index(index))
@@ -1753,6 +1753,8 @@ class RealExplorerPage(ExplorerPage):
         return [path for path in self.selected_paths() if root is None or path != root]
 
     def _set_tree_model(self, model: FileTreeModel | SearchResultsModel) -> None:
+        if self.tree.model() is self.browse_model:
+            self._tree_column_widths = self.tree_column_widths()
         if model is not self.model and hasattr(self, "tree_navigation"):
             self.tree_navigation.cancel()
         actual = self.browse_model if model is self.model else model
@@ -1874,11 +1876,16 @@ class RealExplorerPage(ExplorerPage):
         ):
             self.ready_to_close.emit()
 
+    def tree_column_widths(self):
+        if self.tree.model() is self.browse_model:
+            return [self.tree.columnWidth(i) for i in range(4)]
+        return list(getattr(self, "_tree_column_widths", (360, 120, 100, 160)))
+
     def _configure_tree_columns(self) -> None:
-        self.tree.header().resizeSection(0, 360)
-        self.tree.header().resizeSection(1, 120)
-        self.tree.header().resizeSection(2, 100)
-        self.tree.header().resizeSection(3, 160)
+        for column, width in enumerate(
+            getattr(self, "_tree_column_widths", (360, 120, 100, 160))
+        ):
+            self.tree.header().resizeSection(column, width)
 
     def _configure_search_columns(self) -> None:
         self.tree.header().resizeSection(0, 300)

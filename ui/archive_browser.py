@@ -285,17 +285,15 @@ class ArchiveDialog(QDialog):
         self.thread = prepare_worker_thread(
             self, self.worker, on_finished=self.task_finished
         )
+        self.thread.runner.failed.connect(self.operation_failed)
         self.thread.start()
 
-    def task_failed(self, error):
-        runner = self.sender()
-        if getattr(runner, "worker", None) is self.preview_worker:
-            self.preview_outcome = (
-                (self.preview_generation, self.pending_preview_key, None, False),
-                error,
-            )
-        else:
-            self.outcome = None, error
+    def operation_failed(self, error):
+        self.outcome = None, error
+
+    def preview_failed(self, error):
+        generation, key = self.preview_request
+        self.preview_outcome = (generation, key, None, False), error
 
     def receive(self, result, error):
         self.outcome = result, error
@@ -449,6 +447,7 @@ class ArchiveDialog(QDialog):
         if key is None or self.closing or self.stale:
             return
         self.preview_outcome = None
+        self.preview_request = self.preview_generation, key
         self.preview_worker = ArchivePreviewWorker(
             self.archive, key, self.preview_generation
         )
@@ -458,11 +457,15 @@ class ArchiveDialog(QDialog):
         self.preview_thread = prepare_worker_thread(
             self, self.preview_worker, on_finished=self.preview_finished
         )
+        self.preview_thread.runner.failed.connect(self.preview_failed)
         self.preview_thread.start()
 
     def preview_finished(self):
         self.preview_thread = self.preview_worker = None
         outcome = self.preview_outcome
+        if outcome is None:
+            generation, key = self.preview_request
+            outcome = (generation, key, None, False), tr("ZIP task failed")
         if outcome is not None:
             (generation, _key, result, crc_checked), error = outcome
             if (
@@ -576,6 +579,7 @@ class ArchiveDialog(QDialog):
         self.bar.setRange(0, 1000)
         self.bar.setValue(0)
         self.refresh_write_access()
+        self.thread.runner.failed.connect(self.operation_failed)
         self.thread.start()
         return True
 

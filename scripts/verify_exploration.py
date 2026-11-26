@@ -123,6 +123,26 @@ class ArchiveChecks(unittest.TestCase):
             extract_members(index, ("",), self.root / "too big")
         self.assertFalse((self.root / "too big").exists())
 
+    def test_corrupt_deflate_stream_is_a_single_archive_error(self):
+        path = self.archive(
+            (("payload.bin", os.urandom(8192)),), compression=zipfile.ZIP_DEFLATED
+        )
+        data = bytearray(path.read_bytes())
+        offset = (
+            30
+            + struct.unpack_from("<H", data, 26)[0]
+            + struct.unpack_from("<H", data, 28)[0]
+        )
+        data[offset] = 0x07
+        path.write_bytes(data)
+        index = index_archive(path)
+        with self.assertRaisesRegex(zipfile.BadZipFile, "compressed data"):
+            read_member(index, "payload.bin")
+        with self.assertRaises(zipfile.BadZipFile):
+            extract_members(index, [""], self.root / "corrupt output")
+        self.assertFalse((self.root / "corrupt output").exists())
+        self.assertEqual(list(self.root.glob(".ftv-extract-*")), [])
+
     def test_crc_damage_and_cancellation_leave_no_output(self):
         path = self.archive((("payload", b"CRC-CONTENT-UNIQUE"),))
         path.write_bytes(
@@ -665,6 +685,31 @@ class ExplorationChecks(unittest.TestCase):
         self.window.navigate_quick_look(1)
         dialog.reject()
         support.wait_for(lambda: self.window.quick_look_dialog is None)
+
+    def test_archive_worker_failure_stops_and_newest_request_survives(self):
+        from unittest.mock import patch
+
+        from ui.archive_browser import ArchivePreviewWorker
+
+        dialog = self.archive_dialog()
+        with patch.object(
+            ArchivePreviewWorker,
+            "run",
+            side_effect=OverflowError("synthetic decoder failure"),
+        ) as run:
+            with self.assertLogs("ui.tasks", level="ERROR"):
+                dialog.request_preview("binary.bin")
+                support.wait_for(lambda: dialog.preview_thread is None)
+            self.assertEqual(run.call_count, 1)
+            self.assertIsNone(dialog.pending_preview_key)
+            self.assertIn("synthetic decoder failure", dialog.status.text())
+        dialog.request_preview("folder/hello.txt")
+        support.wait_for(lambda: dialog.preview_thread is None)
+        self.assertEqual(dialog.preview.toPlainText(), "Hello ZIP")
+        dialog.request_preview("binary.bin")
+        dialog.request_preview("folder/hello.txt")
+        support.wait_for(lambda: dialog.preview_thread is None)
+        self.assertEqual(dialog.preview.toPlainText(), "Hello ZIP")
 
     def test_archive_close_during_preview(self):
         dialog = self.archive_dialog()

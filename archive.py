@@ -10,6 +10,7 @@ import struct
 import tempfile
 import unicodedata
 import zipfile
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
@@ -189,7 +190,12 @@ class ArchiveIndex:
                 raise FileExistsError("ZIP changed; close and reopen it")
             stream.seek(0)
             with zipfile.ZipFile(stream) as archive:
-                yield archive
+                try:
+                    yield archive
+                except zlib.error as error:
+                    raise zipfile.BadZipFile(
+                        "ZIP compressed data is corrupt"
+                    ) from error
 
 
 def index_archive(path, *, limits=None, cancelled=None, progress=None):

@@ -283,6 +283,33 @@ class FolderSizeChecks(unittest.TestCase):
         self.assertEqual(result.skipped, 1)
         self.assertFalse(result.complete)
 
+    def test_bounded_cache_expiry_invalidation_and_partial_results(self):
+        from dataclasses import replace
+
+        from disk_usage import FolderSizeCache, inspect_folder_size
+
+        now = [0.0]
+        cache = FolderSizeCache(limit=2, ttl=3, clock=lambda: now[0])
+        results = []
+        for name in ("first", "second", "third"):
+            folder = self.root / name
+            folder.mkdir()
+            results.append(inspect_folder_size(folder))
+        for result in results:
+            self.assertTrue(cache.put(result))
+        self.assertIsNone(cache.get(results[0].root))
+        self.assertIs(cache.get(results[1].root), results[1])
+        revision = cache.revision
+        cache.invalidate([results[1].root / "nested/file"])
+        self.assertIsNone(cache.get(results[1].root))
+        self.assertFalse(cache.put(results[1], revision=revision))
+        self.assertFalse(cache.put(replace(results[1], errors=1)))
+        now[0] = 4
+        self.assertIsNone(cache.get(results[2].root))
+        self.assertTrue(cache.put(results[0]))
+        (results[0].root / "new").touch()
+        self.assertIsNone(cache.get(results[0].root))
+
     def test_cancelled_folder_inspection_and_read_only(self):
         from disk_usage import inspect_folder_size
 

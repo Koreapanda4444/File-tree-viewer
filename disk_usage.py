@@ -4,12 +4,14 @@ import os
 import sqlite3
 import stat
 import tempfile
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from file_content import stat_identity
-from fs_ops import file_signature
+from fs_ops import file_signature, require_unchanged
 from fs_paths import checked_boundary, is_link_stat
 from snapshot_store import check_cancelled
 
@@ -279,3 +281,71 @@ def inspect_folder_size(root, *, cancelled=None, progress=None):
         )
     finally:
         usage.close()
+
+
+class FolderSizeCache:
+    """Explicit scans only; directory identity plus TTL is best-effort freshness."""
+
+    def __init__(self, *, limit=128, ttl=30.0, clock=time.monotonic):
+        if limit < 1 or ttl <= 0:
+            raise ValueError("Folder cache bounds must be positive")
+        self.limit, self.ttl, self.clock = limit, ttl, clock
+        self.entries = OrderedDict()
+        self.revision = 0
+
+    def prune(self):
+        now = self.clock()
+        removed = {
+            root for root, (_, expires) in self.entries.items() if now >= expires
+        }
+        for root in removed:
+            del self.entries[root]
+        return removed
+
+    def get(self, root):
+        root = Path(root).absolute()
+        self.prune()
+        item = self.entries.get(root)
+        if item is None:
+            return None
+        result, _ = item
+        try:
+            require_unchanged(root, result.signature)
+        except OSError:
+            del self.entries[root]
+            return None
+        self.entries.move_to_end(root)
+        return result
+
+    def put(self, result, *, revision=None):
+        if not result.complete or (revision is not None and revision != self.revision):
+            return False
+        try:
+            require_unchanged(result.root, result.signature)
+        except OSError:
+            return False
+        self.prune()
+        self.entries[result.root] = result, self.clock() + self.ttl
+        self.entries.move_to_end(result.root)
+        while len(self.entries) > self.limit:
+            self.entries.popitem(last=False)
+        return True
+
+    def invalidate(self, paths):
+        paths = tuple(Path(path).absolute() for path in paths)
+        self.revision += 1
+        removed = {
+            root
+            for root in self.entries
+            if any(
+                root == path or root in path.parents or path in root.parents
+                for path in paths
+            )
+        }
+        for root in removed:
+            del self.entries[root]
+        return removed
+
+    def results(self):
+        self.prune()
+        return {root: result for root, (result, _) in self.entries.items()}

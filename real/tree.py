@@ -90,6 +90,7 @@ class FileTreeModel(QAbstractItemModel):
         self.sort_options = (0, False, "None", True)
         self.local_filter = DirectoryFilter()
         self.folder_sizes = {}
+        self.load_budget = None
 
     @property
     def root_path(self) -> Path | None:
@@ -238,6 +239,7 @@ class FileTreeModel(QAbstractItemModel):
         node = self.node_from_index(parent)
         return bool(
             parent.column() == 0
+            and (self.load_budget is None or self.load_budget > 0)
             and node
             and node.is_directory
             and not node.fully_loaded
@@ -248,6 +250,7 @@ class FileTreeModel(QAbstractItemModel):
         node = self.node_from_index(parent)
         if (
             parent.column() > 0
+            or self.load_budget == 0
             or node is None
             or not node.is_directory
             or node.fully_loaded
@@ -293,7 +296,14 @@ class FileTreeModel(QAbstractItemModel):
 
     def _publish_page(self, node, parent):
         first = len(node.children)
-        entries = node.entries[first : first + self.page_size]
+        count = (
+            self.page_size
+            if self.load_budget is None
+            else min(self.page_size, self.load_budget)
+        )
+        entries = node.entries[first : first + count]
+        if self.load_budget is not None:
+            self.load_budget -= len(entries)
         if entries:
             self.beginInsertRows(parent, first, first + len(entries) - 1)
             for row, entry in enumerate(entries, first):

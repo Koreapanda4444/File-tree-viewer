@@ -269,6 +269,8 @@ class FileCommands(QObject):
             and paths[0].is_dir()
             and not paths[0].is_symlink(),
         )
+        navigation = menu.addMenu(tr("Tree navigation"))
+        page.tree_navigation.add_actions(navigation)
         menu.addSeparator()
         add("Copy", lambda: self.copy(False), ready and bool(mutable))
         add("Cut", lambda: self.copy(True), ready and bool(mutable), mutation=True)

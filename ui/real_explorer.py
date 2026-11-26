@@ -74,6 +74,7 @@ from ui.reveal import FileRevealer
 from ui.search_options import SearchOptionsDialog
 from ui.search_tools import SearchTools
 from ui.tasks import prepare_worker_thread
+from ui.tree_navigation import TreeNavigation
 from write_policy import policy, writes_allowed
 
 
@@ -269,6 +270,7 @@ class RealExplorerPage(ExplorerPage):
         self.layout().insertWidget(3, self.directory_filter)
         self.explorer_state = ExplorerState(self)
         self.explorer_layout = ExplorerLayout(self)
+        self.tree_navigation = TreeNavigation(self)
         self.tree.header().sectionClicked.connect(self.sort_by_header)
         self.directory_monitor = DirectoryMonitor(self.model)
         self.directory_monitor.changed.connect(self.external_directories_changed)
@@ -1507,6 +1509,7 @@ class RealExplorerPage(ExplorerPage):
             except (OSError, ValueError, TypeError) as error:
                 self._show_operation_error(tr("Cannot transfer files"), error)
                 return False
+        self.tree_navigation.cancel()
         worker = FileOperationWorker(
             action,
             sources=sources,
@@ -1696,6 +1699,8 @@ class RealExplorerPage(ExplorerPage):
         return [path for path in self.selected_paths() if root is None or path != root]
 
     def _set_tree_model(self, model: FileTreeModel | SearchResultsModel) -> None:
+        if model is not self.model and hasattr(self, "tree_navigation"):
+            self.tree_navigation.cancel()
         actual = self.browse_model if model is self.model else model
         self.tree.setModel(actual)
         self.folder_panel.set_model(actual, self.tree.selectionModel())
@@ -1723,7 +1728,10 @@ class RealExplorerPage(ExplorerPage):
                 self.model.fetchMore(source)
 
     def release_collapsed_folder(self, index: QModelIndex) -> None:
-        if self.tree.model() is self.browse_model:
+        if (
+            self.tree.model() is self.browse_model
+            and not self.tree_navigation.collapsing
+        ):
             self.model.release_children(self.browse_model.mapToSource(index))
 
     def prepare_close(self) -> bool:
@@ -1734,6 +1742,7 @@ class RealExplorerPage(ExplorerPage):
             self.close_cancelled = True
             return False
         self.pending_folder = None
+        self.tree_navigation.cancel()
         self.live_search.stop()
         self.file_commands.stop()
         self.directory_filter.timer.stop()

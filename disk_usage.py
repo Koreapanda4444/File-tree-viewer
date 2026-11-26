@@ -5,9 +5,10 @@ import sqlite3
 import stat
 import tempfile
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import islice
 from pathlib import Path
 
 from analysis import EXTENSION_LIMIT, ExtensionUsage, file_extension
@@ -79,7 +80,13 @@ class DiskUsage:
             self.temporary.cleanup()
 
 
-def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
+def scan_disk_usage(
+    root, *, cancelled=None, progress=None, verify=False, max_items=None, max_depth=None
+):
+    if max_items is not None and (type(max_items) is not int or max_items < 1):
+        raise ValueError("Inspection item limit must be positive")
+    if max_depth is not None and (type(max_depth) is not int or max_depth < 0):
+        raise ValueError("Inspection depth limit must be nonnegative")
     root = Path(root).expanduser().absolute()
     checked_boundary(root, root, allow_leaf_link=False)
     if not root.is_dir():
@@ -110,6 +117,7 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
             "allocated_estimated": False,
             "unique_estimated": False,
             "changed": False,
+            "limited": False,
             "maximum_depth": 0,
             "maximum_folder_depth": 0,
         }
@@ -132,6 +140,12 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
                     (*totals, relative),
                 )
                 continue
+            if stats["limited"]:
+                database.execute(
+                    "UPDATE entries SET error=? WHERE path=?",
+                    ("Folder inspection item limit reached", relative),
+                )
+                continue
             stack.append((current, True))
             try:
                 checked_boundary(root, current, allow_leaf_link=False)
@@ -144,6 +158,13 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
                 with os.scandir(current) as iterator:
                     for item in iterator:
                         check_cancelled(cancelled)
+                        if max_items is not None and count >= max_items:
+                            stats["limited"] = True
+                            database.execute(
+                                "UPDATE entries SET error=? WHERE path=?",
+                                ("Folder inspection item limit reached", relative),
+                            )
+                            break
                         if item.name.casefold() == ".file-tree-viewer":
                             continue
                         name = (Path(relative) / item.name).as_posix()
@@ -214,7 +235,15 @@ def scan_disk_usage(root, *, cancelled=None, progress=None, verify=False):
                             ),
                         )
                         if directory:
-                            stack.append((Path(item.path), False))
+                            if max_depth is not None and depth > max_depth:
+                                database.execute(
+                                    "UPDATE entries SET error=? WHERE path=?",
+                                    ("Folder inspection depth limit reached", name),
+                                )
+                                # Do not stop already admitted siblings when only a depth boundary is reached.
+                                stats["depth_limited"] = True
+                            else:
+                                stack.append((Path(item.path), False))
                         count += 1
                         if progress and count % 256 == 0:
                             progress("Scanning disk usage", count)
@@ -281,17 +310,27 @@ class FolderSize:
     maximum_folder_depth: int = 0
     extension_group_count: int = 0
     extensions: tuple[ExtensionUsage, ...] = ()
+    limited: bool = False
 
     @property
     def complete(self):
-        return not self.errors and not self.changed
+        return not self.errors and not self.changed and not self.limited
 
 
-def inspect_folder_size(root, *, cancelled=None, progress=None):
+def inspect_folder_size(
+    root, *, cancelled=None, progress=None, max_items=None, max_depth=None
+):
     root = Path(root).expanduser().absolute()
     signature = file_signature(root)
     started = datetime.now(timezone.utc).isoformat()
-    usage = scan_disk_usage(root, cancelled=cancelled, progress=progress, verify=True)
+    usage = scan_disk_usage(
+        root,
+        cancelled=cancelled,
+        progress=progress,
+        verify=True,
+        max_items=max_items,
+        max_depth=max_depth,
+    )
     try:
         entry, stats = usage.entry(), usage.stats
         check_cancelled(cancelled)
@@ -313,6 +352,7 @@ def inspect_folder_size(root, *, cancelled=None, progress=None):
             stats["maximum_folder_depth"],
             stats["extension_group_count"],
             stats["extensions"],
+            stats["limited"] or stats.get("depth_limited", False),
         )
     finally:
         usage.close()
@@ -327,6 +367,7 @@ class FolderSizeCache:
         self.limit, self.ttl, self.clock = limit, ttl, clock
         self.entries = OrderedDict()
         self.revision = 0
+        self.changes = deque(maxlen=256)
 
     def prune(self):
         now = self.clock()
@@ -353,7 +394,9 @@ class FolderSizeCache:
         return result
 
     def put(self, result, *, revision=None):
-        if not result.complete or (revision is not None and revision != self.revision):
+        if not result.complete or (
+            revision is not None and self.changed_since(result.root, revision)
+        ):
             return False
         try:
             require_unchanged(result.root, result.signature)
@@ -366,13 +409,34 @@ class FolderSizeCache:
             self.entries.popitem(last=False)
         return True
 
+    def changed_since(self, root, revision):
+        root = Path(root).absolute()
+        if revision == self.revision:
+            return False
+        if not self.changes or revision < self.changes[0][0] - 1:
+            return True
+        return any(
+            number > revision
+            and (
+                paths is None
+                or any(
+                    root == path or root in path.parents or path in root.parents
+                    for path in paths
+                )
+            )
+            for number, paths in self.changes
+        )
+
     def invalidate(self, paths):
-        paths = tuple(Path(path).absolute() for path in paths)
+        paths = tuple(Path(path).absolute() for path in islice(iter(paths), 513))
         self.revision += 1
+        overflow = len(paths) > 512
+        self.changes.append((self.revision, None if overflow else paths))
         removed = {
             root
             for root in self.entries
-            if any(
+            if overflow
+            or any(
                 root == path or root in path.parents or path in root.parents
                 for path in paths
             )

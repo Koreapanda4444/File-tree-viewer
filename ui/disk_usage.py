@@ -29,17 +29,26 @@ class DiskUsageWorker(CancellableWorker):
     progress = Signal(str, int)
     finished = Signal(object, str)
 
-    def __init__(self, root, *, folder_only=False):
+    def __init__(self, root, *, folder_only=False, summary=False):
         super().__init__()
         self.root = root
         self.folder_only = folder_only
+        self.summary = summary
 
     @Slot()
     def run(self):
         try:
             inspect = inspect_folder_size if self.folder_only else scan_disk_usage
+            limits = (
+                {"max_items": 500_000, "max_depth": 128}
+                if self.summary and self.folder_only
+                else {}
+            )
             result = inspect(
-                self.root, cancelled=self._cancelled, progress=self.progress.emit
+                self.root,
+                cancelled=self._cancelled,
+                progress=self.progress.emit,
+                **limits,
             )
         except SnapshotCancelled:
             self.finished.emit(None, "Analysis cancelled")

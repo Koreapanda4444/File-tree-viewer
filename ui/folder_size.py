@@ -99,7 +99,7 @@ class FolderSizeDialog(QDialog):
         self.bar.show()
         self.refresh.setEnabled(False)
         self.cancel.setEnabled(True)
-        self.worker = DiskUsageWorker(self.root, folder_only=True)
+        self.worker = DiskUsageWorker(self.root, folder_only=True, summary=self.summary)
         self.worker.progress.connect(
             lambda phase, count: self.status.setText(
                 tr("{phase}: {count:,} entries", phase=tr(phase), count=count)
@@ -128,7 +128,7 @@ class FolderSizeDialog(QDialog):
         if result is None:
             self.status.setText(tr(error))
         else:
-            if self.revision != self.cache.revision:
+            if self.cache.changed_since(self.root, self.revision):
                 result = replace(result, changed=True)
             self.cached_result = self.cache.put(result, revision=self.revision)
             if result.complete and not self.cached_result:
@@ -185,7 +185,9 @@ class FolderSizeDialog(QDialog):
                 + "\n".join(rows)
             )
         self.status.setText(
-            tr("Cached result — Recalculate for current totals")
+            tr("Partial result: inspection limit reached. Choose a smaller subtree.")
+            if result.limited
+            else tr("Cached result — Recalculate for current totals")
             if cached
             else tr("Scan completed")
             if result.complete

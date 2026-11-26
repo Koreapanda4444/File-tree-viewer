@@ -158,6 +158,20 @@ class TreeChecks(unittest.TestCase):
                     page.browse_model.mapFromSource(page.model.index_for_path(path))
                 )
             )
+        import os
+
+        if os.name == "nt":
+            import ctypes
+
+            short = ctypes.create_unicode_buffer(32768)
+            length = ctypes.windll.kernel32.GetShortPathNameW(
+                str(target), short, len(short)
+            )
+            self.assertTrue(0 < length < len(short))
+            self.select(root / "notes.txt")
+            page.jump_to_item(short.value)
+            wait_for(lambda: page.current_preview_path == target)
+            self.assertEqual(page.model.root_path, root)
         failures = []
         page.file_revealer.failed.connect(failures.append)
         page.file_revealer.start(root / "missing/unknown.txt")

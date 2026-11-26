@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from file_metadata import format_timestamp, inspect_file_metadata
 from fs_ops import file_signature
+from fs_paths import is_link_stat
 from operation_history import record_events
 from real.monitor import DirectoryMonitor
 from real.navigation import NavigationHistory
@@ -419,6 +420,18 @@ class RealExplorerPage(ExplorerPage):
         if not path.exists() and not path.is_symlink():
             self.status_changed.emit(tr("Item no longer exists: {value0}", value0=path))
             return
+        if os.name == "nt":
+            try:
+                path = (
+                    path.parent.resolve(strict=True) / path.name
+                    if is_link_stat(path.lstat())
+                    else path.resolve(strict=True)
+                )
+            except (OSError, RuntimeError):
+                self.status_changed.emit(
+                    tr("Item no longer exists: {value0}", value0=path)
+                )
+                return
         root = self.model.root_path
         if root is None or not path.is_relative_to(root) or self.search_view_active:
             anchor = path if path.is_dir() and not path.is_symlink() else path.parent

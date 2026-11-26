@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
@@ -19,7 +20,6 @@ from version import __version__
 def verify_exploration(app, window):
     import tempfile
     import zipfile
-    from pathlib import Path
 
     from PySide6.QtGui import QImage, QPainter, QPdfWriter
 
@@ -29,20 +29,20 @@ def verify_exploration(app, window):
     from ui.folder_size import FolderSizeDialog
     from ui.quick_look import QuickLookDialog
 
-    def wait(condition):
+    def wait(condition, stage="worker cleanup"):
         deadline = time.monotonic() + 20
         while not condition() and time.monotonic() < deadline:
             app.processEvents()
             time.sleep(0.002)
         if not condition():
-            raise RuntimeError("Exploration verification timed out")
+            raise RuntimeError("Exploration verification timed out: " + stage)
 
     errors, dialogs = [], []
     original_hook = sys.excepthook
     sys.excepthook = lambda kind, value, traceback: errors.append(str(value))
     temporary = tempfile.TemporaryDirectory(prefix="ftv-exploration-")
     try:
-        root = Path(temporary.name)
+        root = Path(temporary.name).resolve()
         (root / "text.txt").write_text("Quick Look 한글", encoding="utf-8")
         (root / "binary.bin").write_bytes(b"\0\1\2")
         image = QImage(80, 40, QImage.Format.Format_RGB32)
@@ -60,12 +60,12 @@ def verify_exploration(app, window):
         archive = ArchiveDialog(root / "자료.zip", window)
         dialogs.append(archive)
         archive.show()
-        wait(lambda: archive.thread is None)
+        wait(lambda: archive.thread is None, "ZIP indexing")
         if archive.archive is None:
             raise RuntimeError(archive.status.text())
         archive.navigate("folder")
         archive.request_preview("folder/text.txt")
-        wait(lambda: archive.preview_thread is None)
+        wait(lambda: archive.preview_thread is None, "ZIP preview")
         if archive.preview.toPlainText() != "Quick Look 한글":
             raise RuntimeError("ZIP content preview failed")
         extract_members(archive.archive, [""], root / "extracted")
@@ -78,7 +78,9 @@ def verify_exploration(app, window):
             look = QuickLookDialog(root / name, window)
             dialogs.append(look)
             look.show()
-            wait(lambda current=look: current.session.thread is None)
+            wait(
+                lambda current=look: current.session.thread is None, "Quick Look: " + name
+            )
             if look.session.result is None:
                 raise RuntimeError(look.status.text())
             if name.endswith((".png", ".pdf")) and look.session.result.image is None:
@@ -89,7 +91,7 @@ def verify_exploration(app, window):
         )
         dialogs.append(folder)
         folder.show()
-        wait(lambda: folder.thread is None)
+        wait(lambda: folder.thread is None, "folder structure summary")
         if (
             folder.result is None
             or not folder.result.complete
@@ -105,14 +107,17 @@ def verify_exploration(app, window):
         for mode in ("Tree Focus", "Compact", "Explorer", "Tree Focus"):
             if not page.explorer_layout.set_mode(mode):
                 raise RuntimeError("Packaged explorer layout failed")
-        page.jump_to_item(str(root / "extracted/folder/text.txt"))
-        wait(lambda: page.current_preview_path == root / "extracted/folder/text.txt")
-        wait(lambda: not page.preview_is_running)
+        page.jump_to_item(str(Path(temporary.name) / "extracted/folder/text.txt"))
+        wait(
+            lambda: page.current_preview_path == root / "extracted/folder/text.txt",
+            "tree path reveal",
+        )
+        wait(lambda: not page.preview_is_running, "tree selection preview")
         if page.model.root_path != root:
             raise RuntimeError("Path reveal changed the explorer root")
         if not page.tree_navigation.start(2, path=root):
             raise RuntimeError("Packaged bounded tree expansion failed")
-        wait(lambda: not page.tree_navigation.running)
+        wait(lambda: not page.tree_navigation.running, "bounded tree expansion")
         if not window.real_workspace.set_dual(True):
             raise RuntimeError("Tree dual-pane mode failed")
         if any(
@@ -149,6 +154,7 @@ def main() -> int:
         action="store_true",
         help="run the isolated packaging startup check",
     )
+    parser.add_argument("--verification-report", type=Path, help=argparse.SUPPRESS)
     options, qt_arguments = parser.parse_known_args()
     if options.verify_startup:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -198,6 +204,12 @@ def main() -> int:
                 raise RuntimeError("Application shutdown timed out")
             return 0
         except (OSError, RuntimeError, ValueError, TypeError, AttributeError) as error:
+            if options.verification_report is not None:
+                import traceback
+
+                options.verification_report.write_text(
+                    traceback.format_exc(), encoding="utf-8"
+                )
             if sys.stderr is not None:
                 print(str(error), file=sys.stderr)
             return 1

@@ -32,6 +32,22 @@ def rows(path):
         return database.execute("SELECT * FROM events ORDER BY id").fetchall()
 
 
+def startup(executable, cwd, report):
+    result = subprocess.run(
+        [str(executable), "--verify-startup", "--verification-report", str(report)],
+        cwd=cwd,
+        check=False,
+        timeout=90,
+    )
+    if result.returncode:
+        detail = (
+            report.read_text(encoding="utf-8")
+            if report.exists()
+            else "The executable exited before writing its verification report."
+        )
+        raise RuntimeError(f"Startup check exited with {result.returncode}:\n{detail}")
+
+
 def verify(directory):
     if (directory / "data").exists():
         raise AssertionError("Distribution contains user data")
@@ -50,12 +66,7 @@ def verify(directory):
         shutil.copytree(directory, copy)
         cwd = root / "unrelated"
         cwd.mkdir()
-        subprocess.run(
-            [str(copy / "FileTreeViewer.exe"), "--verify-startup"],
-            cwd=cwd,
-            check=True,
-            timeout=90,
-        )
+        startup(copy / "FileTreeViewer.exe", cwd, root / "first-startup-error.txt")
         ini = copy / "data/settings/preferences.ini"
         settings = preferences(ini)
         token = uuid.uuid4().hex
@@ -76,11 +87,8 @@ def verify(directory):
         original = rows(history)
         relocated = root / "Relocated program"
         copy.rename(relocated)
-        subprocess.run(
-            [str(relocated / "FileTreeViewer.exe"), "--verify-startup"],
-            cwd=cwd,
-            check=True,
-            timeout=90,
+        startup(
+            relocated / "FileTreeViewer.exe", cwd, root / "relocated-startup-error.txt"
         )
         saved = preferences(relocated / "data/settings/preferences.ini")
         if (

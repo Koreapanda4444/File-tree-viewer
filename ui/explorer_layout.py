@@ -39,6 +39,8 @@ class ExplorerLayout(QObject):
         self.mode = "Explorer"
         self.configurations = deepcopy(DEFAULTS)
         self.generation = 0
+        self.context = "single"
+        self.contexts = {}
         bar = FlowLayout()
         self.choice = QComboBox()
         add_choices(self.choice, MODES)
@@ -153,6 +155,20 @@ class ExplorerLayout(QObject):
                 state[key][index] = 400
         self.apply()
         return True
+
+    def switch_context(self, dual):
+        context = "dual" if dual else "single"
+        if context == self.context:
+            return
+        self.capture()
+        current = {"mode": self.mode, "configurations": deepcopy(self.configurations)}
+        self.contexts[self.context] = current
+        target = self.contexts.get(context, deepcopy(current))
+        self.context = context
+        self.mode = target["mode"]
+        self.configurations = deepcopy(target["configurations"])
+        self.generation += 1
+        self.apply()
 
     def focus_files(self):
         (

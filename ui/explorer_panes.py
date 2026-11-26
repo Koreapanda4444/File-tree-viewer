@@ -161,7 +161,6 @@ class RealWorkspace(QWidget):
         self.splitter.setSizes([700, 700])
         self.right.hide()
         layout.addWidget(self.splitter, 1)
-        self.compact_saved = None
         QApplication.instance().installEventFilter(self)
         self.activate(self.left)
 
@@ -213,39 +212,22 @@ class RealWorkspace(QWidget):
             with QSignalBlocker(self.toggle):
                 self.toggle.setChecked(self.dual)
             return False
-        if enabled:
-            self.compact_saved = []
-            for page in self.panes:
-                widgets = (
-                    page.navigation_splitter.widget(0),
-                    page.content_splitter.widget(1),
-                )
-                self.compact_saved.append(
-                    tuple(not widget.isHidden() for widget in widgets)
-                )
-                for widget in widgets:
-                    widget.hide()
-                page.name_input.setMaximumWidth(150)
+        for page in self.panes:
+            page.explorer_layout.switch_context(enabled)
+            if enabled:
                 page.name_input.setMinimumWidth(80)
+                page.name_input.setMaximumWidth(150)
                 page.name_input.setSizePolicy(
                     QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
                 )
-            if (
-                self.right.model.root_path is None
-                and self.left.model.root_path is not None
-            ):
-                self.right.set_root(self.left.model.root_path)
-        elif self.compact_saved:
-            for page, visible in zip(self.panes, self.compact_saved, strict=True):
-                for widget, shown in zip(
-                    (
-                        page.navigation_splitter.widget(0),
-                        page.content_splitter.widget(1),
-                    ),
-                    visible,
-                    strict=True,
-                ):
-                    widget.setVisible(shown)
+            else:
+                page.name_input.setFixedWidth(240)
+        if (
+            enabled
+            and self.right.model.root_path is None
+            and self.left.model.root_path is not None
+        ):
+            self.right.set_root(self.left.model.root_path)
         self.dual = enabled
         self.right.setVisible(enabled)
         with QSignalBlocker(self.toggle):
@@ -256,7 +238,7 @@ class RealWorkspace(QWidget):
     def focus_other(self):
         if self.dual:
             self.activate(self.right if self.active is self.left else self.left)
-            self.active.folder_panel.active_view.setFocus()
+            self.active.explorer_layout.focus_files()
 
     @property
     def other(self):
@@ -324,15 +306,8 @@ class RealWorkspace(QWidget):
         return self.other.set_root(self.active.model.root_path)
 
     def save(self, settings):
-        for index, page in enumerate(self.panes):
-            save_pane(
-                page,
-                settings,
-                page.pane_id,
-                panels=self.compact_saved[index]
-                if self.dual and self.compact_saved
-                else None,
-            )
+        for page in self.panes:
+            save_pane(page, settings, page.pane_id)
         settings.setValue("panes/dual", self.dual)
         settings.setValue("panes/active", self.active.pane_id)
         settings.setValue("panes/splitter", self.splitter.saveState())

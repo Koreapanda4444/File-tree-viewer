@@ -825,5 +825,9 @@
   "ZIP contains file/directory collisions": "ZIP에 파일/폴더 경로 충돌이 있습니다.",
   "ZIP tree entry count exceeds the limit": "ZIP 트리 항목 수가 제한을 초과합니다.",
   "Actual ZIP output exceeds declared or configured limits": "실제 ZIP 출력이 선언된 크기 또는 설정 한도를 초과합니다.",
-  "ZIP compressed data is corrupt": "ZIP 압축 데이터가 손상되었습니다."
+  "ZIP compressed data is corrupt": "ZIP 압축 데이터가 손상되었습니다.",
+  "Explorer": "탐색기",
+  "Tree Focus": "트리 중심",
+  "Compact": "간결하게",
+  "Explorer layout": "탐색 화면 구성"
 }

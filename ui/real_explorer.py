@@ -55,6 +55,7 @@ from search.options import SearchOptions
 from ui.completion import PathCompletion
 from ui.directory_filter import DirectoryFilterBar
 from ui.explorer_base import ExplorerPage
+from ui.explorer_layout import ExplorerLayout
 from ui.explorer_state import ExplorerState
 from ui.feedback import show_error
 from ui.file_commands import FileCommands
@@ -267,6 +268,8 @@ class RealExplorerPage(ExplorerPage):
         self.directory_filter = DirectoryFilterBar(self)
         self.layout().insertWidget(3, self.directory_filter)
         self.explorer_state = ExplorerState(self)
+        self.explorer_layout = ExplorerLayout(self)
+        self.tree.header().sectionClicked.connect(self.sort_by_header)
         self.directory_monitor = DirectoryMonitor(self.model)
         self.directory_monitor.changed.connect(self.external_directories_changed)
         self.directory_monitor.warning.connect(self.status_changed)
@@ -1697,6 +1700,8 @@ class RealExplorerPage(ExplorerPage):
         self.tree.setModel(actual)
         self.folder_panel.set_model(actual, self.tree.selectionModel())
         self.folder_panel.setVisible(model is self.model)
+        if hasattr(self, "explorer_layout"):
+            self.explorer_layout.apply()
         if hasattr(self, "directory_filter"):
             self.directory_filter.setEnabled(model is self.model)
         self.folder_view.setColumnWidth(0, 260)

@@ -34,6 +34,7 @@ class PreviewResult:
     cancelled: bool = False
     error: str | None = None
     signature: dict[str, int] | None = None
+    document_bytes: bytes | None = None
     image_bytes: bytes | None = None
     image: object | None = None
     image_original_size: tuple[int, int] | None = None
@@ -140,6 +141,7 @@ def preview_bytes(
         is_link=is_link,
         signature=signature,
         image_bytes=data if image and not truncated else None,
+        document_bytes=data if data.startswith(b"%PDF-") and not truncated else None,
     )
 
 

@@ -51,7 +51,7 @@ class PreviewSession(QObject):
         self.pending = False
         self.running_generation = self.generation
         self.outcome = None
-        self.worker = FilePreviewWorker(self.path)
+        self.worker = FilePreviewWorker(self.path, pdf=True)
         self.worker.finished.connect(self.receive)
         self.thread = prepare_worker_thread(
             self, self.worker, on_finished=self.finished

@@ -586,7 +586,7 @@ class ArchivePreviewWorker(CancellableWorker):
                 size=content.size,
                 truncated=content.truncated,
             )
-            result = decode_preview_image(result)
+            result = decode_preview_image(result, pdf=True)
             check_cancelled(self._cancelled)
         except SnapshotCancelled:
             self.finished.emit((self.generation, self.key, None, False), "")

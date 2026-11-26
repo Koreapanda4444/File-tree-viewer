@@ -62,6 +62,12 @@ class PanelManager:
                 group[0].setChecked(True)
             self.groups.append((key, splitter, group))
         window.real_workspace.active_changed.connect(self.active_changed)
+        for page in window.real_workspace.panes:
+            page.explorer_layout.changed.connect(
+                lambda mode, p=page: (
+                    self.active_changed(p) if window.real_page is p else None
+                )
+            )
         menu.addSeparator()
         identify(
             menu.addAction(tr("Restore All Panels"), self.restore),
@@ -83,6 +89,18 @@ class PanelManager:
                         action.setChecked(not splitter.widget(i).isHidden())
 
     def toggle(self, splitter, index, group, checked):
+        page = self.window.real_page
+        if splitter is page.navigation_splitter:
+            page.explorer_layout.set_panel(index, checked)
+            self.active_changed(page)
+            return
+        if splitter is page.content_splitter:
+            if index == 1:
+                page.explorer_layout.set_panel(2, checked)
+            else:
+                splitter.widget(0).show()
+            self.active_changed(page)
+            return
         if not checked and not any(action.isChecked() for action in group):
             group[index].setChecked(True)
             return

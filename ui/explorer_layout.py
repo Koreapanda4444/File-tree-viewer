@@ -170,6 +170,61 @@ class ExplorerLayout(QObject):
         self.generation += 1
         self.apply()
 
+    def export_state(self):
+        self.capture()
+        contexts = deepcopy(self.contexts)
+        contexts[self.context] = {
+            "mode": self.mode,
+            "configurations": deepcopy(self.configurations),
+        }
+        return {"version": 1, "contexts": contexts}
+
+    def load_state(self, document):
+        try:
+            if not isinstance(document, dict) or document.get("version") != 1:
+                return False
+            contexts = document["contexts"]
+            if (
+                not isinstance(contexts, dict)
+                or not contexts
+                or set(contexts) - {"single", "dual"}
+            ):
+                return False
+            for context in contexts.values():
+                if context["mode"] not in MODES or set(
+                    context["configurations"]
+                ) != set(MODES):
+                    return False
+                for state in context["configurations"].values():
+                    visible = state["visible"]
+                    if (
+                        not isinstance(visible, list)
+                        or len(visible) != 3
+                        or any(type(v) is not bool for v in visible)
+                        or not any(visible[:2])
+                    ):
+                        return False
+                    for field in ("content", "navigation"):
+                        sizes = state[field]
+                        if (
+                            not isinstance(sizes, list)
+                            or len(sizes) != 2
+                            or any(
+                                type(v) is not int or not 0 <= v <= 1_000_000
+                                for v in sizes
+                            )
+                            or not sum(sizes)
+                        ):
+                            return False
+            self.contexts = deepcopy(contexts)
+            current = contexts.get(self.context, next(iter(contexts.values())))
+            self.mode = current["mode"]
+            self.configurations = deepcopy(current["configurations"])
+            self.apply()
+            return True
+        except (KeyError, TypeError, ValueError):
+            return False
+
     def focus_files(self):
         (
             self.page.tree

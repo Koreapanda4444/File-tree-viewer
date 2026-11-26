@@ -33,6 +33,7 @@ def save_pane(page, settings, key, *, panels=None):
         "folders_first": page.folders_first.isChecked(),
         "hidden": page.show_hidden.isChecked(),
         "filter": page.directory_filter.state(),
+        "layouts": page.explorer_layout.export_state(),
         "panels": panels
         or [
             not widget.isHidden()
@@ -110,6 +111,8 @@ def restore_pane(page, settings, key):
                     splitter.restoreState(value)
         finally:
             settings.endGroup()
+        page.explorer_layout.capture()
+        page.explorer_layout.load_state(state.get("layouts"))
         return True
     except (ValueError, TypeError, KeyError, OSError):
         return False

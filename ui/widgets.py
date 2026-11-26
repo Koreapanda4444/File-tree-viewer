@@ -1,13 +1,40 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtWidgets import QLabel, QLayout
+from PySide6.QtWidgets import QLabel, QLayout, QSizePolicy
 
 
 class PlainLabel(QLabel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setTextFormat(Qt.TextFormat.PlainText)
+
+
+class ElidedPathLabel(PlainLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.full_text = ""
+        self.setMinimumWidth(80)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def set_path(self, text):
+        self.full_text = str(text)
+        self.setToolTip(self.full_text)
+        self.refresh_text()
+
+    def refresh_text(self):
+        self.setText(
+            self.fontMetrics().elidedText(
+                self.full_text, Qt.TextElideMode.ElideMiddle, max(1, self.width())
+            )
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.refresh_text()
+
+    def sizeHint(self):
+        return QSize(420, self.fontMetrics().height() + 6)
 
 
 class FlowLayout(QLayout):

@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, QSignalBlocker, QTimer, Signal
 from PySide6.QtWidgets import QComboBox, QToolButton
 
 from ui.i18n import add_choices, choice_text, set_choice_text, tr
-from ui.widgets import FlowLayout
+from ui.widgets import ElidedPathLabel, FlowLayout
 
 MODES = ("Explorer", "Tree Focus", "Compact")
 DEFAULTS = {
@@ -62,7 +62,21 @@ class ExplorerLayout(QObject):
             bar.addWidget(button)
         page.layout().insertLayout(2, bar)
         self.bar = bar
+        self.path_label = ElidedPathLabel(page)
+        page.layout().insertWidget(3, self.path_label)
+        page.preview_path_changed.connect(self.update_path)
+        page.location_changed.connect(
+            lambda path: self.update_path(page.current_preview_path or path)
+        )
+        self.update_path(None)
         self.apply()
+
+    def update_path(self, path):
+        self.path_label.set_path(
+            tr("Selected path: {path}", path=path)
+            if path
+            else tr("Select a file or folder in the tree")
+        )
 
     @property
     def widgets(self):
@@ -177,7 +191,11 @@ class ExplorerLayout(QObject):
             "mode": self.mode,
             "configurations": deepcopy(self.configurations),
         }
-        return {"version": 1, "contexts": contexts}
+        return {
+            "version": 1,
+            "contexts": contexts,
+            "columns": [self.page.tree.columnWidth(i) for i in range(4)],
+        }
 
     def load_state(self, document):
         try:
@@ -216,11 +234,21 @@ class ExplorerLayout(QObject):
                             or not sum(sizes)
                         ):
                             return False
+            columns = document.get("columns", [])
+            if columns and (
+                not isinstance(columns, list)
+                or len(columns) != 4
+                or any(type(v) is not int or not 24 <= v <= 10000 for v in columns)
+            ):
+                return False
             self.contexts = deepcopy(contexts)
             current = contexts.get(self.context, next(iter(contexts.values())))
             self.mode = current["mode"]
             self.configurations = deepcopy(current["configurations"])
             self.apply()
+            if columns and not self.page.search_view_active:
+                for column, width in enumerate(columns):
+                    self.page.tree.setColumnWidth(column, width)
             return True
         except (KeyError, TypeError, ValueError):
             return False

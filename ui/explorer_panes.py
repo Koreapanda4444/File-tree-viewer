@@ -186,11 +186,10 @@ class RealWorkspace(QWidget):
         )
         for pane in self.panes:
             pane.setProperty("activePane", pane is page)
-            pane.setStyleSheet(
-                "RealExplorerPage { border-top: 2px solid #3b7957; }"
-                if pane is page and self.dual
-                else ""
-            )
+            pane.setProperty("dualPane", self.dual)
+            pane.style().unpolish(pane)
+            pane.style().polish(pane)
+            pane.update()
         self.active_changed.emit(page)
 
     def eventFilter(self, watched, event):

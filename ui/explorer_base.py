@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.address import AddressBar
-from ui.file_views import FolderViews
+from ui.file_views import FolderViews, HierarchyTree
 from ui.i18n import add_choice, tr
 from ui.image_preview import ImagePreview
 from ui.widgets import FlowLayout
@@ -142,13 +142,14 @@ class ExplorerPage(QWidget):
     def _create_content(self) -> QSplitter:
         splitter = self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self.tree = QTreeView()
+        self.tree = QTreeView() if self.virtual else HierarchyTree()
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tree.setUniformRowHeights(True)
         self.tree.setMinimumWidth(160)
-        self.tree.setIndentation(18)
+        if self.virtual:
+            self.tree.setIndentation(18)
 
         empty_model = QStandardItemModel(self.tree)
         empty_model.setHorizontalHeaderLabels(

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QPalette, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QHeaderView,
     QListView,
     QStackedWidget,
+    QTreeView,
     QVBoxLayout,
     QWidget,
 )
@@ -78,3 +81,44 @@ class FolderViews(QWidget):
     def set_root(self, index):
         self.details.setRootIndex(index)
         self.icons.setRootIndex(index)
+
+
+class HierarchyTree(QTreeView):
+    """Native branch controls with quiet, palette-aware ancestor guides."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("hierarchyTree")
+        self.setIndentation(22)
+        self.setAnimated(False)
+        self.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.setIconSize(QSize(20, 20))
+        self.setAllColumnsShowFocus(True)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.header().setStretchLastSection(False)
+        self.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+
+    def drawBranches(self, painter, rectangle, index):
+        painter.save()
+        color = self.palette().color(QPalette.ColorRole.Text)
+        color.setAlpha(45)
+        painter.setPen(QPen(color, 1))
+        ancestor, depth = index.parent(), 1
+        while ancestor.isValid() and depth <= 128:
+            if ancestor.row() + 1 < self.model().rowCount(ancestor.parent()):
+                x = (
+                    rectangle.right()
+                    - self.indentation() * depth
+                    + self.indentation() // 2
+                )
+                if self.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+                    x = (
+                        rectangle.left()
+                        + self.indentation() * depth
+                        - self.indentation() // 2
+                    )
+                painter.drawLine(x, rectangle.top(), x, rectangle.bottom())
+            ancestor = ancestor.parent()
+            depth += 1
+        painter.restore()
+        super().drawBranches(painter, rectangle, index)

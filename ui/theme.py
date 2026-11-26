@@ -81,6 +81,9 @@ class ThemeManager(QObject):
         accent = "#88c9a2" if dark else "#215b3c"
         self.app.setStyleSheet(f"""
             QWidget {{ font-size: 10pt; }}
+            RealExplorerPage[dualPane="true"] {{ border-top: 2px solid {border}; }}
+            RealExplorerPage[dualPane="true"][activePane="true"] {{ border-top: 2px solid {accent}; }}
+            QTreeView#hierarchyTree:focus {{ border: 1px solid {accent}; }}
             QMainWindow {{ background: palette(window); }}
             #workspaceHeader {{ background: #16432d; border-bottom: 3px solid #c4ae62; }}
             #applicationTitle {{ color: #fffef4; font-size: 17pt; font-weight: 600; }}

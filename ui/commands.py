@@ -264,7 +264,12 @@ def organize_explorer_actions(window, workspace_menu):
         entries.append(action)
 
     def refresh(*args):
-        for action in entries:
+        dynamic = [
+            action
+            for action in walk_actions(workspace_menu)
+            if hasattr(action, "command_enabled")
+        ]
+        for action in entries + dynamic:
             action.setEnabled(action.command_enabled())
 
     window.real_workspace.state_timer.timeout.connect(refresh)

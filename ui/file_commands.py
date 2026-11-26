@@ -290,7 +290,7 @@ class FileCommands(QObject):
             else page.current_directory
         )
         add(
-            "Paste Into Folder" if target != page.model.root_path else "Paste",
+            "Paste Into Folder" if target != page.current_directory else "Paste",
             lambda: self.paste(target),
             ready and self.actions["Paste"].isEnabled(),
             mutation=True,
@@ -371,6 +371,9 @@ class FileCommands(QObject):
     def select_all(self):
         if not self.page._confirm_editor_transition():
             return
+        self.page.tree_navigation.cancel()
+        self.page.file_revealer.stop()
+        self.page.explorer_state.stop()
         if self.page.search_view_active:
             self.page.tree.selectAll()
             return
@@ -385,7 +388,11 @@ class FileCommands(QObject):
         if page.close_requested or page.operation_is_running or page.search_view_active:
             self.stop()
             return
-        root = page.model.index(0, 0)
+        root = (
+            page.model.index_for_path(page.current_directory)
+            if page.current_directory is not None
+            else page.model.index(0, 0)
+        )
         node = page.model.node_from_index(root)
         if node is None:
             self.stop()
@@ -393,7 +400,10 @@ class FileCommands(QObject):
             page.model.fetchMore(root)
         elif not node.fetch_pending:
             self.stop()
-            page.folder_panel.active_view.selectAll()
+            if page.explorer_layout.widgets[1].isHidden():
+                page.tree.selectAll()
+            else:
+                page.folder_panel.active_view.selectAll()
             page.status_changed.emit(
                 tr("Selected {value0:,} item(s)", value0=len(page.selected_paths()))
             )

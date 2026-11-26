@@ -411,6 +411,8 @@ class FolderSizeCache:
 
     def changed_since(self, root, revision):
         root = Path(root).absolute()
+        if type(revision) is not int or not 0 <= revision <= self.revision:
+            return True
         if revision == self.revision:
             return False
         if not self.changes or revision < self.changes[0][0] - 1:

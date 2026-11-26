@@ -81,7 +81,8 @@ def collect_commands(window):
                     lambda a=action, s=spec: command_available(window, a, s),
                     spec.mutates_files,
                     spec.confirmation,
-                    legacy_aliases(menu.title(), action.text()),
+                    legacy_aliases(menu.title(), action.text())
+                    + getattr(action, "command_aliases", ()),
                 )
             )
     page = window.tabs.currentWidget()

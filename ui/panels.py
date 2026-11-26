@@ -88,6 +88,7 @@ class PanelManager:
                     self.active_changed(p) if window.real_page is p else None
                 )
             )
+        self.active_changed(window.real_page)
         menu.addSeparator()
         identify(
             menu.addAction(tr("Restore All Panels"), self.restore),

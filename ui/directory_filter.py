@@ -27,7 +27,7 @@ class DirectoryFilterBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         row = FlowLayout()
         self.name = QLineEdit()
-        self.name.setPlaceholderText(tr("Filter this folder by name…"))
+        self.name.setPlaceholderText(tr("Filter root folder by name…"))
         self.name.setMaximumWidth(260)
         self.extensions = QLineEdit()
         self.extensions.setPlaceholderText(tr("Extensions: .txt, .png"))
@@ -56,6 +56,14 @@ class DirectoryFilterBar(QWidget):
         self.timer.setSingleShot(True)
         self.timer.setInterval(120)
         self.timer.timeout.connect(self.apply)
+        page.location_changed.connect(
+            lambda path: self.setToolTip(
+                tr(
+                    "Filters direct children of the explorer root: {path}",
+                    path=path or "—",
+                )
+            )
+        )
         self.name.textChanged.connect(self.changed)
         self.extensions.textChanged.connect(self.changed)
         self.kind.currentIndexChanged.connect(self.changed)

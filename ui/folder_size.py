@@ -32,6 +32,7 @@ class FolderSizeDialog(QDialog):
         self.result = self.outcome = None
         self.closing = False
         self.cached_result = False
+        self.cancel_requested = False
         self.setWindowTitle(tr("Folder Size"))
         self.resize(700, 420)
         layout = QVBoxLayout(self)
@@ -83,6 +84,7 @@ class FolderSizeDialog(QDialog):
         self.revision = self.cache.revision
         self.outcome = None
         self.result = None
+        self.cancel_requested = False
         self.cached_result = False
         self.details.clear()
         self.status.setText(tr("Calculating folder size…"))
@@ -113,12 +115,16 @@ class FolderSizeDialog(QDialog):
         self.refresh.setEnabled(True)
         self.cancel.setEnabled(False)
         result, error = self.outcome or (None, tr("Folder inspection failed"))
+        if self.cancel_requested:
+            result, error = None, tr("Analysis cancelled")
         if result is None:
             self.status.setText(tr(error))
         else:
             if self.revision != self.cache.revision:
                 result = replace(result, changed=True)
             self.cached_result = self.cache.put(result, revision=self.revision)
+            if result.complete and not self.cached_result:
+                result = replace(result, changed=True)
             self.display(result)
             self.updated.emit()
         if self.closing:
@@ -173,6 +179,7 @@ class FolderSizeDialog(QDialog):
 
     def cancel_task(self):
         if self.worker is not None:
+            self.cancel_requested = True
             self.worker.cancel()
             self.cancel.setEnabled(False)
 

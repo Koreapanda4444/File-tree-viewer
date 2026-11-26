@@ -78,12 +78,29 @@ class QuickLookDialog(QDialog):
     def set_path(self, path):
         if self.closing:
             return
+        if path is None:
+            self.clear_selection()
+            return
         self.path = path
+        self.refresh.setEnabled(True)
+        self.previous.setEnabled(True)
+        self.next.setEnabled(True)
         self.title.setText(str(path))
         self.setWindowTitle(tr("Quick Look") + " — " + path.name)
         self.bar.show()
         self.external.setEnabled(False)
         self.session.request(path)
+
+    def clear_selection(self, path=None):
+        self.path = None
+        self.title.setText(
+            str(path) if path is not None else tr("Select a file to preview it")
+        )
+        self.session.clear_selection()
+        self.bar.hide()
+        self.refresh.setEnabled(False)
+        self.previous.setEnabled(False)
+        self.next.setEnabled(False)
 
     def clear_preview(self):
         self.text.clear()

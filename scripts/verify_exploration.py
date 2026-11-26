@@ -324,6 +324,31 @@ class FolderSizeChecks(unittest.TestCase):
         self.assertEqual(inspect_folder_size(self.root).files, 300)
 
 
+class PreviewChecks(unittest.TestCase):
+    setUp = ArchiveChecks.setUp
+
+    def test_link_target_change_is_detected_without_link_metadata_change(self):
+        from file_preview import FilePreviewTask, require_preview_unchanged
+
+        target, link = self.root / "target.txt", self.root / "link.txt"
+        target.write_text("original")
+        try:
+            link.symlink_to(target)
+        except OSError:
+            self.skipTest("Symbolic links unavailable")
+        result = FilePreviewTask(link).run()
+        self.assertIsNone(result.error)
+        self.assertTrue(result.is_link)
+        require_preview_unchanged(result)
+        from fs_ops import file_signature
+
+        signature = file_signature(link)
+        target.write_text("changed target content")
+        self.assertEqual(file_signature(link), signature)
+        with self.assertRaises(OSError):
+            require_preview_unchanged(result)
+
+
 import verify_enhancements as support
 
 
@@ -634,6 +659,10 @@ class ExplorationChecks(unittest.TestCase):
         dialog.session.check_source()
         self.assertEqual(dialog.text.toPlainText(), "")
         self.assertIsNone(dialog.session.result)
+        dialog.clear_selection(other)
+        self.assertIsNone(dialog.path)
+        self.assertFalse(dialog.refresh.isEnabled())
+        self.window.navigate_quick_look(1)
         dialog.reject()
         support.wait_for(lambda: self.window.quick_look_dialog is None)
 

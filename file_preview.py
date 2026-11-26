@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from file_content import ContentCancelled, read_file_bytes
+from file_content import ContentCancelled, read_file_bytes, stat_identity
 from fs_ops import file_signature, require_unchanged
 from fs_paths import checked_boundary
 from write_policy import mutating
@@ -34,6 +34,7 @@ class PreviewResult:
     cancelled: bool = False
     error: str | None = None
     signature: dict[str, int] | None = None
+    content_identity: tuple | None = None
     document_bytes: bytes | None = None
     image_bytes: bytes | None = None
     image: object | None = None
@@ -80,6 +81,9 @@ class FilePreviewTask:
                 truncated=content.truncated,
                 is_link=content.is_link,
                 readonly=False,
+                content_identity=stat_identity(content.details)
+                if content.is_link
+                else None,
             )
         except ContentCancelled:
             return self._cancelled_result(0, 0)
@@ -122,6 +126,7 @@ def preview_bytes(
     truncated=False,
     is_link=False,
     readonly=True,
+    content_identity=None,
 ):
     text, encoding, binary = decode_text(data, truncated=truncated)
     image = image_signature(data)
@@ -140,9 +145,21 @@ def preview_bytes(
         binary=binary,
         is_link=is_link,
         signature=signature,
+        content_identity=content_identity,
         image_bytes=data if image and not truncated else None,
         document_bytes=data if data.startswith(b"%PDF-") and not truncated else None,
     )
+
+
+def require_preview_unchanged(result):
+    if result.signature is None:
+        raise OSError("Missing preview source identity")
+    require_unchanged(result.path, result.signature)
+    if (
+        result.content_identity is not None
+        and stat_identity(result.path.stat()) != result.content_identity
+    ):
+        raise FileExistsError("The preview link target changed externally")
 
 
 def decode_text(

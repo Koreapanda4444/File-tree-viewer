@@ -496,11 +496,7 @@ class MainWindow(QMainWindow):
         if dialog is None or pane is not self.quick_look_pane or dialog.closing:
             return
         if path is None or not path.is_file():
-            dialog.session.generation += 1
-            dialog.session.pending = False
-            if dialog.session.worker is not None:
-                dialog.session.worker.cancel()
-            dialog.session.invalidate("")
+            dialog.clear_selection(path)
         elif path != dialog.path:
             dialog.set_path(path)
 
@@ -508,6 +504,7 @@ class MainWindow(QMainWindow):
         dialog, pane = self.quick_look_dialog, self.quick_look_pane
         if (
             dialog is None
+            or dialog.path is None
             or pane is None
             or pane.operation_is_running
             or pane.close_requested
@@ -892,6 +889,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("Waiting for snapshot task..."))
             event.ignore()
             return
+        self.folder_size_timer.stop()
         self.save_preferences()
         self.real_workspace.finalize_close()
         self.plan_page.finalize_close()

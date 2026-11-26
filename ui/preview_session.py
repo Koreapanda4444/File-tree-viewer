@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from fs_ops import require_unchanged
+from file_preview import require_preview_unchanged
 from real.preview import FilePreviewWorker
 from ui.i18n import tr
 from ui.tasks import prepare_worker_thread
@@ -90,12 +90,21 @@ class PreviewSession(QObject):
         try:
             if result.signature is None:
                 raise OSError(tr("Missing file identity"))
-            require_unchanged(result.path, result.signature)
+            require_preview_unchanged(result)
         except OSError as error:
             self.invalidate(str(error))
             return
         self.result = result
         self.ready.emit(result)
+
+    def clear_selection(self):
+        self.generation += 1
+        self.pending = False
+        self.result = None
+        if self.worker is not None:
+            self.worker.cancel()
+        self.invalidated.emit()
+        self.status_changed.emit(tr("Select a file to preview it"))
 
     def invalidate(self, error):
         self.result = None
@@ -111,7 +120,7 @@ class PreviewSession(QObject):
         if self.result is None:
             return
         try:
-            require_unchanged(self.result.path, self.result.signature)
+            require_preview_unchanged(self.result)
         except OSError as error:
             self.invalidate(str(error))
 

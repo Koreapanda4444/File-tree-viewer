@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fs_ops import require_unchanged
+from file_preview import require_preview_unchanged
 from ui.i18n import tr
 
 
@@ -178,7 +178,7 @@ class ImagePreviewDialog(QDialog):
         try:
             if self.result.signature is None:
                 raise OSError("Missing source signature")
-            require_unchanged(self.result.path, self.result.signature)
+            require_preview_unchanged(self.result)
         except OSError:
             self.stale = True
             self.status.setText(

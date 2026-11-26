@@ -70,27 +70,15 @@ class FilePreviewTask:
                 return self._cancelled_result(
                     content.details.st_size, content.details.st_mtime_ns
                 )
-            text, encoding, binary = decode_text(
-                content.data, truncated=content.truncated
-            )
-            image = image_signature(content.data)
-            binary = binary or image
-            if binary:
-                text = hex_preview(content.data[:4096])
-                encoding = None
-            return PreviewResult(
-                path=self.path,
-                text=text,
-                encoding=encoding,
-                newline=detect_newline(text),
+            return preview_bytes(
+                self.path,
+                content.data,
                 size=content.details.st_size,
                 modified_ns=content.details.st_mtime_ns,
-                editable=not binary and not content.truncated and not content.is_link,
-                truncated=content.truncated,
-                binary=binary,
-                is_link=content.is_link,
                 signature=content.signature,
-                image_bytes=content.data if image and not content.truncated else None,
+                truncated=content.truncated,
+                is_link=content.is_link,
+                readonly=False,
             )
         except ContentCancelled:
             return self._cancelled_result(0, 0)
@@ -121,6 +109,38 @@ class FilePreviewTask:
             binary=False,
             cancelled=True,
         )
+
+
+def preview_bytes(
+    path,
+    data,
+    *,
+    size,
+    modified_ns=0,
+    signature=None,
+    truncated=False,
+    is_link=False,
+    readonly=True,
+):
+    text, encoding, binary = decode_text(data, truncated=truncated)
+    image = image_signature(data)
+    binary = binary or image
+    if binary:
+        text, encoding = hex_preview(data[:4096]), None
+    return PreviewResult(
+        path=path,
+        text=text,
+        encoding=encoding,
+        newline=detect_newline(text),
+        size=size,
+        modified_ns=modified_ns,
+        editable=not readonly and not binary and not truncated and not is_link,
+        truncated=truncated,
+        binary=binary,
+        is_link=is_link,
+        signature=signature,
+        image_bytes=data if image and not truncated else None,
+    )
 
 
 def decode_text(

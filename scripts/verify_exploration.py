@@ -218,5 +218,70 @@ class ArchiveChecks(unittest.TestCase):
         self.assertFalse((destination / "output").exists())
 
 
+import verify_enhancements as support
+
+
+class ExplorationChecks(unittest.TestCase):
+    setUp = support.WindowChecks.setUp
+    close_window = support.WindowChecks.close_window
+
+    def archive_dialog(self):
+        from ui.archive_browser import ArchiveDialog
+
+        path = self.base / "자료 test.zip"
+        with zipfile.ZipFile(path, "w") as output:
+            output.writestr("folder/hello.txt", "Hello ZIP")
+            output.writestr("binary.bin", b"\0\1\2")
+        dialog = ArchiveDialog(path, self.window)
+        dialog.show()
+
+        def cleanup():
+            dialog.reject()
+            support.wait_for(
+                lambda: dialog.thread is None and dialog.preview_thread is None
+            )
+            dialog.deleteLater()
+            support.APP.processEvents()
+
+        self.addCleanup(cleanup)
+        support.wait_for(lambda: dialog.thread is None)
+        self.assertIsNotNone(dialog.archive, dialog.status.text())
+        return dialog
+
+    def test_archive_preview_extraction_and_read_only(self):
+        dialog = self.archive_dialog()
+        dialog.navigate("folder")
+        dialog.files.setCurrentIndex(dialog.file_model.index_for("folder/hello.txt"))
+        support.wait_for(lambda: dialog.preview_thread is None)
+        self.assertEqual(dialog.preview.toPlainText(), "Hello ZIP")
+        self.assertTrue(dialog.preview.isReadOnly())
+        self.assertTrue(dialog.extract_selection.isEnabled())
+        self.assertTrue(self.window.set_read_only(True))
+        self.assertFalse(dialog.extract_all.isEnabled())
+        self.assertFalse(dialog.start_extraction([""], self.base / "forbidden"))
+        self.assertTrue(self.window.set_read_only(False))
+        self.assertTrue(dialog.start_extraction(["folder"], self.base / "output"))
+        self.assertFalse(self.window.set_read_only(True))
+        support.wait_for(lambda: dialog.thread is None)
+        self.assertEqual(
+            (self.base / "output/folder/hello.txt").read_text(), "Hello ZIP"
+        )
+        self.assertFalse((self.base / "output/binary.bin").exists())
+        dialog.path.unlink()
+        dialog.check_source()
+        self.assertTrue(dialog.stale)
+        self.assertEqual(dialog.preview.toPlainText(), "")
+        self.assertFalse(dialog.extract_all.isEnabled())
+
+    def test_archive_close_during_preview(self):
+        dialog = self.archive_dialog()
+        for key in ["binary.bin", "folder/hello.txt"] * 5:
+            dialog.request_preview(key)
+        dialog.reject()
+        support.wait_for(lambda: not dialog.isVisible())
+        self.assertIsNone(dialog.preview_thread)
+        self.assertIsNone(dialog.thread)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,54 @@ from file_preview import (
 )
 
 
+def decode_preview_image(result):
+    if result.image_bytes is not None:
+        buffer = QBuffer()
+        buffer.setData(QByteArray(result.image_bytes))
+        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        reader = QImageReader(buffer)
+        reader.setAllocationLimit(64)
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if size.isValid() and size.width() * size.height() <= 50000000:
+            original_size = (size.width(), size.height())
+            pixels = size.width() * size.height()
+            if pixels > 8_000_000:
+                scale = sqrt(8_000_000 / pixels)
+                size.scale(
+                    max(1, int(size.width() * scale)),
+                    max(1, int(size.height() * scale)),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                )
+            reader.setScaledSize(size)
+            image = reader.read()
+            if not image.isNull():
+                result = replace(
+                    result,
+                    image=image,
+                    image_bytes=None,
+                    image_original_size=original_size,
+                )
+            else:
+                result = replace(
+                    result,
+                    text="Image preview unavailable: "
+                    + reader.errorString()
+                    + "\n\n"
+                    + result.text,
+                    image_bytes=None,
+                )
+        else:
+            result = replace(
+                result,
+                text="Image dimensions exceed the preview limit or are invalid.\n\n"
+                + result.text,
+                image_bytes=None,
+            )
+        buffer.close()
+    return result
+
+
 class FilePreviewWorker(QObject):
     finished = Signal(object)
 
@@ -31,50 +79,12 @@ class FilePreviewWorker(QObject):
     @Slot()
     def run(self) -> None:
         result = self.task.run()
-        if result.image_bytes is not None:
-            buffer = QBuffer()
-            buffer.setData(QByteArray(result.image_bytes))
-            buffer.open(QIODevice.OpenModeFlag.ReadOnly)
-            reader = QImageReader(buffer)
-            reader.setAllocationLimit(64)
-            reader.setAutoTransform(True)
-            size = reader.size()
-            if size.isValid() and size.width() * size.height() <= 50000000:
-                original_size = (size.width(), size.height())
-                pixels = size.width() * size.height()
-                if pixels > 8_000_000:
-                    scale = sqrt(8_000_000 / pixels)
-                    size.scale(
-                        max(1, int(size.width() * scale)),
-                        max(1, int(size.height() * scale)),
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                    )
-                reader.setScaledSize(size)
-                image = reader.read()
-                if not image.isNull():
-                    result = replace(
-                        result,
-                        image=image,
-                        image_bytes=None,
-                        image_original_size=original_size,
-                    )
-                else:
-                    result = replace(
-                        result,
-                        text="Image preview unavailable: "
-                        + reader.errorString()
-                        + "\n\n"
-                        + result.text,
-                        image_bytes=None,
-                    )
-            else:
-                result = replace(
-                    result,
-                    text="Image dimensions exceed the preview limit or are invalid.\n\n"
-                    + result.text,
-                    image_bytes=None,
-                )
-            buffer.close()
+        if not result.cancelled and result.error is None:
+            result = decode_preview_image(result)
+        if self.task._cancelled.is_set():
+            result = replace(
+                result, cancelled=True, image=None, image_bytes=None, text=""
+            )
         self.finished.emit(result)
 
 

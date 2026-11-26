@@ -77,6 +77,7 @@ from write_policy import policy, writes_allowed
 
 
 class RealExplorerPage(ExplorerPage):
+    archive_requested = Signal(object)
     hash_requested = Signal()
     stage_requested = Signal(str)
     status_changed = Signal(str)
@@ -446,6 +447,14 @@ class RealExplorerPage(ExplorerPage):
 
     def open_folder_index(self, index):
         path = self._path_from_index(index)
+        if (
+            path is not None
+            and path.suffix.lower() == ".zip"
+            and path.is_file()
+            and not path.is_symlink()
+        ):
+            self.archive_requested.emit(path)
+            return
         if path is None or not path.is_dir() or path.is_symlink():
             return
         if self.preview_is_running:

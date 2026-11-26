@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self.auxiliary_close_pending = False
         self.command_palette_dialog = None
         self.recovery_history_dialog = None
+        self.archive_dialog = None
         self.hash_dialog = None
         self.history_dialog = None
         self.disk_dialog = None
@@ -201,6 +202,13 @@ class MainWindow(QMainWindow):
             action.command_enabled = button.isEnabled
             self.pane_actions.append((action, button))
         self.real_workspace.state_timer.timeout.connect(self.update_pane_actions)
+        menu_command(
+            workspace_menu, "workspace.archive", tr("Browse ZIP…"), self.open_archive
+        )
+        for pane in self.real_workspace.panes:
+            pane.archive_requested.connect(
+                lambda path, p=pane: self.open_archive_from_pane(p, path)
+            )
         self.tabs.setDocumentMode(True)
         self.theme_manager = ThemeManager(self)
         self.settings = application_settings()
@@ -288,6 +296,7 @@ class MainWindow(QMainWindow):
             getattr(dialog, "thread", None) is not None
             for dialog in self.findChildren(QDialog)
             if type(dialog).__name__ == "SyncReviewDialog"
+            or getattr(dialog, "mutation_running", False)
         )
         if (
             busy
@@ -347,6 +356,39 @@ class MainWindow(QMainWindow):
     def stage_from_pane(self, page, action):
         self.real_workspace.activate(page)
         self.staging.request(action)
+
+    def open_archive_from_pane(self, pane, path):
+        self.real_workspace.activate(pane)
+        self.open_archive(path)
+
+    def open_archive(self, path=None):
+        from ui.archive_browser import ArchiveDialog
+
+        if self.archive_dialog is not None:
+            self.archive_dialog.raise_()
+            return
+        if not self.real_page._confirm_editor_transition():
+            return
+        if path is None or isinstance(path, bool):
+            selected = [
+                p for p in self.real_page.selected_paths() if p.suffix.lower() == ".zip"
+            ]
+            path = selected[0] if selected else None
+        if path is None:
+            name, _ = QFileDialog.getOpenFileName(
+                self, tr("Choose ZIP archive"), filter="ZIP (*.zip)"
+            )
+            if not name:
+                return
+            path = Path(name)
+        dialog = self.archive_dialog = ArchiveDialog(Path(path), self)
+        dialog.filesystem_changed.connect(self.staging.filesystem_changed)
+        try:
+            dialog.exec()
+        finally:
+            self.archive_dialog = None
+            dialog.deleteLater()
+            self.finish_auxiliary_close()
 
     def inspect_hash_from_pane(self, pane):
         self.real_workspace.activate(pane)
@@ -644,6 +686,7 @@ class MainWindow(QMainWindow):
             self.disk_dialog,
             self.command_palette_dialog,
             self.hash_dialog,
+            self.archive_dialog,
         ):
             if dialog is not None:
                 self.auxiliary_close_pending = True

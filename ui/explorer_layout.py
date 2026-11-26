@@ -138,6 +138,10 @@ class ExplorerLayout(QObject):
         for widget, shown in zip(self.widgets, visible, strict=True):
             widget.setVisible(shown)
         self.page.quick_access.setVisible(self.mode == "Explorer")
+        for button in self.page.action_buttons:
+            button.setVisible(self.mode != "Compact")
+        self.page.compare_files_button.setVisible(self.mode == "Explorer")
+        self.page.tree_export_button.setVisible(self.mode != "Compact")
         self.page.navigation_splitter.setSizes(state["navigation"])
         self.page.content_splitter.setSizes(state["content"])
         with QSignalBlocker(self.choice):

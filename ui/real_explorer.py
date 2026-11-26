@@ -350,20 +350,24 @@ class RealExplorerPage(ExplorerPage):
         self.set_root(path)
         self.location.setText(str(self.model.root_path or ""))
 
-    def set_root(self, path: Path | None) -> bool:
+    def set_root(self, path: Path | None, *, confirmed=False) -> bool:
         if (
             self.close_requested
             or self.search_export_thread is not None
             or self.operation_is_running
             or self.search_is_running
-            or self.preview_is_running
         ):
             self.status_changed.emit(
                 tr("Wait for Real tasks to finish before changing the root")
             )
             return False
-        if self.model.root_path is not None and not self._confirm_editor_transition():
+        if (
+            not confirmed
+            and self.model.root_path is not None
+            and not self._confirm_editor_transition()
+        ):
             return False
+        self.pending_folder = None
         if hasattr(self, "directory_filter"):
             self.directory_filter.before_navigation(path)
         try:

@@ -20,7 +20,7 @@ from disk_usage import FolderSizeCache
 from ui.appearance import install_appearance
 from ui.chrome import WorkspaceHeader
 from ui.command_palette import install_command_palette
-from ui.commands import identify, identify_page, menu_command
+from ui.commands import identify, identify_page, menu_command, organize_explorer_actions
 from ui.data_migration import import_previous_data
 from ui.explorer_base import ExplorerPage
 from ui.explorer_panes import RealWorkspace
@@ -270,6 +270,7 @@ class MainWindow(QMainWindow):
                 lambda path, p=pane: self.quick_look_selection_changed(p, path)
             )
         self.real_workspace.active_changed.connect(self.quick_look_active_changed)
+        organize_explorer_actions(self, workspace_menu)
         self.tabs.setDocumentMode(True)
         self.theme_manager = ThemeManager(self)
         self.settings = application_settings()

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSignalBlocker
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QActionGroup
 
 from ui.commands import identify
+from ui.explorer_layout import MODES
 from ui.i18n import tr
 from ui.preferences import boolean
 
@@ -38,6 +39,25 @@ class PanelManager:
         self.window, self.settings = window, settings
         self.groups = []
         menu = window.menuBar().addMenu(tr("View"))
+        modes = menu.addMenu(tr("Explorer layout"))
+        self.mode_actions = []
+        self.mode_group = QActionGroup(window)
+        for mode in MODES:
+            action = identify(
+                QAction(tr(mode), window, checkable=True),
+                "view.real_layout." + mode.lower().replace(" ", "_"),
+            )
+            action.triggered.connect(
+                lambda checked=False, value=mode: (
+                    window.real_page.explorer_layout.set_mode(value)
+                )
+            )
+            action.command_enabled = lambda: (
+                window.tabs.currentWidget() is window.real_workspace
+            )
+            self.mode_group.addAction(action)
+            modes.addAction(action)
+            self.mode_actions.append((mode, action))
         for key, splitter, names in panel_splitters(window):
             splitter.setChildrenCollapsible(True)
             group = []
@@ -81,6 +101,9 @@ class PanelManager:
         }.get(key, fallback)
 
     def active_changed(self, page):
+        for mode, action in self.mode_actions:
+            with QSignalBlocker(action):
+                action.setChecked(mode == page.explorer_layout.mode)
         for key, original, actions in self.groups:
             if key.startswith("real_"):
                 splitter = self.current_splitter(key, original)

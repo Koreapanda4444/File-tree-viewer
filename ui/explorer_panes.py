@@ -177,6 +177,16 @@ class RealWorkspace(QWidget):
             for page in self.panes
         )
 
+    @property
+    def navigation_busy(self):
+        return any(
+            p.operation_is_running
+            or p.search_is_running
+            or p.search_export_thread is not None
+            or p.close_requested
+            for p in self.panes
+        )
+
     def activate(self, page):
         if page not in self.panes or (page is self.right and not self.dual):
             return
@@ -208,9 +218,7 @@ class RealWorkspace(QWidget):
         enabled = bool(enabled)
         if enabled == self.dual:
             return True
-        if self.busy or any(
-            not page._confirm_editor_transition() for page in self.panes
-        ):
+        if self.navigation_busy:
             with QSignalBlocker(self.toggle):
                 self.toggle.setChecked(self.dual)
             return False
@@ -288,22 +296,22 @@ class RealWorkspace(QWidget):
         return True
 
     def swap_paths(self):
-        if not self.dual or self.busy:
+        if not self.dual or self.navigation_busy:
             return False
         if not all(page._confirm_editor_transition() for page in self.panes):
             return False
         left, right = (page.model.root_path for page in self.panes)
         if left is None or right is None:
             return False
-        if not self.left.set_root(right):
+        if not self.left.set_root(right, confirmed=True):
             return False
-        if not self.right.set_root(left):
-            self.left.set_root(left)
+        if not self.right.set_root(left, confirmed=True):
+            self.left.set_root(left, confirmed=True)
             return False
         return True
 
     def open_same_path(self):
-        if not self.dual or self.busy or self.active.model.root_path is None:
+        if not self.dual or self.navigation_busy or self.active.model.root_path is None:
             return False
         return self.other.set_root(self.active.model.root_path)
 

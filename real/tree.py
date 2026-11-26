@@ -89,6 +89,7 @@ class FileTreeModel(QAbstractItemModel):
         self.index_pool.setMaxThreadCount(2)
         self.sort_options = (0, False, "None", True)
         self.local_filter = DirectoryFilter()
+        self.folder_sizes = {}
 
     @property
     def root_path(self) -> Path | None:
@@ -344,7 +345,11 @@ class FileTreeModel(QAbstractItemModel):
 
             node.load_details()
             if index.column() == 2:
-                return _format_size(node.size)
+                return (
+                    "Σ " + _format_size(self.folder_sizes[node.path].logical)
+                    if node.is_directory and node.path in self.folder_sizes
+                    else _format_size(node.size)
+                )
             if index.column() == 3:
                 return _format_time(node.modified)
 
@@ -353,10 +358,36 @@ class FileTreeModel(QAbstractItemModel):
                 node.path, is_directory=node.is_directory, is_link=node.is_link
             )
         if role == Qt.ItemDataRole.ToolTipRole:
-            return str(node.path)
+            result = self.folder_sizes.get(node.path)
+            return str(node.path) + (
+                "\n"
+                + tr(
+                    "Calculated at {time}; cached totals expire. Recalculate for current data.",
+                    time=result.completed,
+                )
+                if result
+                else ""
+            )
         if role == Qt.ItemDataRole.UserRole:
             return str(node.path)
         return None
+
+    def set_folder_sizes(self, results):
+        changed = {
+            path
+            for path in self.folder_sizes.keys() | results.keys()
+            if self.folder_sizes.get(path) != results.get(path)
+        }
+        self.folder_sizes = results
+        for path in changed:
+            index = self.index_for_path(path)
+            if index.isValid():
+                size = index.siblingAtColumn(2)
+                self.dataChanged.emit(
+                    size,
+                    size,
+                    [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole],
+                )
 
     def headerData(
         self,

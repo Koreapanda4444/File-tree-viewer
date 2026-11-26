@@ -193,6 +193,7 @@ class StagingController(QObject):
         )
 
     def filesystem_changed(self, root):
+        self.window.invalidate_folder_sizes([root])
         self.refresh_roots.add(root)
         self.refresh_timer.start()
 

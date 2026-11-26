@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from disk_usage import FolderSizeCache
 from ui.appearance import install_appearance
 from ui.chrome import WorkspaceHeader
 from ui.command_palette import install_command_palette
@@ -56,6 +57,8 @@ class MainWindow(QMainWindow):
         self.auxiliary_close_pending = False
         self.command_palette_dialog = None
         self.recovery_history_dialog = None
+        self.folder_size_dialog = None
+        self.folder_size_cache = FolderSizeCache()
         self.archive_dialog = None
         self.quick_look_dialog = None
         self.quick_look_pane = None
@@ -211,6 +214,26 @@ class MainWindow(QMainWindow):
             pane.archive_requested.connect(
                 lambda path, p=pane: self.open_archive_from_pane(p, path)
             )
+        self.folder_size_action = menu_command(
+            workspace_menu,
+            "workspace.folder_size",
+            tr("Calculate folder size…"),
+            self.inspect_folder_size,
+        )
+        self.folder_size_action.command_enabled = lambda: (
+            self.tabs.currentWidget() is self.real_workspace
+            and self.real_page.model.root_path is not None
+        )
+        for pane in self.real_workspace.panes:
+            pane.folder_size_requested.connect(
+                lambda p=pane: self.inspect_folder_size_from_pane(p)
+            )
+            pane.directory_monitor.changed.connect(self.invalidate_folder_sizes)
+            pane.filesystem_changed.connect(self.invalidate_folder_sizes)
+        self.folder_size_timer = QTimer(self)
+        self.folder_size_timer.setInterval(1000)
+        self.folder_size_timer.timeout.connect(self.refresh_folder_sizes)
+        self.folder_size_timer.start()
         self.quick_look_action = menu_command(
             workspace_menu,
             "workspace.quick_look",
@@ -376,6 +399,49 @@ class MainWindow(QMainWindow):
     def stage_from_pane(self, page, action):
         self.real_workspace.activate(page)
         self.staging.request(action)
+
+    def refresh_folder_sizes(self):
+        results = self.folder_size_cache.results()
+        for page in self.real_workspace.panes:
+            page.display_folder_sizes(results)
+        if self.folder_size_dialog is not None:
+            self.folder_size_dialog.check_cache()
+
+    def invalidate_folder_sizes(self, paths):
+        if paths:
+            self.folder_size_cache.invalidate(paths)
+            self.refresh_folder_sizes()
+
+    def inspect_folder_size_from_pane(self, pane):
+        self.real_workspace.activate(pane)
+        self.inspect_folder_size()
+
+    def inspect_folder_size(self):
+        from ui.folder_size import FolderSizeDialog
+
+        if self.tabs.currentWidget() is not self.real_workspace:
+            return
+        page = self.real_page
+        paths = page.selected_paths()
+        root = (
+            paths[0] if len(paths) == 1 and paths[0].is_dir() else page.model.root_path
+        )
+        if root is None or root.is_symlink() or page.close_requested:
+            return
+        if self.folder_size_dialog is not None:
+            self.folder_size_dialog.raise_()
+            return
+        dialog = self.folder_size_dialog = FolderSizeDialog(
+            root, self.folder_size_cache, self
+        )
+        dialog.updated.connect(self.refresh_folder_sizes)
+        try:
+            dialog.exec()
+        finally:
+            self.folder_size_dialog = None
+            dialog.deleteLater()
+            self.refresh_folder_sizes()
+            self.finish_auxiliary_close()
 
     def open_quick_look_from_pane(self, pane):
         self.real_workspace.activate(pane)
@@ -785,6 +851,7 @@ class MainWindow(QMainWindow):
             self.hash_dialog,
             self.archive_dialog,
             self.quick_look_dialog,
+            self.folder_size_dialog,
         ):
             if dialog is not None:
                 self.auxiliary_close_pending = True

@@ -77,6 +77,8 @@ from write_policy import policy, writes_allowed
 
 
 class RealExplorerPage(ExplorerPage):
+    folder_size_requested = Signal()
+    filesystem_changed = Signal(object)
     quick_look_requested = Signal()
     preview_path_changed = Signal(object)
     archive_requested = Signal(object)
@@ -1059,6 +1061,7 @@ class RealExplorerPage(ExplorerPage):
         self.save_file_button.setEnabled(False)
         self.preview_status.setText(tr("Saved - {value0}", value0=result.encoding))
         self._update_details(path)
+        self.filesystem_changed.emit({path})
         self.status_changed.emit(tr("Saved {value0}", value0=path))
         return True
 
@@ -1141,6 +1144,24 @@ class RealExplorerPage(ExplorerPage):
         }
         for name, value in values.items():
             self.detail_values[name].setText(value)
+            self.detail_values[name].setToolTip("")
+        self.display_folder_sizes(self.model.folder_sizes)
+
+    def display_folder_sizes(self, results):
+        self.model.set_folder_sizes(results)
+        if self.current_metadata is not None and self.current_metadata.kind == "Folder":
+            result = results.get(Path(self.current_metadata.path))
+            self.detail_values["size"].setText(
+                "Σ " + self._format_size(result.logical) if result else "—"
+            )
+            self.detail_values["size"].setToolTip(
+                tr(
+                    "Calculated at {time}; cached totals expire. Recalculate for current data.",
+                    time=result.completed,
+                )
+                if result
+                else ""
+            )
 
     def show_file_metadata(self) -> None:
         if self.current_metadata is None:
@@ -1602,6 +1623,14 @@ class RealExplorerPage(ExplorerPage):
                 ]
             )
             self._refresh_after_operation()
+        self.filesystem_changed.emit(
+            {
+                path
+                for change in changes
+                for path in (change.source, change.target)
+                if path is not None
+            }
+        )
         self.transfer_completed.emit(action, changes)
 
         if errors and not self.close_requested:

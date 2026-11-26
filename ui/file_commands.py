@@ -261,6 +261,14 @@ class FileCommands(QObject):
         if len(paths) == 1 and paths[0].suffix.lower() == ".zip":
             add("Browse ZIP…", lambda: page.archive_requested.emit(paths[0]), not busy)
         add("File Hash — SHA-256…", page.hash_requested.emit, not busy and bool(paths))
+        add(
+            "Calculate folder size…",
+            page.folder_size_requested.emit,
+            not busy
+            and len(paths) == 1
+            and paths[0].is_dir()
+            and not paths[0].is_symlink(),
+        )
         menu.addSeparator()
         add("Copy", lambda: self.copy(False), ready and bool(mutable))
         add("Cut", lambda: self.copy(True), ready and bool(mutable), mutation=True)

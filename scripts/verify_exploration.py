@@ -379,6 +379,48 @@ class ExplorationChecks(unittest.TestCase):
         self.assertEqual(dialog.preview.toPlainText(), "")
         self.assertFalse(dialog.extract_all.isEnabled())
 
+    def test_folder_size_dialog_details_and_invalidation(self):
+        from PySide6.QtCore import Qt
+
+        from ui.folder_size import FolderSizeDialog
+
+        root = self.base / "folder totals"
+        root.mkdir()
+        (root / "file.txt").write_bytes(b"x" * 99)
+        page = self.window.real_page
+        page.set_root(root.parent)
+        page.file_revealer.start(root)
+        support.wait_for(lambda: page.current_preview_path == root)
+        cache = self.window.folder_size_cache
+        dialog = FolderSizeDialog(root, cache, self.window)
+        dialog.updated.connect(self.window.refresh_folder_sizes)
+        dialog.show()
+
+        def cleanup():
+            dialog.reject()
+            support.wait_for(lambda: dialog.thread is None)
+            dialog.deleteLater()
+
+        self.addCleanup(cleanup)
+        support.wait_for(lambda: dialog.thread is None)
+        self.assertIsNotNone(dialog.result)
+        self.assertEqual(dialog.result.logical, 99)
+        self.assertTrue(dialog.result.complete, dialog.details.text())
+        self.window.refresh_folder_sizes()
+        self.assertIn("99 B", page.detail_values["size"].text())
+        index = page.model.index_for_path(root).siblingAtColumn(2)
+        self.assertIn("99 B", page.model.data(index, Qt.ItemDataRole.DisplayRole))
+        self.assertIs(cache.get(root), dialog.result)
+        policy.set_read_only(True)
+        dialog.start()
+        support.wait_for(lambda: dialog.thread is None)
+        self.assertTrue(dialog.result.complete)
+        self.window.invalidate_folder_sizes([root / "file.txt"])
+        self.assertIsNone(cache.get(root))
+        self.assertEqual(page.model.data(index), "-")
+        dialog.check_cache()
+        self.assertIn("Recalculate", dialog.status.text())
+
     def test_quick_look_shortcuts_navigation_and_input(self):
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest

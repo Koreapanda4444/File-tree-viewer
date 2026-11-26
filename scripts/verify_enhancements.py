@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication
 
 from ui.command_palette import collect_commands
@@ -62,6 +63,7 @@ class WindowChecks(unittest.TestCase):
         self.window.close()
         wait_for(lambda: not self.window.isVisible())
         self.window.deleteLater()
+        APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         APP.processEvents()
 
     def test_stable_commands_and_legacy_history(self):

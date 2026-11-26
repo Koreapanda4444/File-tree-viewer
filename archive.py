@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
 import stat
 import struct
+import tempfile
 import unicodedata
 import zipfile
 from contextlib import contextmanager
@@ -13,9 +16,10 @@ from pathlib import Path, PureWindowsPath
 from types import MappingProxyType
 
 from file_content import open_readonly_file
-from fs_ops import require_unchanged
-from fs_paths import INTERNAL_DIRECTORY, validate_windows_name
+from fs_ops import move_no_replace, require_unchanged
+from fs_paths import INTERNAL_DIRECTORY, checked_boundary, validate_windows_name
 from snapshot_store import check_cancelled
+from write_policy import mutating
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,3 +264,179 @@ def index_archive(path, *, limits=None, cancelled=None, progress=None):
         total,
         details.st_size,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveContent:
+    data: bytes
+    size: int
+    truncated: bool
+    crc_checked: bool
+
+
+def archive_info(archive, entry):
+    if entry.index is None:
+        raise ValueError("Choose an explicit ZIP file entry")
+    info = archive.infolist()[entry.index]
+    if (info.file_size, info.compress_size, info.CRC, info.compress_type) != (
+        entry.size,
+        entry.compressed,
+        entry.crc,
+        entry.method,
+    ):
+        raise FileExistsError("ZIP metadata changed; reopen the archive")
+    return info
+
+
+def read_member(index, key, *, limit=None, cancelled=None):
+    entry = index.entries[key]
+    if entry.directory or entry.blocked:
+        raise ValueError(entry.blocked or "Choose a file inside the ZIP")
+    limit = min(
+        index.limits.preview_bytes,
+        index.limits.preview_bytes if limit is None else limit,
+    )
+    if limit <= 0:
+        raise ValueError("The preview limit must be positive")
+    chunks, remaining = [], limit + 1
+    with (
+        index.open(cancelled) as archive,
+        archive.open(archive_info(archive, entry)) as stream,
+    ):
+        while remaining:
+            check_cancelled(cancelled)
+            chunk = stream.read(min(remaining, 256 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        check_cancelled(cancelled)
+    data = b"".join(chunks)
+    truncated = len(data) > limit or entry.size > limit
+    return ArchiveContent(data[:limit], entry.size, truncated, not truncated)
+
+
+def extraction_entries(index, selections):
+    selections = tuple(dict.fromkeys(selections))
+    if not selections or any(key not in index.entries for key in selections):
+        raise ValueError("Select entries from the current archive")
+    result = []
+    for key, entry in index.entries.items():
+        if key and any(
+            not chosen
+            or key == chosen
+            or (index.entries[chosen].directory and key.startswith(chosen + "/"))
+            for chosen in selections
+        ):
+            if entry.blocked:
+                raise ValueError(f"{entry.path}: {entry.blocked}")
+            result.append(entry)
+    if (
+        len(result) > index.limits.max_entries
+        or sum(entry.size for entry in result) > index.limits.max_extract_bytes
+    ):
+        raise ValueError("Selected ZIP output exceeds extraction limits")
+    return sorted(
+        result,
+        key=lambda entry: (entry.path.count("/"), not entry.directory, entry.path),
+    )
+
+
+def _directory_identity(path):
+    details = path.lstat()
+    return details.st_dev, details.st_ino, stat.S_IFMT(details.st_mode)
+
+
+def _clean_staging(path, identity):
+    if not os.path.lexists(path):
+        return
+    checked_boundary(path.parent, path, allow_leaf_link=False)
+    if _directory_identity(path) != identity:
+        raise FileExistsError("The temporary output folder changed externally")
+    shutil.rmtree(path)
+
+
+@mutating
+def extract_members(index, selections, destination, *, cancelled=None, progress=None):
+    """Publish into a NEW directory only after the complete selection passes CRC."""
+    check_cancelled(cancelled)
+    entries = extraction_entries(index, selections)
+    destination = Path(destination).absolute()
+    validate_windows_name(destination.name)
+    parent = destination.parent.resolve(strict=True)
+    destination = parent / destination.name
+    checked_boundary(parent, destination, allow_leaf_link=False)
+    if os.path.lexists(destination):
+        raise FileExistsError(
+            "Choose a new output folder; existing paths are preserved"
+        )
+    parent_identity = _directory_identity(parent)
+    stage = Path(tempfile.mkdtemp(prefix=".ftv-extract-", dir=parent))
+    stage_identity = _directory_identity(stage)
+    total = sum(entry.size for entry in entries)
+    done = 0
+    try:
+        with index.open(cancelled) as archive:
+            for entry in entries:
+                check_cancelled(cancelled)
+                if _directory_identity(parent) != parent_identity:
+                    raise FileExistsError("The destination parent changed externally")
+                target = stage.joinpath(*entry.path.split("/"))
+                checked_boundary(stage, target, allow_leaf_link=False)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                checked_boundary(stage, target, allow_leaf_link=False)
+                if entry.directory:
+                    target.mkdir(exist_ok=True)
+                    continue
+                written = 0
+                with (
+                    archive.open(archive_info(archive, entry)) as source,
+                    target.open("xb") as output,
+                ):
+                    while True:
+                        check_cancelled(cancelled)
+                        chunk = source.read(256 * 1024)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        done += len(chunk)
+                        if (
+                            written > min(entry.size, index.limits.max_member_bytes)
+                            or done > index.limits.max_extract_bytes
+                        ):
+                            raise ValueError(
+                                "Actual ZIP output exceeds declared or configured limits"
+                            )
+                        output.write(chunk)
+                        if progress:
+                            progress(done, total, entry.path)
+                    output.flush()
+                    os.fsync(output.fileno())
+                if written != entry.size:
+                    raise zipfile.BadZipFile(
+                        "Extracted ZIP size does not match its metadata"
+                    )
+        check_cancelled(cancelled)
+        require_unchanged(index.path, index.signature)
+        checked_boundary(parent, destination, allow_leaf_link=False)
+        if (
+            _directory_identity(parent) != parent_identity
+            or _directory_identity(stage) != stage_identity
+        ):
+            raise FileExistsError(
+                "The destination changed before publishing ZIP output"
+            )
+        move_no_replace(
+            stage, destination, allow_cross_device=False, cancelled=cancelled
+        )
+        if progress:
+            progress(done, total, "")
+        return destination
+    except BaseException as failure:
+        try:
+            _clean_staging(stage, stage_identity)
+        except (OSError, ValueError) as cleanup_error:
+            raise OSError(
+                f"ZIP extraction stopped. Temporary output was preserved at {stage}: {cleanup_error}"
+            ) from failure
+        raise

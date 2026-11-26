@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QModelIndex, QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QModelIndex, QObject, Qt, QTimer
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication, QMenu
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QMenu
 
 from fs_ops import require_unchanged
 from fs_paths import normalized_path
@@ -43,14 +43,33 @@ class FileCommands(QObject):
                 shortcut,
                 lambda checked=False, command=callback: self.dispatch(command),
             )
+        self.bind("Quick Look", "", page.quick_look_requested.emit)
         QApplication.clipboard().dataChanged.connect(self.clipboard_changed)
         page.transfer_completed.connect(self.completed)
         self.clipboard_changed()
         for view in self.views:
+            view.installEventFilter(self)
+            view.viewport().installEventFilter(self)
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             view.customContextMenuRequested.connect(
                 lambda point, target=view: self.show_context(target, point)
             )
+
+    def eventFilter(self, watched, event):
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Space
+            and not event.modifiers()
+        ):
+            view = next((v for v in self.views if watched in (v, v.viewport())), None)
+            if (
+                view is not None
+                and view.state() != QAbstractItemView.State.EditingState
+            ):
+                if not event.isAutoRepeat():
+                    self.actions["Quick Look"].trigger()
+                return True
+        return False
 
     @property
     def views(self):
@@ -232,6 +251,11 @@ class FileCommands(QObject):
             return action
 
         add("Open", self.open_selected, ready and len(paths) == 1)
+        add(
+            "Quick Look",
+            page.quick_look_requested.emit,
+            self.actions["Quick Look"].isEnabled(),
+        )
         add("Inspect Metadata", self.inspect_selected, not busy and len(paths) == 1)
         add("Copy Path", self.copy_paths, bool(paths))
         if len(paths) == 1 and paths[0].suffix.lower() == ".zip":
@@ -307,6 +331,9 @@ class FileCommands(QObject):
             "Refresh": ready and page.model.root_path is not None,
             "Undo": ready and bool(page.undo_stack),
             "Open": ready and len(page.selected_paths()) == 1,
+            "Quick Look": ready
+            and len(page.selected_paths()) == 1
+            and page.selected_paths()[0].is_file(),
         }
         for name, enabled in states.items():
             self.actions[name].setEnabled(

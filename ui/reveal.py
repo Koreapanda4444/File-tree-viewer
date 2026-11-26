@@ -18,10 +18,12 @@ class FileRevealer(QObject):
         self.timer.timeout.connect(self.step)
         model.modelAboutToBeReset.connect(self.stop)
 
-    def start(self, path):
+    def start(self, path, *, parent=None):
         self.stop()
         self.path, self.row = path, 0
-        self.root = QPersistentModelIndex(self.model.index(0, 0))
+        self.root = QPersistentModelIndex(
+            self.model.index(0, 0) if parent is None else parent
+        )
         self.timer.start()
 
     def stop(self):

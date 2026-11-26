@@ -273,6 +273,72 @@ class ExplorationChecks(unittest.TestCase):
         self.assertEqual(dialog.preview.toPlainText(), "")
         self.assertFalse(dialog.extract_all.isEnabled())
 
+    def test_quick_look_shortcuts_navigation_and_input(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        root = self.base / "quick files"
+        root.mkdir()
+        for number in range(270):
+            (root / f"{number:03}.txt").write_text(str(number))
+        page = self.window.real_page
+        page.set_root(root)
+        support.wait_for(lambda: page.model.root.inventory is not None)
+        page.file_revealer.start(root / "255.txt")
+        support.wait_for(lambda: page.current_preview_path == root / "255.txt")
+        page.folder_panel.active_view.setFocus()
+        support.APP.processEvents()
+        QTest.keyClick(page.folder_panel.active_view, Qt.Key.Key_Space)
+        support.wait_for(lambda: self.window.quick_look_dialog is not None)
+        dialog = self.window.quick_look_dialog
+        support.wait_for(lambda: dialog.session.thread is None)
+        self.assertEqual(dialog.text.toPlainText(), "255")
+        QTest.keyClick(dialog.text, Qt.Key.Key_Right)
+        support.wait_for(
+            lambda: (
+                dialog.session.thread is None
+                and page.current_preview_path == root / "256.txt"
+            )
+        )
+        self.assertEqual(dialog.text.toPlainText(), "256")
+        self.assertTrue(dialog.text.isReadOnly())
+        QTest.keyClick(dialog.text, Qt.Key.Key_Space)
+        support.wait_for(lambda: self.window.quick_look_dialog is None)
+        for field in (page.location, page.search_input, page.name_input, page.preview):
+            field.setFocus()
+            QTest.keyClick(field, Qt.Key.Key_Space)
+            self.assertIsNone(self.window.quick_look_dialog)
+        page.preview.document().setModified(False)
+
+    def test_quick_look_dual_pane_and_stale_source(self):
+        root = self.base / "quick"
+        root.mkdir()
+        path = root / "sample.txt"
+        path.write_text("left")
+        page = self.window.real_page
+        page.set_root(root)
+        support.wait_for(lambda: not page.preview_is_running)
+        self.assertTrue(self.window.real_workspace.set_dual(True))
+        right = self.window.real_workspace.right
+        other = self.base / "right"
+        other.mkdir()
+        target = other / "other.bin"
+        target.write_bytes(b"\0\1\2")
+        right.set_root(other)
+        right.file_revealer.start(target)
+        support.wait_for(lambda: right.current_preview_path == target)
+        self.window.open_quick_look_from_pane(right)
+        dialog = self.window.quick_look_dialog
+        support.wait_for(lambda: dialog.session.thread is None)
+        self.assertEqual(dialog.path, target)
+        self.assertIn("00000000", dialog.text.toPlainText())
+        target.unlink()
+        dialog.session.check_source()
+        self.assertEqual(dialog.text.toPlainText(), "")
+        self.assertIsNone(dialog.session.result)
+        dialog.reject()
+        support.wait_for(lambda: self.window.quick_look_dialog is None)
+
     def test_archive_close_during_preview(self):
         dialog = self.archive_dialog()
         for key in ["binary.bin", "folder/hello.txt"] * 5:

@@ -77,6 +77,8 @@ from write_policy import policy, writes_allowed
 
 
 class RealExplorerPage(ExplorerPage):
+    quick_look_requested = Signal()
+    preview_path_changed = Signal(object)
     archive_requested = Signal(object)
     hash_requested = Signal()
     stage_requested = Signal(str)
@@ -469,10 +471,48 @@ class RealExplorerPage(ExplorerPage):
         self.tree.setCurrentIndex(index)
         self.tree.scrollTo(index)
         self.folder_panel.active_view.scrollTo(index)
-        self.folder_panel.active_view.setFocus()
+        if not getattr(self, "quick_look_selecting", False):
+            self.folder_panel.active_view.setFocus()
+        self.quick_look_selecting = False
         self.status_changed.emit(
             tr("Selected: {value0}", value0=self._path_from_index(index))
         )
+
+    def quick_look_paths(self, path):
+        if self.search_view_active:
+            model = self.tree.model()
+            return tuple(
+                p
+                for row in range(model.rowCount())
+                if (p := self._path_from_index(model.index(row, 0))) is not None
+                and p.is_file()
+            )
+        node = self.model.nodes_by_path.get(path.parent)
+        if node is None or node.inventory is None:
+            return (path,)
+        return tuple(
+            entry.path
+            for entry in node.inventory
+            if not entry.is_directory
+            and (node is not self.model.root or self.model.local_filter.accepts(entry))
+        )
+
+    def select_quick_path(self, path):
+        index = self.model.index_for_path(path)
+        if self.search_view_active:
+            model = self.tree.model()
+            for row in range(model.rowCount()):
+                candidate = model.index(row, 0)
+                if self._path_from_index(candidate) == path:
+                    self.tree.setCurrentIndex(candidate)
+                    return
+        elif index.isValid():
+            self.tree.setCurrentIndex(self.browse_model.mapFromSource(index))
+        else:
+            self.quick_look_selecting = True
+            self.file_revealer.start(
+                path, parent=self.model.index_for_path(path.parent)
+            )
 
     def toggle_favorite(self, path):
         if path is None:
@@ -782,6 +822,7 @@ class RealExplorerPage(ExplorerPage):
 
     def _show_path(self, path: Path | None) -> None:
         self.current_preview_path = path
+        self.preview_path_changed.emit(path)
         self.current_preview_result = None
         self.pending_preview_path = None
         if self.preview_worker is not None:

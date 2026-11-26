@@ -57,6 +57,8 @@ class MainWindow(QMainWindow):
         self.command_palette_dialog = None
         self.recovery_history_dialog = None
         self.archive_dialog = None
+        self.quick_look_dialog = None
+        self.quick_look_pane = None
         self.hash_dialog = None
         self.history_dialog = None
         self.disk_dialog = None
@@ -209,6 +211,24 @@ class MainWindow(QMainWindow):
             pane.archive_requested.connect(
                 lambda path, p=pane: self.open_archive_from_pane(p, path)
             )
+        self.quick_look_action = menu_command(
+            workspace_menu,
+            "workspace.quick_look",
+            tr("Quick Look"),
+            self.open_quick_look,
+        )
+        self.quick_look_action.command_enabled = lambda: (
+            self.tabs.currentWidget() is self.real_workspace
+            and self.real_page.file_commands.actions["Quick Look"].isEnabled()
+        )
+        for pane in self.real_workspace.panes:
+            pane.quick_look_requested.connect(
+                lambda p=pane: self.open_quick_look_from_pane(p)
+            )
+            pane.preview_path_changed.connect(
+                lambda path, p=pane: self.quick_look_selection_changed(p, path)
+            )
+        self.real_workspace.active_changed.connect(self.quick_look_active_changed)
         self.tabs.setDocumentMode(True)
         self.theme_manager = ThemeManager(self)
         self.settings = application_settings()
@@ -356,6 +376,83 @@ class MainWindow(QMainWindow):
     def stage_from_pane(self, page, action):
         self.real_workspace.activate(page)
         self.staging.request(action)
+
+    def open_quick_look_from_pane(self, pane):
+        self.real_workspace.activate(pane)
+        self.open_quick_look()
+
+    def open_quick_look(self):
+        from ui.quick_look import QuickLookDialog
+
+        page = self.real_page
+        paths = page.selected_paths()
+        if (
+            self.tabs.currentWidget() is not self.real_workspace
+            or page.operation_is_running
+            or page.search_is_running
+            or page.close_requested
+            or len(paths) != 1
+            or not paths[0].is_file()
+            or not page._confirm_editor_transition()
+        ):
+            return
+        self.quick_look_pane = page
+        if self.quick_look_dialog is not None:
+            self.quick_look_dialog.set_path(paths[0])
+            self.quick_look_dialog.raise_()
+            self.quick_look_dialog.activateWindow()
+            return
+        dialog = self.quick_look_dialog = QuickLookDialog(paths[0], self)
+        dialog.navigate_requested.connect(self.navigate_quick_look)
+        dialog.finished.connect(self.quick_look_closed)
+        dialog.show()
+        dialog.activateWindow()
+        dialog.text.setFocus()
+
+    def quick_look_closed(self):
+        dialog, self.quick_look_dialog = self.quick_look_dialog, None
+        self.quick_look_pane = None
+        if dialog is not None:
+            dialog.deleteLater()
+        self.finish_auxiliary_close()
+
+    def quick_look_active_changed(self, pane):
+        if self.quick_look_dialog is not None:
+            self.quick_look_pane = pane
+            self.quick_look_selection_changed(pane, pane.current_preview_path)
+
+    def quick_look_selection_changed(self, pane, path):
+        dialog = self.quick_look_dialog
+        if dialog is None or pane is not self.quick_look_pane or dialog.closing:
+            return
+        if path is None or not path.is_file():
+            dialog.session.generation += 1
+            dialog.session.pending = False
+            if dialog.session.worker is not None:
+                dialog.session.worker.cancel()
+            dialog.session.invalidate("")
+        elif path != dialog.path:
+            dialog.set_path(path)
+
+    def navigate_quick_look(self, direction):
+        dialog, pane = self.quick_look_dialog, self.quick_look_pane
+        if (
+            dialog is None
+            or pane is None
+            or pane.operation_is_running
+            or pane.close_requested
+        ):
+            return
+        paths = pane.quick_look_paths(dialog.path)
+        try:
+            position = paths.index(dialog.path) + direction
+        except ValueError:
+            return
+        if not 0 <= position < len(paths) or not pane._confirm_editor_transition():
+            return
+        path = paths[position]
+        dialog.set_path(path)
+        pane.select_quick_path(path)
 
     def open_archive_from_pane(self, pane, path):
         self.real_workspace.activate(pane)
@@ -687,6 +784,7 @@ class MainWindow(QMainWindow):
             self.command_palette_dialog,
             self.hash_dialog,
             self.archive_dialog,
+            self.quick_look_dialog,
         ):
             if dialog is not None:
                 self.auxiliary_close_pending = True

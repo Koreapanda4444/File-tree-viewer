@@ -84,7 +84,9 @@ def verify_exploration(app, window):
             if name.endswith((".png", ".pdf")) and look.session.result.image is None:
                 raise RuntimeError("Packaged image/PDF decoder is missing")
             look.reject()
-        folder = FolderSizeDialog(root / "extracted", FolderSizeCache(), window)
+        folder = FolderSizeDialog(
+            root / "extracted", FolderSizeCache(), window, summary=True
+        )
         dialogs.append(folder)
         folder.show()
         wait(lambda: folder.thread is None)
@@ -95,6 +97,32 @@ def verify_exploration(app, window):
         ):
             raise RuntimeError("Packaged folder inspection failed")
         folder.reject()
+        if folder.result.maximum_folder_depth < 1 or not folder.result.extensions:
+            raise RuntimeError("Packaged subtree summary failed")
+        page = window.real_page
+        if not page.set_root(root):
+            raise RuntimeError("Tree fixture root failed")
+        for mode in ("Tree Focus", "Compact", "Explorer", "Tree Focus"):
+            if not page.explorer_layout.set_mode(mode):
+                raise RuntimeError("Packaged explorer layout failed")
+        page.jump_to_item(str(root / "extracted/folder/text.txt"))
+        wait(lambda: page.current_preview_path == root / "extracted/folder/text.txt")
+        wait(lambda: not page.preview_is_running)
+        if page.model.root_path != root:
+            raise RuntimeError("Path reveal changed the explorer root")
+        if not page.tree_navigation.start(2, path=root):
+            raise RuntimeError("Packaged bounded tree expansion failed")
+        wait(lambda: not page.tree_navigation.running)
+        if not window.real_workspace.set_dual(True):
+            raise RuntimeError("Tree dual-pane mode failed")
+        if any(
+            p.navigation_splitter.widget(0).isHidden()
+            for p in window.real_workspace.panes
+        ):
+            raise RuntimeError("Dual-pane trees disappeared")
+        window.real_workspace.right.explorer_layout.set_mode("Tree Focus")
+        window.real_workspace.set_dual(False)
+        page.set_root(None)
         if errors:
             raise RuntimeError("; ".join(errors))
     finally:

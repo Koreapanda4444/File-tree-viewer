@@ -328,6 +328,228 @@ class TreeChecks(unittest.TestCase):
         self.assertEqual(page.tree.verticalScrollBar().value(), vertical)
         self.assertEqual(page.selected_paths(), [root / "long_file_name_100.txt"])
 
+    def test_bounded_depth_expansion_and_subtree_collapse(self):
+        root = self.root()
+        page = self.load(root)
+        for depth in (1, 2, 3):
+            self.assertTrue(page.tree_navigation.start(depth, path=root))
+            wait_for(lambda: not page.tree_navigation.running)
+            for path, level in ((root, 0), (root / "src", 1), (root / "src/ui", 2)):
+                index = page.model.index_for_path(path)
+                if level < depth:
+                    self.assertTrue(index.isValid())
+                    self.assertTrue(
+                        page.tree.isExpanded(page.browse_model.mapFromSource(index))
+                    )
+                elif index.isValid():
+                    self.assertFalse(
+                        page.tree.isExpanded(page.browse_model.mapFromSource(index))
+                    )
+            self.assertTrue(
+                page.tree_navigation.start(8, collapse=True, recursive=True, path=root)
+            )
+            wait_for(lambda: not page.tree_navigation.running)
+            self.assertFalse(
+                page.tree.isExpanded(
+                    page.browse_model.mapFromSource(page.model.index_for_path(root))
+                )
+            )
+        self.assertFalse(page.tree_navigation.start(9, path=root))
+
+    def test_large_tree_stays_responsive_and_obeys_item_budget(self):
+        from PySide6.QtCore import QTimer
+
+        root = self.root()
+        for number in range(1600):
+            (root / f"item-{number:04}.dat").touch()
+        page = self.load(root)
+        page.tree_navigation.max_items = 350
+        beats = []
+        heartbeat = QTimer(self.window)
+        heartbeat.setInterval(1)
+        heartbeat.timeout.connect(lambda: beats.append(True))
+        heartbeat.start()
+        before = len(page.model.nodes_by_path)
+        self.assertTrue(page.tree_navigation.start(3, path=root))
+        wait_for(lambda: not page.tree_navigation.running)
+        heartbeat.stop()
+        self.assertGreater(len(beats), 1)
+        self.assertLessEqual(page.tree_navigation.processed, 350)
+        self.assertLessEqual(len(page.model.nodes_by_path) - before, 350)
+        self.assertIsNone(page.model.load_budget)
+        self.assertIsNone(page.model.load_budget_owner)
+
+    def test_cancel_closes_index_jobs_and_keeps_selection(self):
+        import threading
+
+        from real.directory_index import DirectoryIndexJob
+
+        root = self.root()
+        slow = root / "slow"
+        slow.mkdir()
+        page = self.load(root)
+        self.select(root / "notes.txt")
+        entered = threading.Event()
+        original = DirectoryIndexJob.run
+
+        def delay(job):
+            if job.node.path == slow:
+                entered.set()
+                job.cancelled.wait(3)
+            original(job)
+
+        with patch.object(DirectoryIndexJob, "run", delay):
+            self.assertTrue(page.tree_navigation.start(3, path=root))
+            wait_for(entered.is_set)
+            page.tree_navigation.cancel()
+            self.assertFalse(page.tree_navigation.running)
+            self.assertIsNone(page.model.load_budget_owner)
+            self.assertEqual(page.selected_paths(), [root / "notes.txt"])
+        self.window.close()
+        wait_for(lambda: not self.window.isVisible())
+
+    def test_deferred_cleanup_does_not_remove_new_generation_nodes(self):
+        root = self.root()
+        page = self.load(root)
+        target = root / "src/ui/icon.bin"
+        self.select(target)
+        for _ in range(3):
+            wait_for(lambda: not page.preview_is_running)
+            page.explorer_state.capture()
+            page.refresh_root()
+            wait_for(lambda: page.explorer_state.pending is None)
+            self.assertEqual(page.selected_paths(), [target])
+            wait_for(lambda: not page.model.retired)
+            self.assertTrue(page.model.index_for_path(target).isValid())
+
+    def test_summary_matches_snapshot_and_reuses_valid_cache(self):
+        from analysis import analyze_snapshot
+        from disk_usage import inspect_folder_size
+        from snapshot import build_snapshot
+        from ui.folder_size import FolderSizeDialog
+
+        root = self.root()
+        result = inspect_folder_size(root)
+        snapshot = build_snapshot(root)
+        try:
+            original = analyze_snapshot(snapshot)
+            self.assertEqual(
+                (result.files, result.folders, result.logical, result.maximum_depth),
+                (
+                    original.file_count,
+                    original.folder_count,
+                    original.total_size,
+                    original.maximum_depth,
+                ),
+            )
+            self.assertEqual(result.extensions, original.extensions)
+        finally:
+            snapshot.close()
+        self.assertEqual(result.maximum_folder_depth, 2)
+        cache = self.window.folder_size_cache
+        self.assertTrue(cache.put(result))
+        with patch("ui.folder_size.DiskUsageWorker") as worker:
+            dialog = FolderSizeDialog(root, cache, self.window, summary=True)
+            dialog.show()
+            worker.assert_not_called()
+            self.assertIs(dialog.result, result)
+            self.assertIn("Maximum folder depth: 2", dialog.structure.text())
+            dialog.reject()
+            dialog.deleteLater()
+        revision = cache.revision
+        cache.invalidate([self.base / "unrelated"])
+        self.assertFalse(cache.changed_since(root, revision))
+        cache.invalidate([root / "src/main.py"])
+        self.assertTrue(cache.changed_since(root, revision))
+        self.assertIsNone(cache.get(root))
+
+    def test_summary_limits_cancellation_partial_results_and_expiry(self):
+        import threading
+
+        from disk_usage import FolderSizeCache, inspect_folder_size
+        from snapshot import SnapshotCancelled
+        from ui.folder_size import FolderSizeDialog
+
+        root = self.root()
+        for result in (
+            inspect_folder_size(root, max_items=2),
+            inspect_folder_size(root, max_depth=0),
+        ):
+            self.assertTrue(result.limited)
+            self.assertFalse(result.complete)
+            self.assertFalse(self.window.folder_size_cache.put(result))
+        entered = threading.Event()
+
+        def blocked(root, *, cancelled=None, **kwargs):
+            entered.set()
+            cancelled.wait(3)
+            if cancelled.is_set():
+                raise SnapshotCancelled
+            return inspect_folder_size(root)
+
+        with patch("ui.disk_usage.inspect_folder_size", side_effect=blocked):
+            dialog = FolderSizeDialog(
+                root, self.window.folder_size_cache, self.window, summary=True
+            )
+            dialog.show()
+            wait_for(entered.is_set)
+            dialog.reject()
+            wait_for(lambda: dialog.thread is None and not dialog.isVisible())
+            self.assertIsNone(self.window.folder_size_cache.get(root))
+            dialog.deleteLater()
+        now = [0.0]
+        cache = FolderSizeCache(ttl=1, clock=lambda: now[0])
+        self.assertTrue(cache.put(inspect_folder_size(root)))
+        now[0] = 2
+        self.assertIsNone(cache.get(root))
+
+    def test_tree_skips_links_and_reports_inaccessible_directories(self):
+        import os
+
+        root = self.root()
+        denied = root / "denied"
+        denied.mkdir()
+        try:
+            (root / "loop").symlink_to(root, target_is_directory=True)
+        except OSError:
+            pass
+        page = self.load(root)
+        original = os.scandir
+
+        def limited(path):
+            if str(path) == str(denied):
+                raise PermissionError("Synthetic inaccessible directory")
+            return original(path)
+
+        with patch("real.directory_index.os.scandir", side_effect=limited):
+            self.assertTrue(page.tree_navigation.start(3, path=root))
+            wait_for(lambda: not page.tree_navigation.running)
+        self.assertGreaterEqual(page.tree_navigation.errors, 1)
+        self.assertLess(len(page.model.nodes_by_path), 30)
+        loop = page.model.node_from_index(page.model.index_for_path(root / "loop"))
+        if loop is not None:
+            self.assertTrue(loop.is_link)
+            self.assertFalse(loop.is_directory)
+
+    def test_tree_renders_with_native_dpi_and_all_palettes(self):
+        root = self.root()
+        page = self.load(root)
+        page.explorer_layout.set_mode("Tree Focus")
+        self.assertGreaterEqual(page.tree.indentation(), 20)
+        self.assertEqual(
+            page.tree.columnCount()
+            if hasattr(page.tree, "columnCount")
+            else page.tree.model().columnCount(),
+            4,
+        )
+        for mode in ("Light", "Dark", "System"):
+            self.window.theme_manager.apply(mode)
+            APP.processEvents()
+            pixmap = page.tree.grab()
+            self.assertFalse(pixmap.isNull())
+            self.assertGreaterEqual(pixmap.devicePixelRatio(), 1)
+            self.assertFalse(self.window.windowIcon().isNull())
+
 
 if __name__ == "__main__":
     unittest.main()

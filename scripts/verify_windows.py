@@ -95,7 +95,7 @@ def verify(directory):
         if (cwd / "data").exists() or (directory / "data").exists():
             raise AssertionError("Verification wrote outside its disposable folder")
     print(
-        "PASS: x64 EXE, both languages, Unicode path, unrelated CWD, dual panes, read-only mode, ZIP browse/extraction, Quick Look text/image/hex/PDF, folder totals and relocated settings/history"
+        "PASS: x64 EXE, both languages, Unicode path, unrelated CWD, dual panes, read-only mode, ZIP browse/extraction, Quick Look text/image/hex/PDF, folder totals/structure summary, tree layouts/reveal/expansion, preserved dual-pane trees and relocated settings/history"
     )
 
 

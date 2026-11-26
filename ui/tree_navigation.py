@@ -101,6 +101,7 @@ class TreeNavigation(QObject):
             self.page.status_changed.emit(tr("Select a real folder in the tree"))
             return False
         self.cancel()
+        self.page.file_revealer.stop()
         self.page.explorer_state.stop()
         self.page.explorer_layout.set_panel(0, True)
         self.depth, self.collapse, self.recursive = depth, collapse, recursive
@@ -108,7 +109,7 @@ class TreeNavigation(QObject):
         self.jobs = {}
         self.processed = self.errors = 0
         self.started = self.last_report = monotonic()
-        self.page.model.load_budget = self.max_items
+        self.page.model.reserve_budget(self, self.max_items)
         self.running = True
         self.cancel_button.setEnabled(True)
         self.timer.start()
@@ -210,7 +211,7 @@ class TreeNavigation(QObject):
             return
         self.running = False
         self.timer.stop()
-        self.page.model.load_budget = None
+        self.page.model.release_budget(self)
         self.cancel_button.setEnabled(False)
         self.queue.clear()
         state = self.page.explorer_state

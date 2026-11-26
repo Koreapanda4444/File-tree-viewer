@@ -12,15 +12,29 @@ class ExplorerState(QObject):
         super().__init__(page)
         self.page = page
         self.saved = {}
+        self.expanded_paths = set()
+        page.tree.expanded.connect(self.remember_expanded)
+        page.tree.collapsed.connect(self.remember_collapsed)
         self.pending = None
         self.restoring = False
         self.timer = QTimer(self)
         self.timer.setInterval(10)
         self.timer.timeout.connect(self.restore)
         page.model.modelAboutToBeReset.connect(self.capture)
+        page.model.modelReset.connect(self.expanded_paths.clear)
         page.model.modelReset.connect(self.schedule)
         page.model.rowsAboutToBeRemoved.connect(self.capture)
         page.model.rowsRemoved.connect(self.schedule)
+
+    def remember_expanded(self, index):
+        if self.page.tree.model() is self.page.browse_model:
+            path = self.page.browse_model.path_from_index(index)
+            if path is not None and len(self.expanded_paths) < 512:
+                self.expanded_paths.add(path)
+
+    def remember_collapsed(self, index):
+        if self.page.tree.model() is self.page.browse_model:
+            self.expanded_paths.discard(self.page.browse_model.path_from_index(index))
 
     def capture(self, *args):
         page = self.page
@@ -32,22 +46,19 @@ class ExplorerState(QObject):
             or page.search_view_active
         ):
             return
-        expanded, stack = [], [page.model.root]
-        while stack and len(expanded) < 512:
-            node = stack.pop()
-            if not node.is_directory:
-                continue
-            index = page.browse_model.mapFromSource(
-                page.model.index_for_path(node.path)
-            )
-            if page.tree.isExpanded(index):
-                expanded.append(str(node.path))
-                stack.extend(node.children)
+        expanded = []
+        for path in sorted(self.expanded_paths, key=lambda p: (len(p.parts), str(p))):
+            if path.is_relative_to(root):
+                index = page.browse_model.mapFromSource(page.model.index_for_path(path))
+                if index.isValid() and page.tree.isExpanded(index):
+                    expanded.append(str(path))
         state = {
             "root": str(root),
             "expanded": expanded,
             "selected": [str(path) for path in page.selected_paths()[:256]],
             "scroll": [view.verticalScrollBar().value() for view in self.views()],
+            "horizontal": [view.horizontalScrollBar().value() for view in self.views()],
+            "listing": str(page.current_directory or root),
         }
         self.saved[str(root)] = state
         self.pending = state
@@ -58,6 +69,8 @@ class ExplorerState(QObject):
         return (self.page.tree, self.page.folder_view, self.page.folder_icons)
 
     def schedule(self, *args):
+        if self.restoring or self.page.file_revealer.timer.isActive():
+            return
         state = self.saved.get(str(self.page.model.root_path))
         if state is None:
             self.stop()
@@ -86,19 +99,19 @@ class ExplorerState(QObject):
         if index.isValid():
             return index, False
         parent = root
-        for part in path.relative_to(root).parts:
+        for part in path.relative_to(root).parts[:128]:
+            target = parent / part
+            if model.index_for_path(target).isValid():
+                parent = target
+                continue
             parent_index = model.index_for_path(parent)
             node = model.node_from_index(parent_index)
-            if node is None:
+            if node is None or node.is_link:
                 return None, False
             if model.canFetchMore(parent_index):
                 model.fetchMore(parent_index)
                 return None, True
-            if node.fetch_pending:
-                return None, True
-            parent /= part
-            if not model.index_for_path(parent).isValid():
-                return None, False
+            return None, node.fetch_pending
         return None, False
 
     def restore(self):
@@ -113,9 +126,16 @@ class ExplorerState(QObject):
         if page.search_view_active:
             self.stop()
             return
+        if not page.model.reserve_budget(self, 20_000):
+            self.stop()
+            return
         self.restoring = True
         waiting = False
         try:
+            _listing_index, listing_pending = self.ensure_index(
+                Path(state.get("listing", state["root"]))
+            )
+            waiting |= listing_pending
             for field in ("expanded", "selected"):
                 for text in list(state[field])[:32]:
                     source, pending = self.ensure_index(Path(text))
@@ -142,7 +162,16 @@ class ExplorerState(QObject):
                 and not state["expanded"]
                 and not state["selected"]
                 or monotonic() > self.deadline
+                or page.model.load_budget == 0
             ):
+                listing = Path(state.get("listing", state["root"]))
+                source = page.model.index_for_path(listing)
+                if source.isValid():
+                    page.folder_panel.set_root(page.browse_model.mapFromSource(source))
+                for view, horizontal in zip(
+                    self.views(), state.get("horizontal", [0, 0, 0])
+                ):
+                    view.horizontalScrollBar().setValue(horizontal)
                 for view, scroll in zip(self.views(), state["scroll"]):
                     view.verticalScrollBar().setValue(scroll)
                 self.stop()
@@ -151,6 +180,7 @@ class ExplorerState(QObject):
 
     def stop(self):
         self.timer.stop()
+        self.page.model.release_budget(self)
         self.pending = None
 
     def save_session(self, settings):
@@ -190,6 +220,17 @@ class ExplorerState(QObject):
                     type(value) is not int or not 0 <= value < 2**31
                     for value in state["scroll"]
                 )
+            ):
+                return
+            horizontal = state.get("horizontal", [0, 0, 0])
+            listing = state.get("listing", str(root))
+            if (
+                not isinstance(horizontal, list)
+                or len(horizontal) != 3
+                or any(type(v) is not int or not 0 <= v < 2**31 for v in horizontal)
+                or not isinstance(listing, str)
+                or len(listing) > 4096
+                or not Path(listing).is_relative_to(root)
             ):
                 return
             if self.page.set_root(root):

@@ -271,6 +271,8 @@ class RealExplorerPage(ExplorerPage):
         self.explorer_state = ExplorerState(self)
         self.explorer_layout = ExplorerLayout(self)
         self.tree_navigation = TreeNavigation(self)
+        self.file_revealer.started.connect(self.tree_navigation.cancel)
+        self.file_revealer.started.connect(self.explorer_state.stop)
         self.tree.header().sectionClicked.connect(self.sort_by_header)
         self.directory_monitor = DirectoryMonitor(self.model)
         self.directory_monitor.changed.connect(self.external_directories_changed)

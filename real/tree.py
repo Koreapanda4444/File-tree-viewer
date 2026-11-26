@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from PySide6.QtCore import (
     QObject,
     Qt,
     QThreadPool,
+    QTimer,
     Signal,
     Slot,
 )
@@ -43,6 +45,9 @@ class FileNode:
     modified: float | None = None
     load_generation: int = 0
     fetch_pending: bool = False
+    children_generation: int = 0
+    parent_generation: int = 0
+    attached: bool = True
 
     def load_details(self) -> None:
         if self.details_loaded:
@@ -91,6 +96,12 @@ class FileTreeModel(QAbstractItemModel):
         self.local_filter = DirectoryFilter()
         self.folder_sizes = {}
         self.load_budget = None
+        self.load_budget_owner = None
+        self.pending_jobs = {}
+        self.retired = deque()
+        self.retire_timer = QTimer(self)
+        self.retire_timer.setInterval(5)
+        self.retire_timer.timeout.connect(self.reap)
 
     @property
     def root_path(self) -> Path | None:
@@ -125,6 +136,9 @@ class FileTreeModel(QAbstractItemModel):
 
     def close(self) -> None:
         self._close_current_tree()
+        self.retire_timer.stop()
+        self.retired.clear()
+        self.index_pool.clear()
 
     def refresh(self) -> None:
         if self.root is not None:
@@ -133,7 +147,9 @@ class FileTreeModel(QAbstractItemModel):
     def index_for_path(self, path: Path) -> QModelIndex:
         node = self.nodes_by_path.get(path)
         return (
-            self.createIndex(node.row, 0, node) if node is not None else QModelIndex()
+            self.createIndex(node.row, 0, node)
+            if node is not None and self.is_attached(node)
+            else QModelIndex()
         )
 
     def refresh_directory(self, path: Path) -> None:
@@ -155,7 +171,7 @@ class FileTreeModel(QAbstractItemModel):
         if not index.isValid() or index.model() is not self:
             return None
         node = index.internalPointer()
-        return node if isinstance(node, FileNode) else None
+        return node if isinstance(node, FileNode) and self.is_attached(node) else None
 
     def path_from_index(self, index: QModelIndex) -> Path | None:
         node = self.node_from_index(index)
@@ -175,9 +191,10 @@ class FileTreeModel(QAbstractItemModel):
         node.fetch_pending = False
         if node.children:
             self.beginRemoveRows(parent, 0, len(node.children) - 1)
-            for child in node.children:
-                self._close_subtree(child)
-            node.children.clear()
+            self.retired.append(iter(node.children))
+            node.children = []
+            node.children_generation += 1
+            self.retire_timer.start()
             self.endRemoveRows()
         node.fully_loaded = False
 
@@ -268,6 +285,7 @@ class FileTreeModel(QAbstractItemModel):
                 self.local_filter if node is self.root else DirectoryFilter(),
             )
             node.job = job
+            self.pending_jobs[id(node), node.load_generation] = job
             job.signals.finished.connect(self._index_finished)
             self.index_pool.start(job)
             return
@@ -276,6 +294,7 @@ class FileTreeModel(QAbstractItemModel):
 
     @Slot(object, int, object, str)
     def _index_finished(self, node, generation, entries, error):
+        self.pending_jobs.pop((id(node), generation), None)
         if node.load_generation != generation or node.job is None:
             return
         index = self.index_for_path(node.path)
@@ -312,6 +331,7 @@ class FileTreeModel(QAbstractItemModel):
                     name=entry.name,
                     is_directory=entry.is_directory,
                     parent=node,
+                    parent_generation=node.children_generation,
                     is_link=entry.is_link,
                     row=row,
                     size=entry.size,
@@ -414,7 +434,7 @@ class FileTreeModel(QAbstractItemModel):
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
-        if not index.isValid():
+        if not index.isValid() or self.node_from_index(index) is None:
             return Qt.ItemFlag.NoItemFlags
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if self.node_from_index(index) is not self.root:
@@ -432,18 +452,54 @@ class FileTreeModel(QAbstractItemModel):
             self, indexes, excluded=self.root_path, on_error=self.directory_error.emit
         )
 
-    def _close_current_tree(self) -> None:
-        if self.root is not None:
-            self._close_subtree(self.root)
+    def is_attached(self, node):
+        while node.parent is not None:
+            if node.parent_generation != node.parent.children_generation:
+                return False
+            node = node.parent
+        return node is self.root and node.attached
 
-    def _close_subtree(self, root: FileNode) -> None:
-        stack = [root]
-        while stack:
-            node = stack.pop()
+    def reserve_budget(self, owner, amount):
+        if self.load_budget_owner is not None and self.load_budget_owner is not owner:
+            return False
+        if self.load_budget_owner is None:
+            self.load_budget_owner, self.load_budget = owner, amount
+        return True
+
+    def release_budget(self, owner):
+        if self.load_budget_owner is owner:
+            self.load_budget_owner = self.load_budget = None
+
+    def _close_current_tree(self) -> None:
+        for job in self.pending_jobs.values():
+            job.cancelled.set()
+        self.pending_jobs.clear()
+        if self.root is not None:
+            self.root.attached = False
+            self.retired.append(iter((self.root,)))
+            self.retire_timer.start()
+        self.nodes_by_path.clear()
+        self.directory_nodes.clear()
+
+    def reap(self):
+        for _ in range(128):
+            if not self.retired:
+                self.retire_timer.stop()
+                return
+            try:
+                node = next(self.retired[0])
+            except StopIteration:
+                self.retired.popleft()
+                continue
             node.close_iterator()
-            self.nodes_by_path.pop(node.path, None)
-            self.directory_nodes.pop(node.path, None)
-            stack.extend(node.children)
+            if self.nodes_by_path.get(node.path) is node:
+                self.nodes_by_path.pop(node.path, None)
+            if self.directory_nodes.get(node.path) is node:
+                self.directory_nodes.pop(node.path, None)
+            if node.children:
+                self.retired.append(iter(node.children))
+                node.children = []
+                node.children_generation += 1
 
 
 def _file_type(node: FileNode) -> str:

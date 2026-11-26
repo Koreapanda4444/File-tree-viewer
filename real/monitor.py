@@ -36,7 +36,7 @@ class DirectoryMonitor(QObject):
         return {self.model.root.path} | {
             node.path
             for node in self.model.directory_nodes.values()
-            if node.children or node.fully_loaded
+            if self.model.is_attached(node) and (node.children or node.fully_loaded)
         }
 
     def sync(self, *args):

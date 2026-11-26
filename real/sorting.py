@@ -56,7 +56,8 @@ class FileSortModel(QSortFilterProxyModel):
         if (
             role == Qt.ItemDataRole.ForegroundRole
             and index.isValid()
-            and normalized_path(self.path_from_index(index)) in self.cut_paths
+            and (path := self.path_from_index(index)) is not None
+            and normalized_path(path) in self.cut_paths
         ):
             return QColor("gray")
         if role == GROUP_ROLE and index.isValid():

@@ -9,6 +9,7 @@ from ui.i18n import tr
 
 
 class FileRevealer(QObject):
+    started = Signal()
     found = Signal(object)
     failed = Signal(str)
     max_items = 20_000
@@ -42,15 +43,19 @@ class FileRevealer(QObject):
                 )
             )
             return False
+        self.started.emit()
+        if not self.model.reserve_budget(self, self.max_items):
+            return False
         self.path, self.cursor = path, anchor
         self.parts = list(path.relative_to(anchor).parts)
         self.position = self.loaded = 0
-        self.started = monotonic()
+        self.started_at = monotonic()
         self.timer.start()
         return True
 
     def stop(self):
         self.timer.stop()
+        self.model.release_budget(self)
         self.path = None
 
     def fail(self, message):
@@ -61,7 +66,7 @@ class FileRevealer(QObject):
     def step(self):
         if self.path is None:
             return
-        if monotonic() - self.started > 15 or self.loaded >= self.max_items:
+        if monotonic() - self.started_at > 15 or self.model.load_budget == 0:
             self.fail("Path reveal reached its time or item limit: {path}")
             return
         for _ in range(16):
